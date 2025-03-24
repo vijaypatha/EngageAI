@@ -5,6 +5,8 @@ from app.routes import sms_scheduling
 from app.routes import customers, sms_roadmap
 from app.routes import review
 from app.routes import message_status
+from app.routes import sms_businessowner_style_endpoints
+
 
 
 
@@ -21,6 +23,8 @@ app.include_router(engagement.router, prefix="/engagement", tags=["Engagement Tr
 app.include_router(review.router, prefix="/review", tags=["SMS Review"])
 app.include_router(message_status.router)
 app.include_router(sms_roadmap.router)
+app.include_router(sms_businessowner_style_endpoints.router)
+
 
 
 @app.get("/")
