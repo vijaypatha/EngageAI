@@ -27,6 +27,7 @@ app.include_router(engagement.router, prefix="/engagement", tags=["Engagement Tr
 app.include_router(message_status.router)
 app.include_router(sms_businessowner_style_endpoints.router)
 
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the AI SMS Scheduler!"}
