@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
 import datetime
@@ -26,6 +26,7 @@ class Customer(Base):
     business_id = Column(Integer, ForeignKey("business_profiles.id"), nullable=False)
     business = relationship("BusinessProfile")
     roadmap_messages = relationship("RoadmapMessage", back_populates="customer")
+    is_generating_roadmap = Column(Boolean, default=False)  # <-- ADD THIS LINE
 
 
 class ScheduledSMS(Base):
@@ -45,6 +46,7 @@ class Engagement(Base):
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"))
     response = Column(Text)
+    ai_response = Column(Text, nullable=True)  # Add this line
     customer = relationship("Customer")
 
 class BusinessOwnerStyle(Base):
@@ -64,4 +66,6 @@ class RoadmapMessage(Base):
     smsContent = Column(Text)
     smsTiming = Column(String)
     status = Column(String)
+    send_datetime_utc = Column(DateTime, nullable=True) 
+
     customer = relationship("Customer", back_populates="roadmap_messages")
