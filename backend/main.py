@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware  # ✅ move up top
-from app.routes import business, customers, review, engagement
+from app.routes import business, customers, review, engagement, twilio_webhook
 from app.database import engine, Base
 from app.routes import sms_scheduling, sms_roadmap, message_status, sms_businessowner_style_endpoints
+
 
 app = FastAPI(title="AI SMS Scheduler", version="1.0")
 
@@ -17,6 +18,8 @@ app.add_middleware(
 
 Base.metadata.create_all(bind=engine)
 
+app.include_router(twilio_webhook.router, prefix="/twilio", tags=["Twilio"])
+
 # ✅ Now include routers
 app.include_router(business.router, prefix="/business-profile", tags=["Business Profile"])
 app.include_router(customers.router, prefix="/customers", tags=["Customers"])
@@ -28,6 +31,7 @@ app.include_router(message_status.router)
 app.include_router(sms_businessowner_style_endpoints.router)
 
 
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the AI SMS Scheduler!"}
@@ -37,6 +41,7 @@ def read_root():
 
 from fastapi.routing import APIRoute
 
+print("\n📡 Active Routes:")
 for route in app.routes:
     if isinstance(route, APIRoute):
-        print(f"{route.path} -> {route.methods}")
+        print(f"🔹 {route.path} [{','.join(route.methods)}]")
