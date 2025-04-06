@@ -39,6 +39,12 @@ const nextConfig = {
           ? "https://engageai.onrender.com/engagement/:path*"
           : "http://localhost:8000/engagement/:path*",
       },
+      {
+        source: "/conversations/:path*",
+        destination: isProd
+          ? "https://engageai.onrender.com/conversations/:path*"
+          : "http://localhost:8000/conversations/:path*",
+      },
     ]
   },
   eslint: {
