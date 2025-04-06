@@ -1,4 +1,4 @@
-// 📄 File: /app/dashboard/page.tsx — with 4th tile for Open Conversations
+// 📄 File: /app/dashboard/page.tsx — Dashboard with 4 Key Tiles
 
 "use client";
 
@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import StatItem from "@/components/ui/StatItem";
 
+// 📌 Type definitions
 interface BusinessProfile {
   business_name: string;
 }
@@ -52,18 +53,25 @@ export default function DashboardPage() {
   });
   const [aiStyleTrained, setAiStyleTrained] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
+
   const router = useRouter();
 
   useEffect(() => {
+    // 🔐 Redirect to homepage if business_id not found
     const storedBusinessId = localStorage.getItem("business_id");
-    if (!storedBusinessId || isNaN(Number(storedBusinessId))) return;
+    if (!storedBusinessId || isNaN(Number(storedBusinessId))) {
+      router.push("/");
+      return;
+    }
 
+    // 🚀 Fetch all data needed for dashboard tiles
     const fetchData = async () => {
       try {
         const [profileRes, customersRes] = await Promise.all([
           apiClient.get(`/business-profile/${storedBusinessId}`),
           apiClient.get(`/customers/by-business/${storedBusinessId}`),
         ]);
+
         setBusinessProfile(profileRes.data);
         setCustomers(customersRes.data);
 
@@ -73,6 +81,7 @@ export default function DashboardPage() {
           apiClient.get(`/sms-style/response/${storedBusinessId}`).catch(() => null),
           apiClient.get(`/review/reply-stats/${storedBusinessId}`).catch(() => null),
         ]);
+
         if (statsRes) setEngagementStats(statsRes.data);
         if (contactRes) setContactStats(contactRes.data);
         if (styleRes) setAiStyleTrained(styleRes.data.length > 0);
@@ -87,6 +96,7 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
+  // 📦 Utility render helpers
   const renderTileHeader = (icon: React.ReactNode, title: string) => (
     <h2 className="text-2xl font-extrabold text-zinc-100 mb-4 flex items-center gap-2">
       {icon} {title}
@@ -94,22 +104,31 @@ export default function DashboardPage() {
   );
 
   const renderTileButton = (label: string, onClick: () => void) => (
-    <Button className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold transition duration-300 shadow-lg" onClick={onClick}>
+    <Button
+      className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold transition duration-300 shadow-lg"
+      onClick={onClick}
+    >
       {label}
     </Button>
   );
 
+  // ⏳ Show loading screen while data fetch is in progress
   if (loading) {
-    return <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">Loading...</div>;
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
+        Loading...
+      </div>
+    );
   }
 
+  // ✅ Main dashboard layout with 4 tiles
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-neutral-900 p-8 text-white font-sans">
       <h1 className="text-5xl font-bold mb-2 tracking-tight leading-tight">Welcome back 👋</h1>
       <p className="text-lg text-zinc-400 mb-6">Here’s your business overview</p>
 
       <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 mb-12">
-        {/* Contacts */}
+        {/* 👥 Community Size */}
         <div className="flex flex-col justify-between rounded-xl bg-zinc-800 min-h-[240px] p-6 shadow-xl border border-zinc-700">
           <div>
             {renderTileHeader(<Users className="text-blue-400" size={24} />, "Community Size")}
@@ -119,7 +138,7 @@ export default function DashboardPage() {
           {renderTileButton("Manage Community", () => router.push("/customers-ui"))}
         </div>
 
-        {/* Community Outreach Plan */}
+        {/* ✉️ Community Outreach Plan */}
         <div className="flex flex-col justify-between rounded-xl bg-zinc-800 min-h-[240px] p-6 shadow-xl border border-zinc-700">
           <div>
             {renderTileHeader(<Send className="text-blue-400" size={24} />, "Community Outreach Plan")}
@@ -133,7 +152,7 @@ export default function DashboardPage() {
           {renderTileButton("Manage Plans", () => router.push("/customers-ui"))}
         </div>
 
-        {/* Community Response */}
+        {/* 🤖 Community Responses */}
         <div className="flex flex-col justify-between rounded-xl bg-zinc-800 min-h-[240px] p-6 shadow-xl border border-zinc-700">
           <div>
             {renderTileHeader(<Bot className="text-blue-400" size={24} />, "Community Responses")}
@@ -144,7 +163,9 @@ export default function DashboardPage() {
               </p>
             </div>
             <p className="text-sm text-zinc-400 mb-4">
-              {replyStats.customers_waiting === 1 ? "1 customer waiting on your reply" : `${replyStats.customers_waiting} customers waiting on your reply`}
+              {replyStats.customers_waiting === 1
+                ? "1 customer waiting on your reply"
+                : `${replyStats.customers_waiting} customers waiting on your reply`}
             </p>
             <div className="flex items-center gap-2 mb-6">
               <Send className="text-zinc-400" size={18} />
@@ -156,7 +177,7 @@ export default function DashboardPage() {
           {renderTileButton("Review & Reply", () => router.push("/customer-replies"))}
         </div>
 
-        {/* Open Conversations */}
+        {/* 💬 Open Conversations */}
         <div className="flex flex-col justify-between rounded-xl bg-zinc-800 min-h-[240px] p-6 shadow-xl border border-zinc-700">
           <div>
             {renderTileHeader(<MessageSquare className="text-blue-400" size={24} />, "Open Conversations")}
