@@ -12,6 +12,8 @@ class BusinessProfile(Base):
     business_goal = Column(String, nullable=True)
     primary_services = Column(String, nullable=True)
     representative_name = Column(String, nullable=True)
+    twilio_number = Column(String, nullable=True) 
+
 
 class Customer(Base):
     __tablename__ = "customers"
@@ -46,8 +48,10 @@ class Engagement(Base):
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"))
     response = Column(Text)
-    ai_response = Column(Text, nullable=True)  # Add this line
+    ai_response = Column(Text, nullable=True)
+    status = Column(String, default="pending_review")
     customer = relationship("Customer")
+    sent_at = Column(DateTime, nullable=True)  
 
 class BusinessOwnerStyle(Base):
     __tablename__ = "business_owner_styles"

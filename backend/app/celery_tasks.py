@@ -1,84 +1,74 @@
 from celery import Celery
-from twilio.rest import Client
-from twilio.base.exceptions import TwilioRestException
-import logging
-import os
-import datetime
-from sqlalchemy.orm import joinedload
-from app.database import SessionLocal
-from app.models import ScheduledSMS
-
-# Load env vars
 from dotenv import load_dotenv
+import os
+import logging
+from datetime import datetime
+
+from app.services.twilio_sms_service import send_sms_via_twilio
+from app.database import SessionLocal
+from app.models import ScheduledSMS, Customer
+
+
+# Load environment variables
 load_dotenv()
 
-# Twilio credentials
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+# Configure Celery
+celery = Celery(
+    "tasks",
+    broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+)
 
-client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
-# Setup Celery
-celery = Celery("tasks", broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"))
 celery.conf.enable_utc = True
-celery.conf.timezone = 'UTC'
+celery.conf.timezone = "UTC"
 
-# Logging
+# Configure Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @celery.task(bind=True, max_retries=3, default_retry_delay=60)
-def send_sms(self, sms_id: int):
-    now_utc = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    logger.info(f"[SMS {sms_id}] 🚀 Task STARTED at {now_utc} UTC")
-    
+def schedule_sms_task(self, scheduled_sms_id: int):
+    """
+    Celery task to send SMS by ID.
+    Logs details and sends message via Twilio if time is reached.
+    """
     db = SessionLocal()
 
     try:
-        sms = db.query(ScheduledSMS)\
-            .options(joinedload(ScheduledSMS.customer))\
-            .filter(ScheduledSMS.id == sms_id)\
-            .first()
-
+        sms = db.query(ScheduledSMS).filter(ScheduledSMS.id == scheduled_sms_id).first()
         if not sms:
-            logger.error(f"[SMS {sms_id}] ❌ SMS not found.")
+            logger.error(f"[❌] SMS ID {scheduled_sms_id} not found.")
+            return
+        
+        if sms.status == "sent":
+         logger.info(f"[🛑] SMS {sms.id} already sent. Skipping to prevent duplicate.")
+         return
+
+        customer = db.query(Customer).filter(Customer.id == sms.customer_id).first()
+        if not customer:
+            logger.error(f"[❌] No customer for SMS ID {scheduled_sms_id}")
             return
 
-        if not sms.customer:
-            logger.error(f"[SMS {sms_id}] ❌ No customer associated.")
-            return
+        # Log timing
+        scheduled_time = sms.send_time.strftime('%Y-%m-%d %H:%M:%S')
+        current_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
 
-        phone = sms.customer.phone
-        sms_text = sms.message
-        send_time = sms.send_time.strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"[📨 SMS {sms.id}] Scheduled for: {scheduled_time}")
+        logger.info(f"[⏰ SMS {sms.id}] Current UTC time: {current_time}")
+        logger.info(f"[👤 SMS {sms.id}] To: {customer.phone}")
+        logger.info(f"[💬 SMS {sms.id}] Message: {sms.message}")
 
-        logger.info(f"[SMS {sms_id}] 📞 To: {phone}")
-        logger.info(f"[SMS {sms_id}] 🕒 Scheduled Time (from DB): {send_time} UTC")
-        logger.info(f"[SMS {sms_id}] 💬 Message: {sms_text}")
-        print(f"[SMS {sms_id}] Inside send_sms: phone={phone}, text={sms_text}, time={now_utc}")
-
-        message = client.messages.create(
-            body=sms_text,
-            from_=TWILIO_PHONE_NUMBER,
-            to=phone
-        )
-
-        sms.status = "sent"
-        db.commit()
-
-        logger.info(f"[SMS {sms_id}] ✅ Sent successfully! Twilio SID: {message.sid}")
-        print(f"[SMS {sms_id}] Twilio SID: {message.sid}")
-
-    except TwilioRestException as e:
-        logger.error(f"[SMS {sms_id}] ❌ Twilio error: {str(e)}")
-        print(f"[SMS {sms_id}] Twilio Exception: {e}")
-        raise self.retry(exc=e)
+        # Check time before sending
+        if datetime.utcnow() >= sms.send_time.replace(tzinfo=None):
+            sid = send_sms_via_twilio(customer.phone, sms.message)
+            sms.status = "sent"
+            db.commit()
+            logger.info(f"[✅ SMS {sms.id}] Sent! Twilio SID: {sid}")
+        else:
+            logger.warning(f"[⏳ SMS {sms.id}] Not time yet, skipping send.")
 
     except Exception as e:
-        logger.error(f"[SMS {sms_id}] ❌ General error: {str(e)}")
-        print(f"[SMS {sms_id}] General Exception: {e}")
-        raise
+        logger.exception(f"[🔥 SMS {scheduled_sms_id}] Error: {str(e)}")
+        raise self.retry(exc=e)
 
     finally:
         db.close()
