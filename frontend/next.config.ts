@@ -1,27 +1,48 @@
-import type { NextConfig } from 'next'
+const isProd = process.env.NODE_ENV === "production"
 
-const nextConfig: NextConfig = {
-  // ✅ Ignore ESLint during Vercel build (prevents deployment failures)
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  
-  // ✅ Rewrite frontend calls to your backend service
+const nextConfig = {
   async rewrites() {
     return [
       {
-        source: '/business-profile',
-        destination: 'http://localhost:8000/business-profile',
+        source: "/business-profile/:path*",
+        destination: isProd
+          ? "https://engageai.onrender.com/business-profile/:path*"
+          : "http://localhost:8000/business-profile/:path*",
       },
       {
-        source: '/customers',
-        destination: 'http://localhost:8000/customers/',
+        source: "/customers/:path*",
+        destination: isProd
+          ? "https://engageai.onrender.com/customers/:path*"
+          : "http://localhost:8000/customers/:path*",
       },
       {
-        source: '/sms-style',
-        destination: 'http://localhost:8000/sms-style',
+        source: "/sms-style/:path*",
+        destination: isProd
+          ? "https://engageai.onrender.com/sms-style/:path*"
+          : "http://localhost:8000/sms-style/:path*",
+      },
+      {
+        source: "/ai_sms/:path*",
+        destination: isProd
+          ? "https://engageai.onrender.com/ai_sms/:path*"
+          : "http://localhost:8000/ai_sms/:path*",
+      },
+      {
+        source: "/review/:path*",
+        destination: isProd
+          ? "https://engageai.onrender.com/review/:path*"
+          : "http://localhost:8000/review/:path*",
+      },
+      {
+        source: "/engagement/:path*",
+        destination: isProd
+          ? "https://engageai.onrender.com/engagement/:path*"
+          : "http://localhost:8000/engagement/:path*",
       },
     ]
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
   },
 }
 
