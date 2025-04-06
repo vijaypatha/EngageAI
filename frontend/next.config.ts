@@ -1,4 +1,10 @@
-const isProd = process.env.NODE_ENV === "production"
+// 📄 File: next.config.ts
+// ✅ Uses Vercel-supported NODE_ENV instead of NEXT_PUBLIC_* for build-time rewrites
+
+const isProd = process.env.NODE_ENV === "production";
+
+// 🐞 Safe log to confirm behavior locally (won't show in Vercel)
+console.log("👉 NODE_ENV for rewrites:", process.env.NODE_ENV);
 
 const nextConfig = {
   async rewrites() {
@@ -45,11 +51,12 @@ const nextConfig = {
           ? "https://engageai.onrender.com/conversations/:path*"
           : "http://localhost:8000/conversations/:path*",
       },
-    ]
+    ];
   },
+
   eslint: {
     ignoreDuringBuilds: true,
   },
-}
+};
 
-export default nextConfig
+export default nextConfig;

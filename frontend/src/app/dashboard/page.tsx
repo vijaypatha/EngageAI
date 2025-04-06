@@ -57,6 +57,8 @@ export default function DashboardPage() {
   const router = useRouter();
 
   useEffect(() => {
+    console.log("✅ API BASE =", process.env.NEXT_PUBLIC_API_BASE);
+
     // 🔐 Redirect to homepage if business_id not found
     const storedBusinessId = localStorage.getItem("business_id");
     if (!storedBusinessId || isNaN(Number(storedBusinessId))) {
