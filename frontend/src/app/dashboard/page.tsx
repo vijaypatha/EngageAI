@@ -60,7 +60,7 @@ export default function DashboardPage() {
     // 🔐 Redirect to homepage if business_id not found
     const storedBusinessId = localStorage.getItem("business_id");
     if (!storedBusinessId || isNaN(Number(storedBusinessId))) {
-      router.push("/");
+      window.location.href = "/";
       return;
     }
 
