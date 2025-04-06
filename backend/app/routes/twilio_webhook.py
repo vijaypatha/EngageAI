@@ -23,18 +23,26 @@ def normalize_phone(number: str) -> str:
 # -------------------- Inbound SMS Webhook --------------------
 @router.post("/inbound", response_class=PlainTextResponse)
 async def receive_sms(request: Request, db: Session = Depends(get_db)):
-    # Log incoming content type (e.g. application/x-www-form-urlencoded)
-    content_type = request.headers.get("content-type")
-    print("📥 Content-Type:", content_type)
+    try:
+        print("🔥 Twilio webhook triggered")
+        content_type = request.headers.get("content-type")
+        print("📥 Content-Type:", content_type)
 
-    # Parse form data from Twilio webhook
-    form = await request.form()
-    from_number = normalize_phone(form.get("From") or "")
-    to_number = normalize_phone(form.get("To") or "")
-    body = form.get("Body")
+        form = await request.form()
+        from_number = normalize_phone(form.get("From") or "")
+        to_number = normalize_phone(form.get("To") or "")
+        body = form.get("Body")
 
-    # Log raw incoming message info
-    print(f"🔍 Incoming SMS: From={from_number}, To={to_number}, Body={body}")
+        print(f"🔍 Incoming SMS: From={from_number}, To={to_number}, Body={body}")
+        
+        # you can continue your logic here
+
+        return PlainTextResponse("Received", status_code=200)
+
+    except Exception as e:
+        print(f"❌ Exception in webhook: {str(e)}")
+        return PlainTextResponse("Internal Error", status_code=500)
+
 
     # -------------------- STEP 1: Identify Business by To Number --------------------
     business = db.query(BusinessProfile).filter(BusinessProfile.twilio_number == to_number).first()
