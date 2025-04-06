@@ -108,8 +108,14 @@ export default function LandingPage() {
 
       <Button
         className="bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold transition duration-300 shadow-lg"
-        
-        onClick={() => router.push("/dashboard")}
+        onClick={() => {
+          const bizId = localStorage.getItem("business_id");
+          if (bizId && !isNaN(Number(bizId))) {
+            router.push("/dashboard");
+          } else {
+            router.push("/add-business"); // or your actual onboarding path
+          }
+        }}
       >
         Get Started →
       </Button>
