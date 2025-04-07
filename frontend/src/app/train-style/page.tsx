@@ -1,4 +1,4 @@
-// /train-style/page.tsx — AI SMS Style Training Page
+// /train-style/page.tsx — AI SMS Style Training Page (Updated for session)
 
 "use client";
 
@@ -7,31 +7,45 @@ import { useRouter } from "next/navigation";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api";
+import { getCurrentBusiness } from "@/lib/utils"; // ✅ import session helper
 
 export default function TrainStylePage() {
   const router = useRouter();
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
+  const [businessId, setBusinessId] = useState<number | null>(null); // ✅ track business ID
 
   useEffect(() => {
-    const businessId = localStorage.getItem("business_id");
-    if (!businessId) return;
+    const loadScenarios = async () => {
+      const session = await getCurrentBusiness();
+      if (!session?.business_id) {
+        router.push("/add-business");
+        return;
+      }
 
-    apiClient.get(`/sms-style/scenarios/${businessId}`).then((res) => {
-      setQuestions(res.data.scenarios || []);
-      setLoading(false);
-    });
-  }, []);
+      setBusinessId(session.business_id);
+
+      try {
+        const res = await apiClient.get(`/sms-style/scenarios/${session.business_id}`);
+        setQuestions(res.data.scenarios || []);
+      } catch (err) {
+        alert("Failed to load scenarios");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadScenarios();
+  }, [router]);
 
   const handleSubmit = async () => {
-    const businessId = localStorage.getItem("business_id");
     if (!businessId) return;
 
     const payload = questions.map((scenario, i) => ({
       scenario,
       response: answers[i] || "",
-      business_id: Number(businessId),
+      business_id: businessId,
     }));
 
     try {

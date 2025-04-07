@@ -1,4 +1,4 @@
-// /add-business/page.tsx — Create Business Profile Page
+// /add-business/page.tsx — Create Business Profile Page (Updated for session)
 
 "use client";
 
@@ -26,8 +26,21 @@ export default function AddBusinessProfilePage() {
 
   const handleSubmit = async () => {
     try {
+      // ✅ Create business profile
       const res = await apiClient.post("/business-profile/", form);
-      localStorage.setItem("business_id", res.data.id);
+      const businessId = res.data.id;
+
+      // ✅ Set session cookie
+      await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/auth/session`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ business_id: businessId }),
+      });
+
+      // ✅ Go to next step
       router.push("/train-style");
     } catch (err) {
       alert("Failed to create business profile");

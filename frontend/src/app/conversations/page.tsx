@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { MessageSquare, Clock, Send } from "lucide-react";
+import { getCurrentBusiness } from "@/lib/utils"; // ✅ Add to your imports
+
 
 interface InboxEntry {
   customer_id: number;
@@ -20,7 +22,21 @@ export default function ConversationInbox() {
   const router = useRouter();
 
   useEffect(() => {
-    apiClient.get("/conversations").then((res) => setInbox(res.data.conversations));
+    const loadInbox = async () => {
+      const session = await getCurrentBusiness();
+      if (!session?.business_id) return;
+  
+      try {
+        const res = await apiClient.get("/conversations", {
+          params: { business_id: session.business_id },
+        });
+        setInbox(res.data.conversations);
+      } catch (err) {
+        console.error("Failed to load conversations:", err);
+      }
+    };
+  
+    loadInbox();
   }, []);
 
   const formatTime = (ts?: string) => {

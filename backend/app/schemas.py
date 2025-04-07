@@ -1,4 +1,4 @@
-from pydantic import BaseModel, constr, Field
+from pydantic import BaseModel, constr, Field, EmailStr
 from typing import Optional, Annotated
 
 ### ✅ Business Schemas
@@ -75,3 +75,5 @@ class AllRoadmapMessagesResponse(BaseModel):
     total: int
     scheduledThisWeek: int
     messages: list[RoadmapMessageOut]
+    
+    

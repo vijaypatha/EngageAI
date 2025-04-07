@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { getCurrentBusiness } from "@/lib/utils"; // ✅ Add this at top
+
 
 interface SMSItem {
   id: number;
@@ -46,8 +48,11 @@ export default function RoadmapPage() {
         setLoading(true);
         setGenerationStatus("loading");
 
-        const businessId = localStorage.getItem("business_id");
-        if (!businessId) throw new Error("Missing business_id in localStorage");
+        const session = await getCurrentBusiness();
+        if (!session?.business_id) {
+          throw new Error("Missing business_id from session");
+      }
+        const businessId = session.business_id;
 
         const res = await apiClient.get(`/customers/${customerId}`);
         setCustomerName(res.data.customer_name);

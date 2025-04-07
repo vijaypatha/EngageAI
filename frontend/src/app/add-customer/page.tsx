@@ -1,4 +1,4 @@
-// /add-customer/page.tsx — dedicated add customer screen
+// /add-customer/page.tsx — Add Customer (Updated for session-based business ID)
 
 "use client";
 
@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { getCurrentBusiness } from "@/lib/utils"; // ✅ use session helper
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -25,17 +26,22 @@ export default function AddCustomerPage() {
   };
 
   const handleSubmit = async () => {
-    const business_id = localStorage.getItem("business_id");
-    if (!business_id) return alert("Missing business ID");
+    const session = await getCurrentBusiness();
+    if (!session?.business_id) return alert("Missing business ID");
 
     try {
+      const payload = {
+        ...form,
+        business_id: session.business_id, // ✅ include in payload directly
+      };
+
       const response = await fetch(`${API_BASE_URL}/customers/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "business-Id": business_id,
         },
-        body: JSON.stringify(form),
+        credentials: "include", // ✅ send cookies
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {

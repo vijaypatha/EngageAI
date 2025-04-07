@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { getCurrentBusiness } from "@/lib/utils";
 import {
   Tooltip,
   TooltipContent,
@@ -55,35 +56,35 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   const router = useRouter();
-
   useEffect(() => {
     console.log("✅ API BASE =", process.env.NEXT_PUBLIC_API_BASE);
-
-    // 🔐 Redirect to homepage if business_id not found
-    const storedBusinessId = localStorage.getItem("business_id");
-    if (!storedBusinessId || isNaN(Number(storedBusinessId))) {
-      window.location.href = "/";
-      return;
-    }
-
-    // 🚀 Fetch all data needed for dashboard tiles
-    const fetchData = async () => {
+  
+    const init = async () => {
+      const session = await getCurrentBusiness();
+      if (!session?.business_id) {
+        window.location.href = "/";
+        return;
+      }
+  
+      const businessId = session.business_id;
+  
+      // ⏬ Move your existing fetch logic here
       try {
         const [profileRes, customersRes] = await Promise.all([
-          apiClient.get(`/business-profile/${storedBusinessId}`),
-          apiClient.get(`/customers/by-business/${storedBusinessId}`),
+          apiClient.get(`/business-profile/${businessId}`),
+          apiClient.get(`/customers/by-business/${businessId}`),
         ]);
-
+  
         setBusinessProfile(profileRes.data);
         setCustomers(customersRes.data);
-
+  
         const [statsRes, contactRes, styleRes, replyRes] = await Promise.all([
-          apiClient.get(`/review/stats/${storedBusinessId}`).catch(() => null),
-          apiClient.get(`/review/customers/without-engagement-count/${storedBusinessId}`).catch(() => null),
-          apiClient.get(`/sms-style/response/${storedBusinessId}`).catch(() => null),
-          apiClient.get(`/review/reply-stats/${storedBusinessId}`).catch(() => null),
+          apiClient.get(`/review/stats/${businessId}`).catch(() => null),
+          apiClient.get(`/review/customers/without-engagement-count/${businessId}`).catch(() => null),
+          apiClient.get(`/sms-style/response/${businessId}`).catch(() => null),
+          apiClient.get(`/review/reply-stats/${businessId}`).catch(() => null),
         ]);
-
+  
         if (statsRes) setEngagementStats(statsRes.data);
         if (contactRes) setContactStats(contactRes.data);
         if (styleRes) setAiStyleTrained(styleRes.data.length > 0);
@@ -94,9 +95,11 @@ export default function DashboardPage() {
         setLoading(false);
       }
     };
-
-    fetchData();
+  
+    init(); // 🔁 Call the inner async function
   }, []);
+  
+
 
   // 📦 Utility render helpers
   const renderTileHeader = (icon: React.ReactNode, title: string) => (

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { getCurrentBusiness } from "@/lib/utils"; // ✅ NEW
+
 
 interface Engagement {
   id: number;
@@ -24,14 +26,17 @@ export default function CustomerRepliesPage() {
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
-    const businessId = localStorage.getItem("business_id");
-    if (!businessId) return;
-
-    apiClient
-      .get("/review/customer-replies", { params: { business_id: businessId } })
-      .then((res) => {
+    const loadReplies = async () => {
+      const session = await getCurrentBusiness(); // ✅ Secure cookie-based session
+      if (!session?.business_id) return;
+  
+      try {
+        const res = await apiClient.get("/review/customer-replies", {
+          params: { business_id: session.business_id },
+        });
+  
         setReplies(res.data);
-
+  
         const initialCollapse: Record<number, boolean> = {};
         res.data.forEach((reply: Engagement) => {
           if (!initialCollapse.hasOwnProperty(reply.customer_id)) {
@@ -39,9 +44,14 @@ export default function CustomerRepliesPage() {
           }
         });
         setCollapsed(initialCollapse);
-      })
-      .catch(console.error);
+      } catch (err) {
+        console.error("❌ Failed to load replies:", err);
+      }
+    };
+  
+    loadReplies(); // ✅ Call once on mount
   }, []);
+  
 
   const groupedReplies = replies.reduce((acc, reply) => {
     if (!acc[reply.customer_id]) {

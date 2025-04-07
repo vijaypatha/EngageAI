@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 import datetime
 
+
 class BusinessProfile(Base):
     __tablename__ = "business_profiles"
 
@@ -12,7 +13,9 @@ class BusinessProfile(Base):
     business_goal = Column(String, nullable=True)
     primary_services = Column(String, nullable=True)
     representative_name = Column(String, nullable=True)
-    twilio_number = Column(String, nullable=True) 
+    twilio_number = Column(String, nullable=True)
+    
+
 
 
 class Customer(Base):

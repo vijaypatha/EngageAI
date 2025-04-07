@@ -5,6 +5,8 @@ import { apiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { getCurrentBusiness } from "@/lib/utils"; // ✅ Add at top
+
 
 interface SMSItem {
   id: number;
@@ -23,17 +25,18 @@ export default function AllEngagementPlans() {
 const [editedTime, setEditedTime] = useState<string>("");
 
     
-  const fetchSMSList = () => {
-    const businessId = localStorage.getItem("business_id");
-    if (!businessId) return;
+const fetchSMSList = async () => {
+  const session = await getCurrentBusiness();
+  if (!session?.business_id) return;
 
-    apiClient
-      .get("/review/all-engagements", {
-        params: { business_id: Number(businessId) },
-      })
-      .then((res) => setSmsList(res.data.engagements))
-      .catch(console.error);
-  };
+  apiClient
+    .get("/review/all-engagements", {
+      params: { business_id: session.business_id },
+    })
+    .then((res) => setSmsList(res.data.engagements))
+    .catch(console.error);
+};
+
 
   useEffect(() => {
     fetchSMSList();

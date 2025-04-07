@@ -7,6 +7,8 @@ import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { getCurrentBusiness } from "@/lib/utils"; // ✅ Add at top
+
 
 interface Message {
   sender: "customer" | "ai" | "owner";
@@ -29,16 +31,21 @@ export default function ConversationPage() {
     let interval: NodeJS.Timeout;
   
     const fetchConversation = async () => {
-      const res = await apiClient.get(`/conversations/${customerId}`);
+      const session = await getCurrentBusiness();
+      if (!session?.business_id) return;
+  
+      const res = await apiClient.get(`/conversations/${customerId}`, {
+        params: { business_id: session.business_id },
+      });
+  
       setMessages(res.data.messages);
       setCustomerName(res.data.customer.name);
     };
   
     fetchConversation(); // fetch on mount
+    interval = setInterval(fetchConversation, 1000); // refresh every 1s
   
-    interval = setInterval(fetchConversation, 1000); // every 10s
-  
-    return () => clearInterval(interval); // cleanup on unmount
+    return () => clearInterval(interval);
   }, [customerId]);
   
 

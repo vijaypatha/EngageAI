@@ -61,6 +61,8 @@
 
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
+import { getCurrentBusiness } from "@/lib/utils"; 
+
 
 export default function LandingPage() {
   const router = useRouter();
@@ -108,12 +110,12 @@ export default function LandingPage() {
 
       <Button
         className="bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold transition duration-300 shadow-lg"
-        onClick={() => {
-          const bizId = localStorage.getItem("business_id");
-          if (bizId && !isNaN(Number(bizId))) {
+        onClick={async () => {
+          const business = await getCurrentBusiness();
+          if (business?.business_id) {
             router.push("/dashboard");
           } else {
-            router.push("/add-business"); // or your actual onboarding path
+            router.push("/add-business");
           }
         }}
       >

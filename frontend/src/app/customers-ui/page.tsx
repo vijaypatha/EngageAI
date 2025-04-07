@@ -1,10 +1,11 @@
-// Enhanced /customers-ui/page.tsx with dashboard-aligned buttons and floating animated Add button
+// /customers-ui/page.tsx — View & manage contacts (Updated for session)
 
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
+import { getCurrentBusiness } from "@/lib/utils"; // ✅ NEW
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
@@ -25,13 +26,23 @@ export default function CustomersPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const businessId = localStorage.getItem("business_id");
-    if (!businessId) return;
+    const fetchCustomers = async () => {
+      const session = await getCurrentBusiness();
+      if (!session?.business_id) {
+        router.push("/add-business");
+        return;
+      }
 
-    apiClient.get(`/customers/by-business/${businessId}`)
-      .then((res) => setCustomers(res.data))
-      .catch((error) => console.error("Error fetching customers:", error));
-  }, []);
+      try {
+        const res = await apiClient.get(`/customers/by-business/${session.business_id}`);
+        setCustomers(res.data);
+      } catch (error) {
+        console.error("Error fetching customers:", error);
+      }
+    };
+
+    fetchCustomers();
+  }, [router]);
 
   const filteredCustomers = customers.filter((c) =>
     c.customer_name.toLowerCase().includes(search.toLowerCase())
@@ -85,7 +96,7 @@ export default function CustomersPage() {
       <div className="fixed bottom-6 right-6 z-50 animate-bounce">
         <Button
           className="bg-black text-white border border-zinc-600 hover:bg-zinc-900 hover:border-zinc-500 transition px-6 py-3 rounded-full shadow-xl"
-          onClick={() => router.push("/add-customer")} /* Redirect to add customer page */
+          onClick={() => router.push("/add-customer")}
         >
           ➕ Add New Contact
         </Button>
