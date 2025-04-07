@@ -115,12 +115,14 @@ export default function LandingPage() {
           if (business?.business_id) {
             router.push("/dashboard");
           } else {
-            router.push("/add-business");
+            // Optionally handle the case where the business is not logged in yet.
+            router.push("/business-profile");
           }
         }}
       >
         Get Started →
       </Button>
+
     </main>
   );
 }
