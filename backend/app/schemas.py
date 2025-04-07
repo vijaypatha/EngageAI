@@ -25,6 +25,7 @@ class CustomerCreate(BaseModel):
     lifecycle_stage: str
     pain_points: str
     interaction_history: str
+    business_id: int
 
 
 
