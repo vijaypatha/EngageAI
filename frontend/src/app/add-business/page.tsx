@@ -37,6 +37,7 @@ export default function AddBusinessProfilePage() {
       });
   
       // ✅ Wait a moment to ensure cookie is stored
+      console.log("⏳ Waiting to ensure cookie is stored...");
       await new Promise((resolve) => setTimeout(resolve, 200));
   
       console.log("✅ Business created, now redirecting to /train-style");
