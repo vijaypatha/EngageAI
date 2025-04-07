@@ -1,6 +1,6 @@
 ### ✅ customers.py
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Customer, BusinessProfile
@@ -10,10 +10,10 @@ router = APIRouter()
 
 # ➕ Add Customer (during or post-onboarding)
 @router.post("", summary="Add customer")
-def add_customer(customer: CustomerCreate, db: Session = Depends(get_db), business_id: int = Header(..., alias="business-Id")):
-    print(f"📥 POST /customers/ hit with business_id={business_id}")
+def add_customer(customer: CustomerCreate, db: Session = Depends(get_db)):
+    print(f"📥 POST /customers/ hit with business_id={customer.business_id}")
 
-    business = db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
+    business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
     if not business:
         raise HTTPException(status_code=404, detail="Business not found")
 
@@ -23,7 +23,7 @@ def add_customer(customer: CustomerCreate, db: Session = Depends(get_db), busine
         lifecycle_stage=customer.lifecycle_stage,
         pain_points=customer.pain_points,
         interaction_history=customer.interaction_history,
-        business_id=business.id
+        business_id=customer.business_id
     )
     db.add(new_customer)
     db.commit()
@@ -56,7 +56,7 @@ def update_customer(customer_id: int, customer: CustomerUpdate, db: Session = De
     db.refresh(db_customer)
     return db_customer
 
-# 🗑️ Delete customer
+# 🚗️ Delete customer
 @router.delete("/{customer_id}", summary="Delete customer")
 def delete_customer(customer_id: int, db: Session = Depends(get_db)):
     db_customer = db.query(Customer).filter(Customer.id == customer_id).first()
