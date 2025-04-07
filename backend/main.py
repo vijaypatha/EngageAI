@@ -14,7 +14,8 @@ app = FastAPI(title="AI SMS Scheduler", version="1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000",
-                   "https://engage-ai-seven.vercel.app"
+                   "https://engage-ai-seven.vercel.app",
+                   "https://www.engage-ai-seven.vercel.app"
                    ],
     allow_credentials=True,
     allow_methods=["*"],
