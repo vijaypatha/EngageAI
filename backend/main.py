@@ -26,7 +26,13 @@ Base.metadata.create_all(bind=engine)
 
 app.include_router(twilio_webhook.router, prefix="/twilio", tags=["Twilio"])
 # ✅ Enables reading/writing secure cookies (required for session logic)
-app.add_middleware(SessionMiddleware, secret_key="your-secret-key")  # ⬅️ ADD THIS
+app.add_middleware(
+    SessionMiddleware,
+    secret_key="your-secret-key",
+    same_site="none",   # 👈 required for cross-site cookie
+    https_only=True     # 👈 required if SameSite=none
+)
+
 
 # ✅ Now include routers
 app.include_router(business.router, prefix="/business-profile", tags=["Business Profile"])
