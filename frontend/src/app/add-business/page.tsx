@@ -38,6 +38,7 @@ export default function AddBusinessProfilePage() {
       
 
       // ✅ Go to next step
+      console.log("✅ Business created, now redirecting to /train-style");
       router.push("/train-style");
     } catch (err) {
       alert("Failed to create business profile");
