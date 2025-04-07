@@ -1,4 +1,4 @@
-// /add-customer/page.tsx — Add Customer (Updated for session-based business ID)
+// /add-customer/page.tsx — Add Customer (Fixed: env var + using apiClient)
 
 "use client";
 
@@ -7,9 +7,8 @@ import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { getCurrentBusiness } from "@/lib/utils"; // ✅ use session helper
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { getCurrentBusiness } from "@/lib/utils";
+import { apiClient } from "@/lib/api";
 
 export default function AddCustomerPage() {
   const router = useRouter();
@@ -32,28 +31,14 @@ export default function AddCustomerPage() {
     try {
       const payload = {
         ...form,
-        business_id: session.business_id, // ✅ include in payload directly
+        business_id: session.business_id,
       };
 
-      const response = await fetch(`${API_BASE_URL}/customers/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include", // ✅ send cookies
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Error submitting customer:", errorText);
-        throw new Error("Submission failed");
-      }
-
+      await apiClient.post("/customers/", payload);
       router.push("/dashboard");
     } catch (err) {
       alert("There was an error adding the customer.");
-      console.error("Customer save failed", err);
+      console.error("❌ Customer save failed:", err);
     }
   };
 
