@@ -31,14 +31,11 @@ export default function AddBusinessProfilePage() {
       const businessId = res.data.id;
 
       // ✅ Set session cookie
-      await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/auth/session`, {
+      await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/auth/session?business_id=${businessId}`, {
         method: "POST",
         credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ business_id: businessId }),
       });
+      
 
       // ✅ Go to next step
       router.push("/train-style");
