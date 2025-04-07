@@ -116,7 +116,7 @@ export default function LandingPage() {
             router.push("/dashboard");
           } else {
             // Optionally handle the case where the business is not logged in yet.
-            router.push("/business-profile");
+            router.push("/add-business");
           }
         }}
       >
