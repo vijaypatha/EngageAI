@@ -29,21 +29,23 @@ export default function AddBusinessProfilePage() {
       // ✅ Create business profile
       const res = await apiClient.post("/business-profile/", form);
       const businessId = res.data.id;
-
+  
       // ✅ Set session cookie
       await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/auth/session?business_id=${businessId}`, {
         method: "POST",
         credentials: "include",
       });
-      
-
-      // ✅ Go to next step
+  
+      // ✅ Wait a moment to ensure cookie is stored
+      await new Promise((resolve) => setTimeout(resolve, 200));
+  
       console.log("✅ Business created, now redirecting to /train-style");
       router.push("/train-style");
     } catch (err) {
       alert("Failed to create business profile");
     }
   };
+  
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-neutral-900 text-white p-8 pb-32">
