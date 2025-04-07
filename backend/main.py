@@ -30,7 +30,8 @@ app.add_middleware(
     SessionMiddleware,
     secret_key="your-secret-key",
     same_site="none",   # 👈 required for cross-site cookie
-    https_only=True     # 👈 required if SameSite=none
+    https_only=True,     # 👈 required if SameSite=none
+    session_cookie="session"  # 👈 
 )
 
 
