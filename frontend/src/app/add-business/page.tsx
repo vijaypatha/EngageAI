@@ -26,26 +26,28 @@ export default function AddBusinessProfilePage() {
 
   const handleSubmit = async () => {
     try {
-      // ✅ Create business profile
+      // Create business
       const res = await apiClient.post("/business-profile/", form);
       const businessId = res.data.id;
   
-      // ✅ Set session cookie
+      // Set session
       await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/auth/session?business_id=${businessId}`, {
         method: "POST",
         credentials: "include",
       });
   
-      // ✅ Wait a moment to ensure cookie is stored
+      // Small delay
       console.log("⏳ Waiting to ensure cookie is stored...");
       await new Promise((resolve) => setTimeout(resolve, 200));
   
+      // Force full page reload (ensures cookie is sent)
       console.log("✅ Business created, now redirecting to /train-style");
-      router.push("/train-style");
+      window.location.href = "/train-style";
     } catch (err) {
       alert("Failed to create business profile");
     }
   };
+  
   
 
   return (
