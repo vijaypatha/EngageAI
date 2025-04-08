@@ -1,30 +1,32 @@
 import os
+from dotenv import load_dotenv
 from celery import Celery
 import ssl
-from dotenv import load_dotenv 
-load_dotenv()  
 
-# Pull Redis URL from environment
+# ✅ Load .env file (required for local and Render environments)
+load_dotenv()
+
+# ✅ Read Redis URL from environment
 redis_url = os.getenv("REDIS_URL")
-print(f"📦 Loaded REDIS_URL: {redis_url}")  # ✅ TEMP DEBUG
+print(f"📦 Loaded REDIS_URL: {redis_url}")  # TEMP: confirm it's loading
 
-# Define required SSL config
+# ✅ Set Redis SSL options
 ssl_options = {
-    "ssl_cert_reqs": ssl.CERT_REQUIRED,
+    "ssl_cert_reqs": ssl.CERT_NONE  # Use CERT_REQUIRED if you upload certs
 }
 
-# Create Celery app
+# ✅ Create Celery app
 celery_app = Celery(
     "engageai_tasks",
     broker=redis_url,
     backend=redis_url,
 )
 
-# Apply SSL options to broker and result backend
+# ✅ Apply SSL options to broker + backend
 celery_app.conf.broker_use_ssl = ssl_options
 celery_app.conf.redis_backend_use_ssl = ssl_options
 
-# Optional test task (can be removed)
+# ✅ Optional ping task
 @celery_app.task
 def ping():
     return "pong"
