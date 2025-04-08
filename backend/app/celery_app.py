@@ -30,3 +30,5 @@ celery_app.conf.redis_backend_use_ssl = ssl_options
 @celery_app.task(name = "ping")
 def ping():
     return "pong"
+
+from app.celery_tasks import schedule_sms_task  # 👈 force task registration
