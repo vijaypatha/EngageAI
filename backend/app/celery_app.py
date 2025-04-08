@@ -33,3 +33,4 @@ def ping():
     return "pong"
 
 celery_app.autodiscover_tasks(['app.celery_tasks'])
+print("✅ Celery is configured and tasks are being discovered from app.celery_tasks")
