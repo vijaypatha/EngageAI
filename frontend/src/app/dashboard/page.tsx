@@ -154,7 +154,7 @@ export default function DashboardPage() {
               <StatItem label="Sent" value={engagementStats?.sent ?? 0} icon={<Send size={16} className="text-white" />} tooltip="Messages successfully sent" />
             </div>
           </div>
-          {renderTileButton("Manage Plans", () => router.push("/all-engagements-plans"))}
+          {renderTileButton("Manage Plans", () => router.push("/all-engagement-plans"))}
         </div>
 
         {/* 🤖 Community Responses */}
