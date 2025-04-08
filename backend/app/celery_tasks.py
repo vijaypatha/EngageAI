@@ -26,13 +26,16 @@ def schedule_sms_task(self, scheduled_sms_id: int):
     Logs details and sends message via Twilio if time is reached.
     """
     db = SessionLocal()
+    logger.info(f"[🔍 CELERY DB CHECK] Env: {os.getenv('DATABASE_URL')}")
 
     try:
         sms = db.query(ScheduledSMS).filter(ScheduledSMS.id == scheduled_sms_id).first()
         if not sms:
-            logger.error(f"[❌] SMS ID {scheduled_sms_id} not found.")
+            logger.error(f"[❌] SMS ID {scheduled_sms_id} not found in DB.")
             return
-        
+        else:
+            logger.info(f"[✅] SMS ID {scheduled_sms_id} found with status: {sms.status}")
+
         if sms.status == "sent":
             logger.info(f"[🛑] SMS {sms.id} already sent. Skipping to prevent duplicate.")
             return
