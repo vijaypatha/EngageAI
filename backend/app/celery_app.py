@@ -27,6 +27,6 @@ celery_app.conf.broker_use_ssl = ssl_options
 celery_app.conf.redis_backend_use_ssl = ssl_options
 
 # ✅ Optional ping task
-@celery_app.task
+@celery_app.task(name = "ping")
 def ping():
     return "pong"

@@ -1,4 +1,3 @@
-from celery import Celery
 from dotenv import load_dotenv
 import os
 import logging
@@ -7,17 +6,12 @@ from datetime import datetime
 from app.services.twilio_sms_service import send_sms_via_twilio
 from app.database import SessionLocal
 from app.models import ScheduledSMS, Customer
-
+from app.celery_app import celery_app as celery  # ✅ Uses correct broker + config
 
 # Load environment variables
 load_dotenv()
 
-# Configure Celery
-celery = Celery(
-    "tasks",
-    broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-)
-
+# Use existing Celery app (not a new one)
 celery.conf.enable_utc = True
 celery.conf.timezone = "UTC"
 
@@ -40,8 +34,8 @@ def schedule_sms_task(self, scheduled_sms_id: int):
             return
         
         if sms.status == "sent":
-         logger.info(f"[🛑] SMS {sms.id} already sent. Skipping to prevent duplicate.")
-         return
+            logger.info(f"[🛑] SMS {sms.id} already sent. Skipping to prevent duplicate.")
+            return
 
         customer = db.query(Customer).filter(Customer.id == sms.customer_id).first()
         if not customer:
