@@ -68,3 +68,8 @@ for route in app.routes:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+
+@app.get("/debug/redis-url")
+def debug_redis_url():
+    import os
+    return {"REDIS_URL": os.getenv("REDIS_URL")}
