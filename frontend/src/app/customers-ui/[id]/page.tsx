@@ -196,7 +196,7 @@ export default function RoadmapPage() {
                         <input
                         type="datetime-local"
                         value={convertToLocalInputFormat(sms.send_datetime_utc || new Date().toISOString())}
-                        onChange={(e) => handleUpdate(idx, "send_datetime_utc", new Date(e.target.value).toISOString())}
+                        onChange={(e) => handleUpdate(idx, "send_datetime_utc", e.target.value)}
                         className="bg-zinc-900 text-white border border-zinc-600 px-2 py-1 rounded"
                         step="60"
                         min={convertToLocalInputFormat(new Date().toISOString())}  // optional: limit to future

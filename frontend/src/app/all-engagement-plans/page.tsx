@@ -232,9 +232,9 @@ const fetchSMSList = async () => {
                         className="text-sm font-semibold text-indigo-300 cursor-pointer"
                         onClick={() => {
                           setEditingId(sms.id);
-                          setEditedTime(
-                            new Date(sms.send_datetime_utc || "").toISOString().slice(0, 16)
-                          );
+                          const localTime = new Date(sms.send_datetime_utc || "");
+                          const tzOffset = localTime.getTimezoneOffset() * 60000;
+                          setEditedTime(new Date(localTime.getTime() - tzOffset).toISOString().slice(0, 16));
                         }}
                       >
                         {sms.send_datetime_utc
