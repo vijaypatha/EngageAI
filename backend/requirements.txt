@@ -28,6 +28,7 @@ multidict==6.2.0
 openai==1.67.0
 prompt_toolkit==3.0.50
 propcache==0.3.0
+psycopg2-binary
 pydantic==2.10.6
 pydantic_core==2.27.2
 PyJWT==2.10.1
