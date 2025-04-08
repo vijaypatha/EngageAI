@@ -6,6 +6,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.routes import sms_scheduling, sms_roadmap, message_status, sms_businessowner_style_endpoints, conversations
 
 from app.celery_app import ping  # ✅ import ping early
+import os
+print("🔍 REDIS_URL loaded in main.py:", os.getenv("REDIS_URL"))
 
 
 app = FastAPI(title="AI SMS Scheduler", version="1.0")
