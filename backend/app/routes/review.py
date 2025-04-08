@@ -89,6 +89,7 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
         )
         db.add(scheduled)
         db.flush()
+        print(f"📤 Scheduling SMS via Celery: ScheduledSMS id={scheduled.id}, ETA={msg.send_datetime_utc}")
         schedule_sms_task.apply_async(args=[scheduled.id], eta=msg.send_datetime_utc)
         db.delete(msg)
         db.commit()
