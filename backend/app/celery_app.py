@@ -4,6 +4,7 @@ import ssl
 
 # Pull Redis URL from environment
 redis_url = os.getenv("REDIS_URL")
+print(f"📦 Loaded REDIS_URL: {redis_url}")  # ✅ TEMP DEBUG
 
 # Define required SSL config
 ssl_options = {
