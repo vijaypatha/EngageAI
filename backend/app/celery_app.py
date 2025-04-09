@@ -1,5 +1,5 @@
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, logger
 from celery import Celery
 import ssl
 from app.database import SessionLocal  # ensures Celery uses Postgres
@@ -28,8 +28,10 @@ celery_app.conf.broker_use_ssl = ssl_options
 celery_app.conf.redis_backend_use_ssl = ssl_options
 
 # ✅ Optional ping task
-@celery_app.task(name = "ping")
+@celery_app.task(name="ping")
 def ping():
+    print("🏓 PING TASK EXECUTED")
+    logger.info("🏓 PING TASK EXECUTED - IN LOGS")
     return "pong"
 
 celery_app.autodiscover_tasks(['app.celery_tasks'])
