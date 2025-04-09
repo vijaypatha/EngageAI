@@ -1,8 +1,12 @@
 import os
-from dotenv import load_dotenv, logger
+from dotenv import load_dotenv
+import logging
 from celery import Celery
 import ssl
 from app.database import SessionLocal  # ensures Celery uses Postgres
+
+# Add logger definition:
+logger = logging.getLogger(__name__)
 
 # ✅ Load .env file (required for local and Render environments)
 load_dotenv()
