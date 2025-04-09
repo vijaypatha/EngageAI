@@ -43,25 +43,76 @@ interface EngagementStats {
   rejected: number;
 }
 
-const SMSStyleForm = ({ businessId }: { businessId: string }) => {
+const SMSStyleForm = ({ businessId, onComplete }: { businessId: string; onComplete: () => void }) => {
+  const [styleText, setStyleText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    try {
+      await apiClient.post(`/sms-style/response/${businessId}`, {
+        sms_style_text: styleText,
+      });
+      onComplete();
+    } catch (err) {
+      console.error("Failed to submit SMS style:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
       <div className="max-w-md text-center">
         <h2 className="text-2xl font-bold mb-4">Train your SMS style</h2>
-        <p className="mb-4">This is a placeholder for the SMS style training form.</p>
-        {/* TODO: Add actual style training form here */}
+        <textarea
+          className="w-full text-black p-2 mb-4"
+          rows={4}
+          placeholder="Type how you normally write your messages..."
+          value={styleText}
+          onChange={(e) => setStyleText(e.target.value)}
+        />
+        <Button onClick={handleSubmit} disabled={submitting || !styleText}>
+          {submitting ? "Saving..." : "Save & Continue"}
+        </Button>
       </div>
     </div>
   );
 };
 
-const AddCustomerForm = ({ businessId }: { businessId: string }) => {
+const AddCustomerForm = ({ businessId, onComplete }: { businessId: string; onComplete: () => void }) => {
+  const [customerName, setCustomerName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleAddCustomer = async () => {
+    setSubmitting(true);
+    try {
+      await apiClient.post("/customers/", {
+        business_id: businessId,
+        customer_name: customerName,
+      });
+      onComplete();
+    } catch (err) {
+      console.error("Failed to add customer:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
       <div className="max-w-md text-center">
         <h2 className="text-2xl font-bold mb-4">Add your first customer</h2>
-        <p className="mb-4">This is a placeholder for the customer form.</p>
-        {/* TODO: Add actual customer form here */}
+        <input
+          type="text"
+          className="w-full text-black p-2 mb-4"
+          placeholder="Customer name"
+          value={customerName}
+          onChange={(e) => setCustomerName(e.target.value)}
+        />
+        <Button onClick={handleAddCustomer} disabled={submitting || !customerName}>
+          {submitting ? "Adding..." : "Add & Continue"}
+        </Button>
       </div>
     </div>
   );
@@ -165,15 +216,14 @@ export default function DashboardPage() {
   }
 
   if (!aiStyleTrained) {
-    return (
-      <SMSStyleForm businessId={businessId!} />
-    );
+    return <SMSStyleForm businessId={businessId!} onComplete={() => setAiStyleTrained(true)} />;
   }
 
   if (customers.length === 0) {
-    return (
-      <AddCustomerForm businessId={businessId!} />
-    );
+    return <AddCustomerForm businessId={businessId!} onComplete={async () => {
+      const customersRes = await apiClient.get(`/customers/by-business/${businessId}`);
+      setCustomers(customersRes.data);
+    }} />;
   }
 
   // ✅ Main dashboard layout with 4 tiles
