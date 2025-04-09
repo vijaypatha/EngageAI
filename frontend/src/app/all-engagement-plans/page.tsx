@@ -22,20 +22,20 @@ export default function AllEngagementPlans() {
   const [smsList, setSmsList] = useState<SMSItem[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
-const [editedTime, setEditedTime] = useState<string>("");
+  const [editedTime, setEditedTime] = useState<string>("");
 
     
-const fetchSMSList = async () => {
-  const session = await getCurrentBusiness();
-  if (!session?.business_id) return;
+  const fetchSMSList = async () => {
+    const session = await getCurrentBusiness();
+    if (!session?.business_id) return;
 
-  apiClient
-    .get("/review/all-engagements", {
-      params: { business_id: session.business_id },
-    })
-    .then((res) => setSmsList(res.data.engagements))
-    .catch(console.error);
-};
+    apiClient
+      .get("/review/all-engagements", {
+        params: { business_id: session.business_id },
+      })
+      .then((res) => setSmsList(res.data.engagements))
+      .catch(console.error);
+  };
 
 
   useEffect(() => {
@@ -233,19 +233,18 @@ const fetchSMSList = async () => {
                         onClick={() => {
                           setEditingId(sms.id);
                           const localTime = new Date(sms.send_datetime_utc || "");
-                          const tzOffset = localTime.getTimezoneOffset() * 60000;
-                          setEditedTime(new Date(localTime.getTime() - tzOffset).toISOString().slice(0, 16));
+                          setEditedTime(localTime.toISOString().slice(0, 16));
                         }}
                       >
                         {sms.send_datetime_utc
                           ? new Intl.DateTimeFormat("en-US", {
-                              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                              timeZone: "America/Denver",
                               weekday: "long",
                               month: "short",
                               day: "numeric",
                               hour: "numeric",
                               minute: "2-digit",
-                            }).format(new Date(sms.send_datetime_utc))
+                            }).format(new Date(sms.send_datetime_utc)) + " MDT"
                           : sms.smsTiming}
                       </h2>
                     )}
