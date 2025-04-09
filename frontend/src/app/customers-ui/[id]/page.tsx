@@ -263,7 +263,7 @@ export default function RoadmapPage() {
                                   const sms = roadmap[idx];
                                   apiClient
                                     .put(`/review/update-time/${sms.id}`, {
-                                      send_datetime_utc: new Date(sms.send_datetime_utc + ":00").toISOString(),
+                                      send_datetime_utc: new Date(String(sms.send_datetime_utc)).toISOString(),
                                     }, {
                                       params: { source: "roadmap" },
                                       headers: { "Content-Type": "application/json" },
@@ -286,7 +286,7 @@ export default function RoadmapPage() {
                                   const sms = roadmap[idx];
                                   apiClient
                                     .put(`/review/update-time/${sms.id}`, {
-                                      send_datetime_utc: new Date(sms.send_datetime_utc + ":00").toISOString()
+                                      send_datetime_utc: new Date(String(sms.send_datetime_utc)).toISOString()
                                     }, {
                                       params: { source: "roadmap" },
                                       headers: { "Content-Type": "application/json" },
