@@ -75,6 +75,13 @@ def test_sms_now():
     schedule_sms_task.apply_async(args=[2])  # Use scheduled_sms ID 2
     return {"status": "SMS task dispatched"}
 
+# ✅ Debug route: verify basic Celery task dispatch
+@app.get("/debug/celery-basic")
+def trigger_basic_task():
+    from app.celery_app import ping
+    task = ping.delay()
+    return {"ping_task_id": task.id}
+
 # ✅ Print active routes
 from fastapi.routing import APIRoute
 print("\n📡 Active Routes:")
