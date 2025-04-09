@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useParams } from "next/navigation"; // ✅ NEW
 import { apiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getCurrentBusiness } from "@/lib/utils"; // ✅ NEW
-
 
 interface Engagement {
   id: number;
@@ -27,12 +26,14 @@ export default function CustomerRepliesPage() {
 
   useEffect(() => {
     const loadReplies = async () => {
-      const session = await getCurrentBusiness(); // ✅ Secure cookie-based session
-      if (!session?.business_id) return;
+      const params = useParams(); // ✅ Updated
+      const business_name = params?.business_name as string; // ✅ Updated
+      const resId = await apiClient.get(`/business-profile/business-id/${business_name}`); // ✅ Updated
+      const business_id = resId.data.business_id; // ✅ Updated
   
       try {
-        const res = await apiClient.get("/review/customer-replies", {
-          params: { business_id: session.business_id },
+        const res = await apiClient.get("/review/customer-replies", { // ✅ Updated
+          params: { business_id },
         });
   
         setReplies(res.data);
