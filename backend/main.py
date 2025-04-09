@@ -70,8 +70,8 @@ def trigger_ping():
 # ✅ Debug route: trigger a real SMS task immediately
 @app.get("/test-sms")
 def test_sms_now():
-    from app.celery_tasks import send_sms_task
-    send_sms_task.apply_async(args=[2])  # Use scheduled_sms ID 2
+    from app.celery_tasks import schedule_sms_task
+    schedule_sms_task.apply_async(args=[2])  # Use scheduled_sms ID 2
     return {"status": "SMS task dispatched"}
 
 # ✅ Print active routes

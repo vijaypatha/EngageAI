@@ -28,6 +28,7 @@ def schedule_sms_task(self, scheduled_sms_id: int):
     """
     db = SessionLocal()
     logger.info(f"[🔍 CELERY DB CHECK] Env: {os.getenv('DATABASE_URL')}")
+    logger.info(f"[🚀 CELERY RUNNING] Task started for scheduled_sms_id={scheduled_sms_id}")
 
     try:
         sms = db.query(ScheduledSMS).filter(ScheduledSMS.id == scheduled_sms_id).first()
