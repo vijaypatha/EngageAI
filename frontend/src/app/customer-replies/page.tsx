@@ -56,7 +56,7 @@ export default function CustomerRepliesPage() {
   const groupedReplies = replies.reduce((acc, reply) => {
     if (!acc[reply.customer_id]) {
       acc[reply.customer_id] = {
-        customer_name: reply.customer_name,
+        customer_name: reply.customer_name || `Customer ${reply.customer_id}`,
         messages: []
       };
     }
