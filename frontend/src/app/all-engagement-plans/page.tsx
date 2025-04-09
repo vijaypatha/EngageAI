@@ -238,14 +238,14 @@ const fetchSMSList = async () => {
                         }}
                       >
                         {sms.send_datetime_utc
-                          ? new Date(sms.send_datetime_utc).toLocaleString("en-US", {
-                              timeZone: "America/Denver",
+                          ? new Intl.DateTimeFormat("en-US", {
+                              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                               weekday: "long",
                               month: "short",
                               day: "numeric",
                               hour: "numeric",
                               minute: "2-digit",
-                            }) + " MDT"
+                            }).format(new Date(sms.send_datetime_utc))
                           : sms.smsTiming}
                       </h2>
                     )}
