@@ -19,7 +19,8 @@ celery.conf.timezone = "UTC"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@celery.task(bind=True, max_retries=3, default_retry_delay=60)
+@celery.task(bind=True, max_retries=3, default_retry_delay=60,  name="app.celery_tasks.schedule_sms_task",
+    queue="celery")
 def schedule_sms_task(self, scheduled_sms_id: int):
     """
     Celery task to send SMS by ID.

@@ -351,9 +351,9 @@ def get_reply_stats(business_id: int, db: Session = Depends(get_db)):
         "messages_total": total_drafted
     }
 
-@router.post("/debug/send-sms-now/{scheduled_id}")
+@router.post("/review/debug/send-sms-now/{scheduled_id}")
 def debug_send_sms_now(scheduled_id: int):
     from app.celery_tasks import schedule_sms_task
     print(f"🚨 Manually triggering SMS for ScheduledSMS id={scheduled_id}")
-    schedule_sms_task.apply_async(args=[scheduled_id])
+    schedule_sms_task.apply_async(args=[scheduled_id], kwargs={"force_send": True})
     return {"status": "task_triggered", "id": scheduled_id}
