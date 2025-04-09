@@ -152,7 +152,7 @@ const fetchSMSList = async () => {
     apiClient
       .put(
         `/review/update-time/${id}`,
-        { send_datetime_utc: new Date(String(value)).toISOString() },
+        { send_datetime_utc: value },
         { params: { source } }
       )
       .then(() => {
@@ -279,7 +279,7 @@ const fetchSMSList = async () => {
               const input = prompt("🛠 Enter new time (local):", new Date(firstTime).toISOString().slice(0, 16));
               if (!input) return;
 
-              const utcTime = new Date(String(input)).toISOString();
+              const utcTime = input;
 
               Promise.all(toEdit.map((sms) =>
                 apiClient.put(`/review/update-time/${sms.id}`, {

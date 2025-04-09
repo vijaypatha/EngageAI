@@ -19,9 +19,7 @@ interface SMSItem {
 }
 
 function convertToLocalInputFormat(isoString: string) {
-  const date = new Date(isoString);
-  const tzOffset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+  return isoString.slice(0, 16);
 }
 
 export default function RoadmapPage() {
@@ -262,10 +260,10 @@ export default function RoadmapPage() {
                                 className="bg-green-600 hover:bg-green-700 text-white text-sm"
                                 onClick={() => {
                                   const sms = roadmap[idx];
-                                  console.log("🧪 Saving datetime:", sms.send_datetime_utc, "→", new Date(String(sms.send_datetime_utc)).toISOString());
+                                  console.log("🧪 Saving datetime:", sms.send_datetime_utc, "→", sms.send_datetime_utc);
                                   apiClient
                                     .put(`/review/update-time/${sms.id}`, {
-                                      send_datetime_utc: new Date(String(sms.send_datetime_utc)).toISOString(),
+                                      send_datetime_utc: sms.send_datetime_utc,
                                     }, {
                                       params: { source: "roadmap" },
                                       headers: { "Content-Type": "application/json" },
@@ -286,10 +284,10 @@ export default function RoadmapPage() {
                                 className="text-sm text-white border-zinc-600"
                                 onClick={() => {
                                   const sms = roadmap[idx];
-                                  console.log("🧪 Saving datetime:", sms.send_datetime_utc, "→", new Date(String(sms.send_datetime_utc)).toISOString());
+                                  console.log("🧪 Saving datetime:", sms.send_datetime_utc, "→", sms.send_datetime_utc);
                                   apiClient
                                     .put(`/review/update-time/${sms.id}`, {
-                                      send_datetime_utc: new Date(String(sms.send_datetime_utc)).toISOString()
+                                      send_datetime_utc: sms.send_datetime_utc
                                     }, {
                                       params: { source: "roadmap" },
                                       headers: { "Content-Type": "application/json" },
