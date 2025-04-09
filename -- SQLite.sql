@@ -174,3 +174,10 @@ ALTER TABLE engagements ADD COLUMN sent_at DATETIME;
 ALTER TABLE business_profiles ADD COLUMN twilio_number VARCHAR;
 
 SeLECT * FROM business_profiles;
+
+
+sqlite3 database.db
+SELECT * FROM customers WHERE phone = '+13856268825';
+
+SELECT * FROM business_profiles;
+SELECT * FROM customers;
