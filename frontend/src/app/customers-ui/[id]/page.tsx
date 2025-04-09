@@ -174,13 +174,14 @@ export default function RoadmapPage() {
             <div className="space-y-6">
               {messages.map((sms, idx) => {
                 const formattedTime = sms.send_datetime_utc
-                  ? new Date(sms.send_datetime_utc).toLocaleString("en-US", {
+                  ? new Intl.DateTimeFormat("en-US", {
                       weekday: "long",
                       month: "short",
                       day: "numeric",
                       hour: "numeric",
                       minute: "2-digit",
-                    })
+                      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    }).format(new Date(sms.send_datetime_utc))
                   : sms.smsTiming;
 
                 return (
