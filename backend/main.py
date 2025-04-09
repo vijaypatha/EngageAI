@@ -71,6 +71,7 @@ def trigger_ping():
 @app.get("/test-sms")
 def test_sms_now():
     from app.celery_tasks import schedule_sms_task
+    print("🚀 [FASTAPI] Dispatching Celery task for scheduled_sms_id=2")
     schedule_sms_task.apply_async(args=[2])  # Use scheduled_sms ID 2
     return {"status": "SMS task dispatched"}
 
