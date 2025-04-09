@@ -43,3 +43,13 @@ def update_business_profile(business_id: int, update: BusinessProfileUpdate, db:
     db.commit()
     db.refresh(profile)
     return profile
+
+#  endpoint to get the business_id using the business_name
+@router.get("/business-id/{business_name}")
+def get_business_id_by_name(business_name: str, db: Session = Depends(get_db)):
+    business = db.query(BusinessProfile).filter(BusinessProfile.business_name == business_name).first()
+    
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+    
+    return {"business_id": business.id}
