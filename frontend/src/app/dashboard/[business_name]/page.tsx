@@ -140,6 +140,24 @@ export default function DashboardPage() {
     );
   }
 
+  if (!aiStyleTrained) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
+        <p>Let's train your SMS style first...</p>
+        {/* TODO: Replace with actual SMSStyleForm component */}
+      </div>
+    );
+  }
+
+  if (customers.length === 0) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
+        <p>Let’s add your first customer...</p>
+        {/* TODO: Replace with actual AddCustomerForm component */}
+      </div>
+    );
+  }
+
   // ✅ Main dashboard layout with 4 tiles
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-neutral-900 p-8 text-white font-sans">

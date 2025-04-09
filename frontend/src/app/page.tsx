@@ -1,8 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { useRouter } from "next/navigation";
-import { getCurrentBusiness } from "@/lib/utils"; 
+import { useRouter } from "next/navigation"; 
 import { useEffect } from "react";
 
 export default function LandingPage() {
@@ -60,11 +59,11 @@ export default function LandingPage() {
       <Button
         className="bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold transition duration-300 shadow-lg"
         onClick={async () => {
-          const business = await getCurrentBusiness();
-          if (business?.business_id) {
-            router.push("/dashboard/[business_name]");
+          const params = new URLSearchParams(window.location.search);
+          const businessNameFromQuery = params.get("business_name");
+          if (businessNameFromQuery) {
+            router.push(`/dashboard/${encodeURIComponent(businessNameFromQuery)}`);
           } else {
-            // Optionally handle the case where the business is not logged in yet.
             router.push("/add-business");
           }
         }}
