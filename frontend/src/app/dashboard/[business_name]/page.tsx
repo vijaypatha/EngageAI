@@ -43,6 +43,30 @@ interface EngagementStats {
   rejected: number;
 }
 
+const SMSStyleForm = ({ businessId }: { businessId: string }) => {
+  return (
+    <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
+      <div className="max-w-md text-center">
+        <h2 className="text-2xl font-bold mb-4">Train your SMS style</h2>
+        <p className="mb-4">This is a placeholder for the SMS style training form.</p>
+        {/* TODO: Add actual style training form here */}
+      </div>
+    </div>
+  );
+};
+
+const AddCustomerForm = ({ businessId }: { businessId: string }) => {
+  return (
+    <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
+      <div className="max-w-md text-center">
+        <h2 className="text-2xl font-bold mb-4">Add your first customer</h2>
+        <p className="mb-4">This is a placeholder for the customer form.</p>
+        {/* TODO: Add actual customer form here */}
+      </div>
+    </div>
+  );
+};
+
 export default function DashboardPage() {
   const params = useParams();
   const business_name = params?.business_name as string;
@@ -142,19 +166,13 @@ export default function DashboardPage() {
 
   if (!aiStyleTrained) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
-        <p>Let's train your SMS style first...</p>
-        {/* TODO: Replace with actual SMSStyleForm component */}
-      </div>
+      <SMSStyleForm businessId={businessId!} />
     );
   }
 
   if (customers.length === 0) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center text-xl">
-        <p>Let’s add your first customer...</p>
-        {/* TODO: Replace with actual AddCustomerForm component */}
-      </div>
+      <AddCustomerForm businessId={businessId!} />
     );
   }
 
