@@ -58,7 +58,9 @@ def schedule_sms_task(self, scheduled_sms_id: int):
 
         # Check time before sending
         if datetime.utcnow() >= sms.send_time.replace(tzinfo=None):
-            sid = send_sms_via_twilio(customer.phone, sms.message)
+            from app.models import BusinessProfile
+            business = db.query(BusinessProfile).filter(BusinessProfile.id == sms.business_id).first()
+            sid = send_sms_via_twilio(customer.phone, sms.message, business)
             sms.status = "sent"
             db.commit()
             logger.info(f"[✅ SMS {sms.id}] Sent! Twilio SID: {sid}")
