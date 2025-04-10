@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 from pydantic import BaseModel
 from app.database import get_db
-from app.models import Engagement, Customer, ScheduledSMS
+from app.models import Engagement, Customer, ScheduledSMS, BusinessProfile
 from app.celery_tasks import schedule_sms_task
 
 
@@ -125,8 +125,7 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
 def get_conversation_inbox(
     business_name: str = Query(...), db: Session = Depends(get_db)
 ):
-    customers = db.query(Customer).options(joinedload(Customer.business))\
-        .filter(Customer.business.has(name=business_name)).all()
+    customers = db.query(Customer).join(BusinessProfile).filter(BusinessProfile.business_name == business_name).all()
     inbox = []
 
     for customer in customers:
