@@ -18,15 +18,18 @@ export default function ConversationInbox() {
   const router = useRouter();
 
   useEffect(() => {
+    console.log("📍 Conversations page loaded");
     const loadInbox = async () => {
       const pathParts = window.location.pathname.split("/");
       const businessName = pathParts.includes("dashboard") ? pathParts[2] : null;
+      console.log("🧠 businessName:", businessName);
       if (!businessName) return;
 
       try {
         const res = await apiClient.get("/conversations", {
           params: { business_name: businessName },
         });
+        console.log("📬 conversations response:", res.data);
         setInbox(res.data.conversations);
       } catch (err) {
         console.error("Failed to load conversations:", err);
