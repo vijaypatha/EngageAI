@@ -1,10 +1,8 @@
-// 📄 File: /app/conversations/[id]/page.tsx — improved alignment, bubble color, and AI/manual distinction
-
 "use client";
 
 import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
-import { apiClient } from "@/lib/api";
+import { apiClient, getConversation, sendManualReply } from "@/lib/api"; // Add this
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getCurrentBusiness } from "@/lib/utils"; // ✅ Add at top
@@ -14,7 +12,8 @@ interface Message {
   sender: "customer" | "ai" | "owner";
   text: string;
   timestamp: string | null;
-  status?: string;
+  source: "ai_draft" | "manual_reply" | "scheduled_sms" | "customer_response";
+  direction: "incoming" | "outgoing";
 }
 
 export default function ConversationPage() {
@@ -31,19 +30,13 @@ export default function ConversationPage() {
     let interval: NodeJS.Timeout;
   
     const fetchConversation = async () => {
-      const session = await getCurrentBusiness();
-      if (!session?.business_id) return;
-  
-      const res = await apiClient.get(`/conversations/${customerId}`, {
-        params: { business_id: session.business_id },
-      });
-  
-      setMessages(res.data.messages);
-      setCustomerName(res.data.customer.name);
+      const res = await getConversation(customerId);
+      setMessages(res.messages);
+      setCustomerName(res.customer.name);
     };
   
     fetchConversation(); // fetch on mount
-    interval = setInterval(fetchConversation, 1000); // refresh every 1s
+    interval = setInterval(fetchConversation, 20000); // every 20s
   
     return () => clearInterval(interval);
   }, [customerId]);
@@ -58,16 +51,16 @@ export default function ConversationPage() {
     await apiClient.post(`/conversations/${customerId}/reply`, { message: editedMessage });
     setEditingIndex(null);
     setEditedMessage("");
-    const updated = await apiClient.get(`/conversations/${customerId}`);
-    setMessages(updated.data.messages);
+    const updated = await getConversation(customerId);
+    setMessages(updated.messages);
   };
 
   const handleManualSend = async () => {
     if (!inputText.trim()) return;
-    await apiClient.post(`/conversations/${customerId}/reply`, { message: inputText });
+    await sendManualReply(customerId, inputText);
     setInputText("");
-    const updated = await apiClient.get(`/conversations/${customerId}`);
-    setMessages(updated.data.messages);
+    const updated = await getConversation(customerId);
+    setMessages(updated.messages);
   };
 
   return (
@@ -76,23 +69,24 @@ export default function ConversationPage() {
 
       <div className="flex-1 space-y-4 overflow-y-auto mb-4">
         {messages.map((msg, i) => {
-          const isCustomer = msg.sender === "customer";
-          const isAI = msg.sender === "ai";
-          const isManual = msg.sender === "owner";
-          const isPending = msg.status === "pending_review";
+          const isIncoming = msg.direction === "incoming";
+          const isOutgoing = msg.direction === "outgoing";
+          const isPending = msg.source === "ai_draft";
+          const isScheduled = msg.source === "scheduled_sms";
+          const isManual = msg.source === "manual_reply";
 
           return (
-            <div key={i} className={`flex ${isCustomer ? "justify-start" : "justify-end"}`}>
+            <div key={i} className={`flex ${isIncoming ? "justify-start" : "justify-end"}`}>
               <div
                 className={`max-w-[75%] p-4 rounded-lg whitespace-pre-wrap text-sm
-                  ${isCustomer ? "bg-zinc-700 text-white" : ""}
-                  ${isAI && !isPending ? "bg-blue-800 text-blue-100" : ""}
-                  ${isAI && isPending ? "bg-blue-900 text-blue-100" : ""}
+                  ${isIncoming ? "bg-zinc-700 text-white" : ""}
+                  ${isPending ? "bg-blue-900 text-blue-100" : ""}
+                  ${isScheduled ? "bg-indigo-700 text-white" : ""}
                   ${isManual ? "bg-green-800 text-green-100" : ""}`}
               >
                 <div className="flex justify-between items-start">
                   <p className="flex-1">{msg.text}</p>
-                  {isAI && isPending && (
+                  {isPending && (
                     <div className="flex gap-2 ml-4">
                       <Button size="sm" className="bg-yellow-500 text-black hover:bg-yellow-400" onClick={() => {
                         setEditingIndex(i);
@@ -114,13 +108,13 @@ export default function ConversationPage() {
                   </div>
                 )}
 
-                {isPending && <p className="text-xs italic text-yellow-300 mt-1">Pending Approval</p>}
                 {msg.timestamp && <p className="text-xs text-zinc-400 mt-1 text-right">{new Date(msg.timestamp).toLocaleString()}</p>}
-                {!isCustomer && (
-                  <p className="text-xs text-zinc-400 mt-1 text-right italic">
-                    {isAI ? "AI Response" : "Manual Reply"}
-                  </p>
-                )}
+                <p className="text-xs text-zinc-400 mt-1 text-right italic">
+                  {msg.source === "ai_draft" ? "AI Draft" :
+                   msg.source === "manual_reply" ? "Manual Reply" :
+                   msg.source === "scheduled_sms" ? "Scheduled" :
+                   "Customer Response"}
+                </p>
               </div>
             </div>
           );

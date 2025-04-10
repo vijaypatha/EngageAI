@@ -4,6 +4,7 @@ from app.database import get_db
 from app.models import Engagement, Customer, BusinessProfile
 from app.services.twilio_sms_service import send_sms_via_twilio  
 from datetime import datetime
+from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -62,3 +63,22 @@ def send_reply(id: int, db: Session = Depends(get_db)):
     engagement.sent_at = datetime.utcnow()
     db.commit()
     return {"message": "Reply sent successfully"}
+
+class ManualReplyPayload(BaseModel):
+    message: str
+
+@router.post("/manual-reply/{customer_id}")
+def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: Session = Depends(get_db)):
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    new_engagement = Engagement(
+        customer_id=customer_id,
+        ai_response=payload.message,
+        status="sent",
+        sent_at=datetime.utcnow()
+    )
+    db.add(new_engagement)
+    db.commit()
+    return {"message": "Manual reply saved successfully."}

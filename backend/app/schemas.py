@@ -1,5 +1,5 @@
 from pydantic import BaseModel, constr, Field, EmailStr
-from typing import Optional, Annotated
+from typing import Optional, Annotated, List
 
 ### ✅ Business Schemas
 class BusinessProfileCreate(BaseModel):
@@ -76,5 +76,14 @@ class AllRoadmapMessagesResponse(BaseModel):
     total: int
     scheduledThisWeek: int
     messages: list[RoadmapMessageOut]
-    
-    
+
+class ConversationMessage(BaseModel):
+    sender: str  # "customer", "ai", or "owner"
+    text: str
+    timestamp: Optional[str] = None
+    source: str  # "ai_draft", "manual_reply", "scheduled_sms", "customer_response"
+    direction: str  # "incoming" or "outgoing"
+
+class ConversationResponse(BaseModel):
+    customer: dict  # Contains "id" and "name"
+    messages: List[ConversationMessage]

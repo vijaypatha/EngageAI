@@ -1,5 +1,3 @@
-# 📄 File: app/routes/conversations.py (updated with inbox route)
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -20,39 +18,62 @@ def get_conversation(customer_id: int, db: Session = Depends(get_db)):
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    messages = db.query(Engagement)\
+    engagements = db.query(Engagement)\
         .filter(Engagement.customer_id == customer_id)\
-        .order_by(Engagement.id.asc())\
+        .all()
+
+    scheduled_sms = db.query(ScheduledSMS)\
+        .filter(ScheduledSMS.customer_id == customer_id)\
         .all()
 
     conversation = []
-    for msg in messages:
+
+    for msg in engagements:
         if msg.response:
             conversation.append({
                 "sender": "customer",
                 "text": msg.response,
-                "timestamp": msg.sent_at or None
+                "timestamp": msg.sent_at,
+                "source": "customer_response",
+                "direction": "incoming"
             })
         if msg.ai_response and msg.status != "sent":
             conversation.append({
                 "sender": "ai",
                 "text": msg.ai_response,
-                "status": msg.status,
-                "timestamp": None
+                "timestamp": None,
+                "source": "ai_draft",
+                "direction": "outgoing"
             })
         if msg.ai_response and msg.status == "sent":
             conversation.append({
                 "sender": "owner",
                 "text": msg.ai_response,
-                "timestamp": msg.sent_at
+                "timestamp": msg.sent_at,
+                "source": "manual_reply",
+                "direction": "outgoing"
             })
+
+    for sms in scheduled_sms:
+        conversation.append({
+            "sender": "owner",
+            "text": sms.message,
+            "timestamp": sms.send_time,
+            "source": "scheduled_sms",
+            "direction": "outgoing"
+        })
+
+    sorted_conversation = sorted(
+        conversation,
+        key=lambda m: m["timestamp"] or datetime.min
+    )
 
     return {
         "customer": {
             "id": customer.id,
             "name": customer.customer_name
         },
-        "messages": conversation
+        "messages": sorted_conversation
     }
 
 # -------------------------------
