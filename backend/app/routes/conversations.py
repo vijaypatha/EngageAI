@@ -122,28 +122,31 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
 # GET inbox summary: all customers with conversations
 # -------------------------------
 @router.get("/")
-def get_conversation_inbox(
-    business_name: str = Query(...), db: Session = Depends(get_db)
-):
-    customers = db.query(Customer).join(BusinessProfile).filter(BusinessProfile.business_name == business_name).all()
-    inbox = []
+def get_open_conversations(business_name: str = Query(...), db: Session = Depends(get_db)):
+    business = db.query(BusinessProfile).filter(BusinessProfile.business_name == business_name).first()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+
+    customers = db.query(Customer).filter(Customer.business_id == business.id).all()
+    result = []
 
     for customer in customers:
-        latest = db.query(Engagement)\
-            .filter(Engagement.customer_id == customer.id)\
-            .order_by(Engagement.id.desc())\
+        last_engagement = (
+            db.query(Engagement)
+            .filter(Engagement.customer_id == customer.id)
+            .order_by(Engagement.sent_at.desc())
             .first()
-
-        if latest and latest.status == "pending_review":
-            inbox.append({
+        )
+        if last_engagement:
+            result.append({
                 "customer_id": customer.id,
                 "customer_name": customer.customer_name,
-                "last_message": latest.response or latest.ai_response,
-                "status": latest.status,
-                "timestamp": latest.sent_at.isoformat() if latest and latest.sent_at else None
+                "last_message": last_engagement.response or last_engagement.ai_response,
+                "status": "pending_review" if last_engagement.response and not last_engagement.ai_response else "replied",
+                "timestamp": last_engagement.sent_at.isoformat() if last_engagement.sent_at else None,
             })
 
     # Sort by most recent
-    inbox.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+    result.sort(key=lambda x: x["timestamp"] or "", reverse=True)
 
-    return {"conversations": inbox}
+    return {"conversations": result}
