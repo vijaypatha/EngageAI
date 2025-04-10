@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 from pydantic import BaseModel
 from app.database import get_db
@@ -122,9 +122,11 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
 # GET inbox summary: all customers with conversations
 # -------------------------------
 @router.get("/")
-def get_conversation_inbox(db: Session = Depends(get_db)):
-    # 1. Get all customers who have at least one engagement
-    customers = db.query(Customer).all()
+def get_conversation_inbox(
+    business_name: str = Query(...), db: Session = Depends(get_db)
+):
+    customers = db.query(Customer).options(joinedload(Customer.business))\
+        .filter(Customer.business.has(name=business_name)).all()
     inbox = []
 
     for customer in customers:
