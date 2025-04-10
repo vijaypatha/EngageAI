@@ -9,3 +9,15 @@ export const apiClient = axios.create({
   baseURL,
   withCredentials: true, // Add this line to include credentials (cookies) in requests
 });
+
+export async function sendManualReply(customerId: number, message: string) {
+  const res = await apiClient.post(`/engagements/manual-reply/${customerId}`, {
+    message,
+  });
+  return res.data;
+}
+
+export async function getConversation(customerId: number) {
+  const res = await apiClient.get(`/conversations/${customerId}`);
+  return res.data;
+}
