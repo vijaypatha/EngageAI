@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 from pydantic import BaseModel
 from app.database import get_db
-from app.models import Engagement, Customer, ScheduledSMS
+from app.models import Engagement, Customers, ScheduledSMS
 from app.celery_tasks import schedule_sms_task
 
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/conversations", tags=["Conversations"])
 # -------------------------------
 @router.get("/{customer_id}")
 def get_conversation(customer_id: int, db: Session = Depends(get_db)):
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = db.query(Customers).filter(Customers.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
@@ -84,7 +84,7 @@ class ManualReplyInput(BaseModel):
 
 @router.post("/{customer_id}/reply")
 def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session = Depends(get_db)):
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = db.query(Customers).filter(Customers.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
@@ -125,8 +125,8 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
 def get_conversation_inbox(
     business_name: str = Query(...), db: Session = Depends(get_db)
 ):
-    customers = db.query(Customer).options(joinedload(Customer.business))\
-        .filter(Customer.business.has(name=business_name)).all()
+    customers = db.query(Customers).options(joinedload(Customers.business))\
+        .filter(Customers.business.has(name=business_name)).all()
     inbox = []
 
     for customer in customers:
