@@ -50,6 +50,17 @@ export default function CustomerRepliesPage() {
     if (business_name) loadReplies(); // ✅ Ensure it's defined
   }, [business_name]);
 
+  const handleSend = async (id: number) => {
+    try {
+      await apiClient.post(`/review/customer-replies/send/${id}`);
+      setReplies((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, status: "sent" } : r))
+      );
+    } catch (err) {
+      console.error("❌ Failed to send reply:", err);
+    }
+  };
+
   const groupedReplies = replies.reduce((acc, reply) => {
     if (!acc[reply.customer_id]) {
       acc[reply.customer_id] = {
