@@ -20,8 +20,12 @@ export default function ConversationInbox() {
   useEffect(() => {
     console.log("📍 Conversations page loaded");
     const loadInbox = async () => {
-      const pathParts = window.location.pathname.split("/");
-      const businessName = pathParts.includes("dashboard") ? pathParts[2] : null;
+      const pathParts = window.location.pathname.split("/").filter(Boolean);
+      const businessName = pathParts.includes("dashboard")
+        ? pathParts[1]
+        : pathParts.length >= 2
+        ? pathParts[1]
+        : null;
       console.log("🧠 businessName:", businessName);
       if (!businessName) return;
 
