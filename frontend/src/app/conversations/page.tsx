@@ -1,5 +1,3 @@
-// 📄 File: /app/conversations/page.tsx
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -56,17 +54,21 @@ export default function ConversationInbox() {
           {inbox.map((item) => (
             <div
               key={item.customer_id}
-              className="bg-zinc-800 p-4 rounded-lg border border-zinc-700 hover:border-blue-400 transition cursor-pointer"
+              className="bg-zinc-900 p-4 rounded-lg border border-zinc-700 hover:border-blue-500 transition cursor-pointer shadow-sm"
               onClick={() => router.push(`/conversations/${item.customer_id}`)}
             >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-bold text-lg">{item.customer_name}</span>
-                <span className="text-xs text-zinc-400">{formatTime(item.timestamp)}</span>
-              </div>
-              <p className="text-zinc-300 text-sm line-clamp-2 mb-1">{item.last_message}</p>
-              <div className="text-xs text-blue-400 flex items-center gap-1">
-                {item.status === "pending_review" ? <Clock size={14} /> : <Send size={14} />}
-                <span>{item.status === "pending_review" ? "Awaiting reply" : "You replied"}</span>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-semibold text-lg text-white">{item.customer_name}</h2>
+                  <p className="text-sm text-zinc-300 mt-1 line-clamp-2">{item.last_message}</p>
+                </div>
+                <div className="text-right text-xs text-zinc-400 ml-4">
+                  <p>{formatTime(item.timestamp)}</p>
+                  <div className="flex justify-end items-center gap-1 mt-1 text-blue-400">
+                    {item.status === "pending_review" ? <Clock size={14} /> : <Send size={14} />}
+                    <span>{item.status === "pending_review" ? "Awaiting reply" : "You replied"}</span>
+                  </div>
+                </div>
               </div>
             </div>
           ))}

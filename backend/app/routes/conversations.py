@@ -133,14 +133,16 @@ def get_conversation_inbox(db: Session = Depends(get_db)):
             .order_by(Engagement.id.desc())\
             .first()
 
-        if latest and (latest.response or latest.ai_response):
+        if latest and latest.status == "pending_review":
             inbox.append({
                 "customer_id": customer.id,
                 "customer_name": customer.customer_name,
                 "last_message": latest.response or latest.ai_response,
                 "status": latest.status,
                 "timestamp": latest.sent_at.isoformat() if latest and latest.sent_at else None
-
             })
+
+    # Sort by most recent
+    inbox.sort(key=lambda x: x["timestamp"] or "", reverse=True)
 
     return {"conversations": inbox}
