@@ -24,35 +24,31 @@ export default function CustomerRepliesPage() {
   const [selectAll, setSelectAll] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
 
+  const params = useParams();
+  const business_name = params?.business_name as string;
+
   useEffect(() => {
     const loadReplies = async () => {
-      const params = useParams(); // ✅ Updated
-      const business_name = params?.business_name as string; // ✅ Updated
-      const resId = await apiClient.get(`/business-profile/business-id/${business_name}`); // ✅ Updated
-      const business_id = resId.data.business_id; // ✅ Updated
-  
-      try {
-        const res = await apiClient.get("/review/customer-replies", { // ✅ Updated
-          params: { business_id },
-        });
-  
-        setReplies(res.data);
-  
-        const initialCollapse: Record<number, boolean> = {};
-        res.data.forEach((reply: Engagement) => {
-          if (!initialCollapse.hasOwnProperty(reply.customer_id)) {
-            initialCollapse[reply.customer_id] = true;
-          }
-        });
-        setCollapsed(initialCollapse);
-      } catch (err) {
-        console.error("❌ Failed to load replies:", err);
-      }
+      const resId = await apiClient.get(`/business-profile/business-id/${business_name}`);
+      const business_id = resId.data.business_id;
+
+      const res = await apiClient.get("/review/customer-replies", {
+        params: { business_id },
+      });
+
+      setReplies(res.data);
+
+      const initialCollapse: Record<number, boolean> = {};
+      res.data.forEach((reply: Engagement) => {
+        if (!initialCollapse.hasOwnProperty(reply.customer_id)) {
+          initialCollapse[reply.customer_id] = true;
+        }
+      });
+      setCollapsed(initialCollapse);
     };
-  
-    loadReplies(); // ✅ Call once on mount
-  }, []);
-  
+
+    if (business_name) loadReplies(); // ✅ Ensure it's defined
+  }, [business_name]);
 
   const groupedReplies = replies.reduce((acc, reply) => {
     if (!acc[reply.customer_id]) {
