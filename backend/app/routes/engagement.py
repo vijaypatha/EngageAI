@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Engagement, Customer
+from app.models import Engagement, Customer, BusinessProfile
 from app.services.twilio_sms_service import send_sms_via_twilio  
 from datetime import datetime
 
@@ -45,9 +45,14 @@ def send_reply(id: int, db: Session = Depends(get_db)):
     if not customer.phone:
         raise HTTPException(status_code=400, detail="Customer phone number is missing")
 
+    # 3.5 Fetch business details
+    business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+
     # 4. Send SMS using Twilio
     try:
-        send_sms_via_twilio(to=customer.phone, message=engagement.ai_response)
+        send_sms_via_twilio(to=customer.phone, message=engagement.ai_response, business=business)
     except Exception as e:
         print(f"❌ Twilio send failed: {e}")  # <== This line will log the exact cause
         raise HTTPException(status_code=500, detail=f"Failed to send SMS: {str(e)}")
