@@ -3,9 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
-import { MessageSquare, Clock, Send } from "lucide-react";
-import { getCurrentBusiness } from "@/lib/utils"; // ✅ Add to your imports
-
+import { MessageSquare, Clock, Send } from "lucide-react"; 
 
 interface InboxEntry {
   customer_id: number;
@@ -21,12 +19,13 @@ export default function ConversationInbox() {
 
   useEffect(() => {
     const loadInbox = async () => {
-      const session = await getCurrentBusiness();
-      if (!session?.business_id) return;
-  
+      const pathParts = window.location.pathname.split("/");
+      const businessName = pathParts.includes("dashboard") ? pathParts[2] : null;
+      if (!businessName) return;
+
       try {
         const res = await apiClient.get("/conversations", {
-          params: { business_id: session.business_id },
+          params: { business_name: businessName },
         });
         setInbox(res.data.conversations);
       } catch (err) {
