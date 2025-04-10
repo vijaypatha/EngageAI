@@ -279,7 +279,7 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
-          {renderTileButton("Review & Reply", () => router.push("/customer-replies"))}
+          {renderTileButton("Review & Reply", () => router.push(`/customer-replies/${business_name}`))}
         </div>
 
         {/* 💬 Open Conversations */}
