@@ -25,7 +25,7 @@ export default function ConversationInbox() {
       if (!business_name) return;
 
       try {
-        const res = await apiClient.get("/conversations", {
+        const res = await apiClient.get("/conversations/inbox", {
           params: { business_name },
         });
         console.log("📬 conversations response:", res.data);

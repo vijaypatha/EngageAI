@@ -12,7 +12,7 @@ router = APIRouter(prefix="/conversations", tags=["Conversations"])
 # -------------------------------
 # GET inbox summary: all customers with conversations
 # -------------------------------
-@router.get("/")
+@router.get("/inbox")
 def get_open_conversations(business_name: str = Query(...), db: Session = Depends(get_db)):
     business = db.query(BusinessProfile).filter(BusinessProfile.business_name == business_name).first()
     if not business:
