@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
+import { useRouter } from "next/router";
 
 interface Message {
   id: number;
@@ -12,7 +13,8 @@ interface Message {
 }
 
 export default function ConversationThread() {
-  const { id } = useParams();
+  const router = useRouter();
+const id = router.query.id;
   const [messages, setMessages] = useState<Message[]>([]);
 
   useEffect(() => {
