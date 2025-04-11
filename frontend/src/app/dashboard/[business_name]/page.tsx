@@ -241,8 +241,10 @@ export default function DashboardPage() {
             <p className="text-5xl font-bold text-green-400 mb-2">{contactStats.total_customers}</p>
             <p className="text-sm text-zinc-400 mb-6">{contactStats.without_engagement} without engagement plan</p>
           </div>
-          <Link href={`/customers-ui/${business_name}`} passHref>
-            {renderTileButton("Manage Community", () => {})}
+          <Link href={`/customers-ui/${business_name}`}>
+            <Button className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold transition duration-300 shadow-lg">
+              Manage Community
+            </Button>
           </Link>
         </div>
 
@@ -257,8 +259,10 @@ export default function DashboardPage() {
               <StatItem label="Sent" value={engagementStats?.sent ?? 0} icon={<Send size={16} className="text-white" />} tooltip="Messages successfully sent" />
             </div>
           </div>
-          <Link href={`/all-engagement-plans/${business_name}`} passHref>
-            {renderTileButton("Manage Plans", () => {})}
+          <Link href={`/all-engagement-plans/${business_name}`}>
+            <Button className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold transition duration-300 shadow-lg">
+              Manage Plans
+            </Button>
           </Link>
         </div>
 
