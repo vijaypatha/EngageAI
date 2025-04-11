@@ -149,4 +149,4 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
     # 4. Trigger Celery task
     schedule_sms_task.delay(scheduled_sms.id)
 
-    return {"message": "Reply sent and scheduled"}
+    return {"status": "success", "message": "Reply sent and scheduled", "scheduled_sms_id": scheduled_sms.id}
