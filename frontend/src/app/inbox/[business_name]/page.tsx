@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
-import { MessageSquare, Clock, Send } from "lucide-react";
+import { MessageSquare, Send } from "lucide-react";
 
 interface InboxEntry {
   customer_id: number;
@@ -22,7 +22,7 @@ export default function ConversationInbox() {
     const loadInbox = async () => {
       if (!business_name) return;
       const res = await apiClient.get("/conversations/inbox", {
-        params: { business_name },
+        params: { business_name: decodeURIComponent(business_name as string) },
       });
       setInbox(res.data.conversations);
     };
