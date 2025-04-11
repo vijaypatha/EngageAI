@@ -19,20 +19,12 @@ export default function ConversationInbox() {
   const { business_name } = useParams();
 
   useEffect(() => {
-    console.log("📍 Conversations page loaded");
     const loadInbox = async () => {
-      console.log("🧠 businessName:", business_name);
       if (!business_name) return;
-
-      try {
-        const res = await apiClient.get("/conversations/inbox", {
-          params: { business_name },
-        });
-        console.log("📬 conversations response:", res.data);
-        setInbox(res.data.conversations);
-      } catch (err) {
-        console.error("Failed to load conversations:", err);
-      }
+      const res = await apiClient.get("/conversations/inbox", {
+        params: { business_name },
+      });
+      setInbox(res.data.conversations);
     };
 
     loadInbox();
