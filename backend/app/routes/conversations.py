@@ -10,6 +10,39 @@ from app.celery_tasks import schedule_sms_task
 router = APIRouter(prefix="/conversations", tags=["Conversations"])
 
 # -------------------------------
+# GET inbox summary: all customers with conversations
+# -------------------------------
+@router.get("/")
+def get_open_conversations(business_name: str = Query(...), db: Session = Depends(get_db)):
+    business = db.query(BusinessProfile).filter(BusinessProfile.business_name == business_name).first()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+
+    customers = db.query(Customer).filter(Customer.business_id == business.id).all()
+    result = []
+
+    for customer in customers:
+        last_engagement = (
+            db.query(Engagement)
+            .filter(Engagement.customer_id == customer.id)
+            .order_by(Engagement.sent_at.desc())
+            .first()
+        )
+        if last_engagement:
+            result.append({
+                "customer_id": customer.id,
+                "customer_name": customer.customer_name,
+                "last_message": last_engagement.response or last_engagement.ai_response,
+                "status": "pending_review" if last_engagement.response and not last_engagement.ai_response else "replied",
+                "timestamp": last_engagement.sent_at.isoformat() if last_engagement.sent_at else None,
+            })
+
+    # Sort by most recent
+    result.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+
+    return {"conversations": result}
+
+# -------------------------------
 # GET full chat history for a specific customer
 # -------------------------------
 @router.get("/{customer_id}")
@@ -117,36 +150,3 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
     schedule_sms_task.delay(scheduled_sms.id)
 
     return {"message": "Reply sent and scheduled"}
-
-# -------------------------------
-# GET inbox summary: all customers with conversations
-# -------------------------------
-@router.get("/")
-def get_open_conversations(business_name: str = Query(...), db: Session = Depends(get_db)):
-    business = db.query(BusinessProfile).filter(BusinessProfile.business_name == business_name).first()
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
-
-    customers = db.query(Customer).filter(Customer.business_id == business.id).all()
-    result = []
-
-    for customer in customers:
-        last_engagement = (
-            db.query(Engagement)
-            .filter(Engagement.customer_id == customer.id)
-            .order_by(Engagement.sent_at.desc())
-            .first()
-        )
-        if last_engagement:
-            result.append({
-                "customer_id": customer.id,
-                "customer_name": customer.customer_name,
-                "last_message": last_engagement.response or last_engagement.ai_response,
-                "status": "pending_review" if last_engagement.response and not last_engagement.ai_response else "replied",
-                "timestamp": last_engagement.sent_at.isoformat() if last_engagement.sent_at else None,
-            })
-
-    # Sort by most recent
-    result.sort(key=lambda x: x["timestamp"] or "", reverse=True)
-
-    return {"conversations": result}
