@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { getCurrentBusiness } from "@/lib/utils";
+import Link from 'next/link';
 import {
   Tooltip,
   TooltipContent,
@@ -240,7 +241,9 @@ export default function DashboardPage() {
             <p className="text-5xl font-bold text-green-400 mb-2">{contactStats.total_customers}</p>
             <p className="text-sm text-zinc-400 mb-6">{contactStats.without_engagement} without engagement plan</p>
           </div>
-          {renderTileButton("Manage Community", () => router.push(`/customers-ui/${business_name}`))}
+          <Link href={`/customers-ui/${business_name}`} passHref>
+            {renderTileButton("Manage Community", () => {})}
+          </Link>
         </div>
 
         {/* ✉️ Community Outreach Plan */}
@@ -254,7 +257,9 @@ export default function DashboardPage() {
               <StatItem label="Sent" value={engagementStats?.sent ?? 0} icon={<Send size={16} className="text-white" />} tooltip="Messages successfully sent" />
             </div>
           </div>
-          {renderTileButton("Manage Plans", () => router.push(`/all-engagement-plans/${business_name}`))}
+          <Link href={`/all-engagement-plans/${business_name}`} passHref>
+            {renderTileButton("Manage Plans", () => {})}
+          </Link>
         </div>
 
         {/* 🤖 Community Responses */}
