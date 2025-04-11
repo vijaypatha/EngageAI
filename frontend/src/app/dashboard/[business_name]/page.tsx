@@ -240,7 +240,7 @@ export default function DashboardPage() {
             <p className="text-5xl font-bold text-green-400 mb-2">{contactStats.total_customers}</p>
             <p className="text-sm text-zinc-400 mb-6">{contactStats.without_engagement} without engagement plan</p>
           </div>
-          {renderTileButton("Manage Community", () => router.push("/customers-ui"))}
+          {renderTileButton("Manage Community", () => router.push(`/customers-ui/${business_name}`))}
         </div>
 
         {/* ✉️ Community Outreach Plan */}
