@@ -45,7 +45,7 @@ def get_open_conversations(business_name: str = Query(...), db: Session = Depend
 # -------------------------------
 # GET full chat history for a specific customer
 # -------------------------------
-@router.get("/{customer_id}")
+@router.get("/customer/{customer_id}")
 def get_conversation(customer_id: int, db: Session = Depends(get_db)):
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
@@ -115,7 +115,7 @@ def get_conversation(customer_id: int, db: Session = Depends(get_db)):
 class ManualReplyInput(BaseModel):
     message: str
 
-@router.post("/{customer_id}/reply")
+@router.post("/customer/{customer_id}/reply")
 def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session = Depends(get_db)):
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
