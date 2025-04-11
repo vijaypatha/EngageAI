@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
-import { useRouter } from "next/router";
 
 interface Message {
   id: number;
@@ -12,33 +11,35 @@ interface Message {
   timestamp: string;
 }
 
-export default function ConversationThread() {
-  const router = useRouter();
-const id = router.query.id;
+export default function ConversationPage() {
+  const { id } = useParams();
   const [messages, setMessages] = useState<Message[]>([]);
 
   useEffect(() => {
-    const loadMessages = async () => {
+    if (!id) return;
+    const load = async () => {
       const res = await apiClient.get(`/conversations/customer/${id}`);
       setMessages(res.data.messages);
     };
-    loadMessages();
+    load();
   }, [id]);
 
   return (
     <div className="p-4 space-y-4">
-      <h2 className="text-xl font-semibold mb-4">Conversation with Customer #{id}</h2>
+      <h2 className="text-xl font-semibold mb-4">Conversation #{id}</h2>
       {messages.map((msg) => (
         <div
           key={msg.id}
           className={`max-w-md p-3 rounded-lg shadow ${
             msg.direction === "inbound"
-              ? "bg-gray-100 self-start"
-              : "bg-blue-500 text-white self-end ml-auto"
+              ? "bg-gray-100 text-black self-start"
+              : "bg-blue-600 text-white self-end ml-auto"
           }`}
         >
           <div className="text-sm">{msg.content}</div>
-          <div className="text-xs text-right opacity-60 mt-1">{new Date(msg.timestamp).toLocaleString()}</div>
+          <div className="text-xs text-right opacity-60 mt-1">
+            {new Date(msg.timestamp).toLocaleString()}
+          </div>
         </div>
       ))}
     </div>
