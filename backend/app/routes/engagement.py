@@ -73,12 +73,22 @@ def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: Session
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
+    business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+
+    try:
+        send_sms_via_twilio(to=customer.phone, message=payload.message, business=business)
+    except Exception as e:
+        print(f"❌ Twilio send failed for manual reply: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send SMS: {str(e)}")
+
     new_engagement = Engagement(
         customer_id=customer_id,
-        ai_response=payload.message,
+        ai_response=payload.message,  # Consider renaming this field or using a different one for manual messages
         status="sent",
         sent_at=datetime.utcnow()
     )
     db.add(new_engagement)
     db.commit()
-    return {"message": "Manual reply saved successfully."}
+    return {"message": "Manual reply sent and saved successfully."}

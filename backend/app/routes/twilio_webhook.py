@@ -28,10 +28,19 @@ async def receive_sms(request: Request, db: Session = Depends(get_db)):
         content_type = request.headers.get("content-type")
         print("📥 Content-Type:", content_type)
 
+        raw = await request.body()
+        print("🧪 Raw Body:", raw)
+        print("🧪 Headers:", request.headers)
+
         form = await request.form()
+        print(f"🧪 form['To']: {form.get('To')}")
+        print(f"🧪 form data: {dict(form)}")
         from_number = normalize_phone(form.get("From") or "")
         to_number = normalize_phone(form.get("To") or "")
         body = form.get("Body")
+
+        if not body:
+            print("⚠️ No SMS body received.")
 
         print(f"🔍 Incoming SMS: From={from_number}, To={to_number}, Body={body}")
 
@@ -58,7 +67,8 @@ async def receive_sms(request: Request, db: Session = Depends(get_db)):
         engagement = Engagement(
             customer_id=customer.id,
             response=body,
-            ai_response=ai_response  # Stored for manual review
+            ai_response=ai_response,  # Stored for manual review
+            status="pending_review"
         )
         db.add(engagement)
         db.commit()

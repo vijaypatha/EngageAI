@@ -9,6 +9,7 @@ class BusinessProfile(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     business_name = Column(String, unique=True, index=True)
+    slug = Column(String, unique=True, index=True)
     industry = Column(String)
     business_goal = Column(String, nullable=True)
     primary_services = Column(String, nullable=True)

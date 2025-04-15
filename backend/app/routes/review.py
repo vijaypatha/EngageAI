@@ -1,3 +1,5 @@
+print("✅ review.py loaded")
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -22,7 +24,7 @@ def get_engagement_plan(customer_id: int, db: Session = Depends(get_db)):
             RoadmapMessage.customer_id == customer_id,
             RoadmapMessage.send_datetime_utc != None,
             RoadmapMessage.send_datetime_utc >= now_utc,
-            RoadmapMessage.status != "scheduled"
+            RoadmapMessage.status != "deleted"
         )
     ).all()
 
@@ -110,6 +112,11 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "already scheduled"}
 
+@router.put("/{roadmap_id}/schedule")
+def schedule_message_alias(roadmap_id: int, db: Session = Depends(get_db)):
+    """Alias for /approve to support consistent frontend naming."""
+    return schedule_message(roadmap_id, db)
+
 @router.put("/{roadmap_id}/reject")
 def reject_message(roadmap_id: int, db: Session = Depends(get_db)):
     msg = db.query(RoadmapMessage).filter(RoadmapMessage.id == roadmap_id).first()
@@ -165,7 +172,7 @@ def get_engagement_stats(business_id: int, db: Session = Depends(get_db)):
     scheduled = db.query(ScheduledSMS).join(Customer).filter(Customer.business_id == business_id)
 
     return {
-        "total_contacts": total_customers,
+        "communitySize": total_customers,
         "pending": roadmap.filter(RoadmapMessage.status == "pending_review").count(),
         "rejected": roadmap.filter(RoadmapMessage.status == "rejected").count(),
         "scheduled": scheduled.filter(ScheduledSMS.status == "scheduled").count(),
@@ -261,6 +268,12 @@ def update_message_time(
             raise HTTPException(status_code=404, detail="Scheduled message not found")
         print("🕓 Before:", message.send_time)
         message.send_time = new_time
+        from app.celery_tasks import schedule_sms_task
+        print(f"📤 Re-enqueuing SMS {message.id} for {new_time}")
+        schedule_sms_task.apply_async(
+            args=[message.id],
+            eta=new_time,
+        )
         print("✅ After:", message.send_time)
 
     else:
@@ -322,6 +335,10 @@ def get_customer_replies(
             "response": e.response,
             "ai_response": e.ai_response,
             "status": e.status,
+            "phone": e.customer.phone if e.customer else None,
+            "lifecycle_stage": e.customer.lifecycle_stage if e.customer else None,
+            "pain_points": e.customer.pain_points if e.customer else None,
+            "interaction_history": e.customer.interaction_history if e.customer else None,
         }
         for e in results
     ]
@@ -357,3 +374,58 @@ def debug_send_sms_now(scheduled_id: int):
     print(f"🚨 Manually triggering SMS for ScheduledSMS id={scheduled_id}")
     schedule_sms_task.apply_async(args=[scheduled_id], kwargs={"force_send": True})
     return {"status": "task_triggered", "id": scheduled_id}
+
+
+@router.get("/full-customer-history")
+def get_full_customer_history(
+    business_id: int = Query(...),
+    db: Session = Depends(get_db)
+):
+    results = (
+        db.query(Engagement)
+        .join(Engagement.customer)
+        .filter(Customer.business_id == business_id)
+        .all()
+    )
+
+    return [
+        {
+            "id": e.id,
+            "customer_name": e.customer.customer_name if e.customer else "Unknown",
+            "response": e.response,
+            "ai_response": e.ai_response,
+            "status": e.status,
+            "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+            "phone": e.customer.phone if e.customer else None,
+            "lifecycle_stage": e.customer.lifecycle_stage if e.customer else None,
+            "pain_points": e.customer.pain_points if e.customer else None,
+            "interaction_history": e.customer.interaction_history if e.customer else None,
+            "customer_id": e.customer_id,  # Explicitly include the customer_id
+        }
+        for e in results
+    ]
+
+
+@router.get("/review/customer-id/from-message/{message_id}")
+def get_customer_id_from_message(message_id: int, db: Session = Depends(get_db)):
+    msg = db.query(Engagement).filter(Engagement.id == message_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"customer_id": msg.customer_id}
+
+@router.put("/engagement/update-draft/{engagement_id}")
+def update_engagement_draft(engagement_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """
+    Updates the ai_response of a specific engagement record.
+    """
+    ai_response = payload.get("ai_response")
+    if ai_response is None:
+        raise HTTPException(status_code=400, detail="Missing ai_response in request body")
+
+    engagement = db.query(Engagement).filter(Engagement.id == engagement_id).first()
+    if not engagement:
+        raise HTTPException(status_code=404, detail=f"Engagement with id {engagement_id} not found")
+
+    engagement.ai_response = ai_response
+    db.commit()
+    return {"message": f"Engagement {engagement_id} draft updated successfully"}

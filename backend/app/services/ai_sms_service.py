@@ -16,7 +16,13 @@ def generate_sms(
     client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     prompt = f"""
-You're helping {representative_name}, a warm and sincere {business_type} business owner, text a customer named {customer_name}.
+IMPORTANT: Your reply must be under 80 characters. No long texts.
+
+Write a short, warm, human SMS message that:
+- Feels real, not robotic or overly polished
+- Acknowledges the context or event (“{event}”)
+- Builds trust or connection
+- Can include a soft sign-off (“– {representative_name}”) or none
 
 Context:
 - Customer Stage: {lifecycle_stage}
@@ -27,21 +33,22 @@ Context:
 
 Here are a few of {representative_name}’s previous messages:
 {sample_messages}
-
-Write a short, warm, human SMS message that:
-- Feels real, not robotic or overly polished
-- Acknowledges the context or event (“{event}”)
-- Builds trust or connection
-- Can include a soft sign-off (“– {representative_name}”) or none
-- Stays under 160 characters
-
-Only return the raw message text.
 """
-
 
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "system", "content": prompt}]
+        max_tokens=60,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that writes short, real SMS messages."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
     )
 
-    return response.choices[0].message.content.strip()
+    final = response.choices[0].message.content.strip()
+    return final if len(final) <= 80 else final[:77] + "..."

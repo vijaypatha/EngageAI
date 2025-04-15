@@ -3,6 +3,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import BusinessProfile
 from app.schemas import BusinessProfileCreate, BusinessProfileUpdate
+import re
+
+def slugify(name: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9]+', '-', name.strip().lower())
 
 router = APIRouter()
 
@@ -18,10 +22,15 @@ def create_business_profile(profile: BusinessProfileCreate, db: Session = Depend
         primary_services=profile.primary_services,
         representative_name=profile.representative_name
     )
+    new_profile.slug = slugify(profile.business_name)
     db.add(new_profile)
     db.commit()
     db.refresh(new_profile)
-    return new_profile
+    return {
+        "id": new_profile.id,
+        "slug": new_profile.slug,
+        "business_name": new_profile.business_name
+    }
 
 # 🔍 Get Business Profile by ID
 @router.get("/{business_id}", summary="Get business profile")
@@ -52,4 +61,11 @@ def get_business_id_by_name(business_name: str, db: Session = Depends(get_db)):
     if not business:
         raise HTTPException(status_code=404, detail="Business not found")
     
+    return {"business_id": business.id}
+
+@router.get("/business-id/slug/{slug}")
+def get_business_id_by_slug(slug: str, db: Session = Depends(get_db)):
+    business = db.query(BusinessProfile).filter(BusinessProfile.slug == slug).first()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
     return {"business_id": business.id}
