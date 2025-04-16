@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
 import datetime
@@ -17,14 +17,12 @@ class BusinessProfile(Base):
     twilio_number = Column(String, nullable=True)
     
 
-
-
 class Customer(Base):
     __tablename__ = "customers"
 
     id = Column(Integer, primary_key=True, index=True)
     customer_name = Column(String, index=True)
-    phone = Column(String, unique=True, index=True)
+    phone = Column(String, index=True)
     lifecycle_stage = Column(String, nullable=True)
     pain_points = Column(Text, nullable=True)
     interaction_history = Column(Text, nullable=True)
@@ -33,6 +31,10 @@ class Customer(Base):
     business = relationship("BusinessProfile")
     roadmap_messages = relationship("RoadmapMessage", back_populates="customer")
     is_generating_roadmap = Column(Boolean, default=False)  # <-- ADD THIS LINE
+
+    __table_args__ = (
+        UniqueConstraint("phone", "business_id", name="unique_customer_phone_per_business"),
+    )
 
 
 class ScheduledSMS(Base):
