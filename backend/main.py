@@ -18,7 +18,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "https://engage-ai-seven.vercel.app",
-        "https://www.engage-ai-seven.vercel.app"
+        "https://www.engage-ai-seven.vercel.app",
+        "https://nudge-ai-seven.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
