@@ -1,21 +1,18 @@
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
+// 📄 File: frontend/src/lib/utils.ts
 
+import { ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+// ✅ Merges Tailwind classes intelligently
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
+  return twMerge(clsx(inputs));
 }
 
-// ✅ Gets business info from session cookie
-export async function getCurrentBusiness() {
-  try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE}/auth/me`, {
-      credentials: "include",
-    });
-
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    console.error("Error fetching current business:", err);
-    return null;
+// lib/utils.ts
+export const getCurrentBusiness = () => {
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem("business_id");
+    return stored ? parseInt(stored) : null;
   }
-}
+  return null;
+};
