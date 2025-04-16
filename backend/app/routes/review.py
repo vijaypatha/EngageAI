@@ -260,6 +260,7 @@ def update_message_time(
             raise HTTPException(status_code=404, detail="Roadmap message not found")
         print("🕓 Before:", message.send_datetime_utc)
         message.send_datetime_utc = new_time
+        message.smsContent = payload.get("smsContent")
         print("✅ After:", message.send_datetime_utc)
 
     elif source == "scheduled":
@@ -268,6 +269,7 @@ def update_message_time(
             raise HTTPException(status_code=404, detail="Scheduled message not found")
         print("🕓 Before:", message.send_time)
         message.send_time = new_time
+        message.message = payload.get("smsContent")
         from app.celery_tasks import schedule_sms_task
         print(f"📤 Re-enqueuing SMS {message.id} for {new_time}")
         schedule_sms_task.apply_async(
