@@ -347,21 +347,22 @@ def get_customer_replies(
     
 @router.get("/reply-stats/{business_id}")
 def get_reply_stats(business_id: int, db: Session = Depends(get_db)):
-    # Replies that are pending review
-    pending = db.query(Engagement).filter(
+    from app.models import Customer, Engagement
+
+    pending = db.query(Engagement).join(Customer).filter(
+        Customer.business_id == business_id,
         Engagement.status == "pending_review",
         Engagement.response.isnot(None),
         Engagement.customer_id.isnot(None)
     ).all()
 
-    # All replies the AI has crafted (sent or pending), for this business
-    total_drafted = db.query(Engagement).filter(
+    total_drafted = db.query(Engagement).join(Customer).filter(
+        Customer.business_id == business_id,
         Engagement.response.isnot(None),
         Engagement.ai_response.isnot(None),
         Engagement.customer_id.isnot(None)
     ).count()
 
-    # Unique customers waiting
     customer_ids = {m.customer_id for m in pending}
 
     return {
