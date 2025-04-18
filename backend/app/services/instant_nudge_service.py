@@ -47,8 +47,9 @@ async def generate_instant_nudge(topic: str, business_id: int) -> dict:
     # Build prompt to feed OpenAI
     prompt = (
         f"You're {business.representative_name} from {business.business_name}. "
-        f"Write a short, friendly SMS message to a customer about: '{topic}'. "
-        f"Use a {tone_instructions}. Include '{{customer_name}}' where the name should go."
+        f"Write a short, helpful SMS message to a customer about: '{topic}'. "
+        f"Match the tone described here: \"{tone_instructions}\" — but do not repeat these words directly. "
+        f"Make it feel natural, personal, and relevant. Include '{{customer_name}}' where the customer's name should go."
     )
 
     print(f"🧠 Generating instant nudge with prompt:\n{prompt}")
@@ -64,7 +65,9 @@ async def generate_instant_nudge(topic: str, business_id: int) -> dict:
 # Handle sending or scheduling multiple instant nudges
 async def handle_instant_nudge_batch(messages: List[dict]):
     db: Session = SessionLocal()
-    sent_ids = []
+    scheduled_ids = []
+    sent_customers = []
+    scheduled_customers = []
 
     print(f"📦 Processing {len(messages)} instant nudge message blocks")
 
@@ -100,7 +103,8 @@ async def handle_instant_nudge_batch(messages: List[dict]):
                     )
                     db.add(sms)
                     db.flush()  # Get ID before scheduling
-
+                    scheduled_ids.append(sms.id)
+                    db.commit()  # Commit immediately so scheduled message is visible to frontend
                     schedule_sms_task.apply_async(args=[sms.id], eta=scheduled_time_utc)
                     print(f"📅 Scheduled SMS for {customer.customer_name} at {scheduled_time_utc} UTC")
                 except Exception as e:
@@ -124,8 +128,15 @@ async def handle_instant_nudge_batch(messages: List[dict]):
                 db.add(engagement)
                 print(f"📤 Sent SMS to {customer.customer_name} ({customer.phone})")
 
-            sent_ids.append(customer_id)
+            if scheduled_time:
+                scheduled_customers.append(customer.customer_name)
+            else:
+                sent_customers.append(customer.customer_name)
 
     db.commit()
-    print(f"✅ Batch complete. Sent immediately to {len(sent_ids)} customers")
-    return {"status": "ok", "sent_immediately": sent_ids}
+    print(f"✅ Batch complete. {len(sent_customers)} sent now, {len(scheduled_customers)} scheduled for later.")
+    if sent_customers:
+        print("📤 Sent immediately:", ", ".join(sent_customers))
+    if scheduled_customers:
+        print("📅 Scheduled:", ", ".join(scheduled_customers))
+    return scheduled_ids

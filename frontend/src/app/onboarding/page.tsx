@@ -56,7 +56,7 @@ export default function OnboardingPage() {
   useEffect(() => {
     const fetchPreview = async () => {
       // Using correct preview API endpoint path as defined in backend routing
-      if (businessProfile.business_name && businessProfile.business_goal) {
+      if (businessProfile.business_name && businessProfile.business_goal && businessProfile.industry) {
         const res = await apiClient.post('/onboarding-preview/preview-message', {
           business_name: businessProfile.business_name,
           business_goal: businessProfile.business_goal,
@@ -67,7 +67,7 @@ export default function OnboardingPage() {
       }
     };
     fetchPreview();
-  }, [businessProfile.business_name, businessProfile.business_goal]);
+  }, [businessProfile.business_name, businessProfile.business_goal, businessProfile.industry]);
 
   const handleBusinessSubmit = async () => {
     const res = await apiClient.post('/business-profile/', businessProfile);
@@ -121,7 +121,14 @@ export default function OnboardingPage() {
             value={businessProfile.business_name}
             onChange={e => setBusinessProfile({ ...businessProfile, business_name: e.target.value })}
           />
- 
+          
+          <input
+            className="w-full border border-gray-300 rounded-md p-3 text-black placeholder-gray-500 mt-4"
+            placeholder="Industry (e.g. Therapy, Real Estate)"
+            value={businessProfile.industry}
+            onChange={e => setBusinessProfile({ ...businessProfile, industry: e.target.value })}
+          />
+
           <p className="text-center text-gray-300 text-lg md:text-xl font-medium mt-4">What do you want to achieve with nudge messaging?</p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
             {[
@@ -146,10 +153,10 @@ export default function OnboardingPage() {
             ))}
           </div>
 
-          {businessProfile.business_name && businessProfile.business_goal && (
+          {businessProfile.business_name && businessProfile.business_goal && businessProfile.industry && (
             <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-6">
               <p className="font-semibold text-sm text-gray-700">
-                We’ll help <strong>{businessProfile.business_name}</strong> build meaningful nudge plan. Here is an example of a nudge:
+                Here’s a sample nudge {businessProfile.business_name} could use to start a thoughtful conversation:
               </p>
               <p className="italic text-sm mt-2">Here’s a preview:</p>
               <div className="bg-gray-100 mt-2 p-3 rounded text-sm text-black">
@@ -161,7 +168,7 @@ export default function OnboardingPage() {
           <button
             className="w-full mt-6 py-3 rounded-lg bg-gradient-to-r from-green-400 to-blue-500 hover:opacity-90 transition-all font-semibold text-white text-lg shadow-lg"
             onClick={() => setStep(1.5)}
-            disabled={!businessProfile.business_name || !businessProfile.business_goal}
+            disabled={!businessProfile.business_name || !businessProfile.business_goal || !businessProfile.industry}
           >
             Next: Personalize it for your business
           </button>
@@ -175,13 +182,7 @@ export default function OnboardingPage() {
 
           <input
             className="w-full border border-gray-300 rounded-md p-3 text-black placeholder-gray-500"
-            placeholder="Industry (e.g. Therapy, Real Estate)"
-            value={businessProfile.industry}
-            onChange={e => setBusinessProfile({ ...businessProfile, industry: e.target.value })}
-          />
-          <input
-            className="w-full border border-gray-300 rounded-md p-3 text-black placeholder-gray-500"
-            placeholder="Primary Services (e.g. Couples therapy)"
+            placeholder="Primary services (The more details, the smarter your nudges!)"
             value={businessProfile.primary_services}
             onChange={e => setBusinessProfile({ ...businessProfile, primary_services: e.target.value })}
           />
@@ -196,7 +197,6 @@ export default function OnboardingPage() {
             className="w-full mt-6 py-3 rounded-lg bg-gradient-to-r from-green-400 to-blue-500 hover:opacity-90 transition-all font-semibold text-white text-lg shadow-lg"
             onClick={handleBusinessSubmit}
             disabled={
-              !businessProfile.industry ||
               !businessProfile.primary_services ||
               !businessProfile.representative_name
             }
@@ -264,7 +264,7 @@ export default function OnboardingPage() {
           />
           <textarea
             className="w-full border border-gray-300 rounded-md p-3 text-black placeholder-gray-500"
-            placeholder="What have you talked about?"
+            placeholder="Any past interactions with this contact?"
             value={customer.interaction_history}
             onChange={e => setCustomer({ ...customer, interaction_history: e.target.value })}
           />

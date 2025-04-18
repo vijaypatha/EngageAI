@@ -9,11 +9,23 @@ def generate_onboarding_preview(business_name, business_goal, industry="", custo
     goal_phrase = ", ".join(goals[:-1]) + (" and " + goals[-1] if len(goals) > 1 else goals[0])
 
     prompt = f"""
-You are helping a business named {business_name} in the {industry or 'general'} industry.
-Their goal is to {goal_phrase.lower()}.
-Generate a short, friendly SMS they might send to a customer named {customer_name}.
+You are the SMS writing expert for a business named {business_name}, which operates in the {industry or 'general'} industry.
+Their goal is: {goal_phrase.lower()}.
+You are helping them write a personalized SMS message to a customer named {customer_name}.
 
-Make it warm and human. No emojis. No signatures. One sentence only.
+The SMS should:
+- Reflect the business's voice and services (e.g. loans, therapy, listings)
+- Be tailored to the industry
+- Align with the goal of "{goal_phrase.lower()}"
+- Be one sentence long
+- Be warm, human, and friendly
+- use emojis sparingly
+- signature using {business_name} at the end
+
+Example (for a loan company aiming to get referrals):
+"Hi Jane, we hope you're loving your lower mortgage payment! If you know anyone looking to refinance, we'd love to help."
+
+Now write the SMS:
 """
 
     print("📦 Onboarding Preview Prompt:")

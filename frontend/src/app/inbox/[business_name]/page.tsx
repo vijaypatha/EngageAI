@@ -67,7 +67,7 @@ export default function InboxPage() {
   }, [businessId]);
 
   const fetchScheduledSms = async (customerId: number) => {
-    const res = await apiClient.get(`/scheduled/${customerId}`);
+    const res = await apiClient.get(`/sent/${customerId}`);
     setScheduledSms(res.data || []);
   };
 
@@ -96,7 +96,7 @@ export default function InboxPage() {
     });
 
     const scheduled: TimelineEntry[] = scheduledSms
-      .filter(sms => sms.status === "sent" && new Date(sms.send_time) <= new Date() && sms.customer_id === activeCustomerId)
+      .filter(sms => sms.status === "sent" && sms.customer_id === activeCustomerId)
       .map(sms => ({
         id: `sms-${sms.id}`,
         type: "sent",

@@ -2,11 +2,14 @@
 # Routes for generating and sending Instant Nudges – AI-personalized SMS messages
 # Supports drafting based on topic and multi-customer delivery (immediate or scheduled)
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List
 from app.services.instant_nudge_service import generate_instant_nudge
 import logging
+from app.models import BusinessProfile, ScheduledSMS
+from sqlalchemy.orm import Session
+from app.database import get_db
 
 router = APIRouter()
 
@@ -43,3 +46,25 @@ async def send_instant_nudge_batch(payload: InstantNudgeBatch):
     except Exception as e:
         logging.error(f"❌ Failed to send instant nudges: {e}")
         raise HTTPException(status_code=500, detail="Failed to send instant nudges")
+
+# Endpoint to get the status of instant nudges by slug
+@router.get("/nudge/instant-status/slug/{slug}")
+def get_instant_nudge_status(slug: str, db: Session = Depends(get_db)):
+    business = db.query(BusinessProfile).filter(BusinessProfile.slug == slug).first()
+    if not business:
+        raise HTTPException(status_code=404, detail="Business not found")
+
+    messages = db.query(ScheduledSMS).filter(
+        ScheduledSMS.business_id == business.id,
+        ScheduledSMS.source == "instant_nudge"
+    ).all()
+    return [
+        {
+            "id": m.id,
+            "message": m.message,
+            "customer_id": m.customer_id,
+            "status": m.status,
+            "send_time": m.send_time
+        }
+        for m in messages
+    ]
