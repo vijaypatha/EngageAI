@@ -17,6 +17,7 @@ interface NudgeBlock {
   customerIds: number[];
   schedule: boolean;
   datetime: string;
+  sent?: boolean;
 }
 
 export default function InstantNudgePage() {
@@ -79,7 +80,13 @@ export default function InstantNudgePage() {
     }];
     try {
       await apiClient.post("/nudge/instant-multi", { messages: payload });
-      console.log("✅ Nudges sent/scheduled");
+      const copy = [...nudgeBlocks];
+      copy[i] = { ...copy[i], sent: true };
+      setNudgeBlocks(copy);
+      setTimeout(() => {
+        const container = document.getElementById("add-another");
+        container?.scrollIntoView({ behavior: "smooth" });
+      }, 300);
     } catch (err) {
       console.error("❌ Failed to send/schedule nudge:", err);
     }
@@ -96,7 +103,7 @@ export default function InstantNudgePage() {
       </p>
 
       {nudgeBlocks.map((block: NudgeBlock, i: number) => (
-        <div key={i} className="bg-[#111827] p-4 rounded-xl mb-6 border border-gray-700">
+        <div key={i} className={`bg-[#111827] p-4 rounded-xl mb-6 border ${block.sent ? "opacity-50 border-green-500" : "border-gray-700"}`}>
           <label className="text-sm font-medium text-gray-300 block mb-2">Select customers</label>
           <div className="bg-[#1f2937] rounded p-3 border border-gray-600 mb-4">
             <label className="flex items-center text-white mb-2">
@@ -207,22 +214,25 @@ export default function InstantNudgePage() {
             )}
 
             <Button
-              className="ml-auto bg-red-600 hover:bg-red-700 text-white px-4 py-1 rounded"
+              className={`ml-auto ${block.sent
+                ? "bg-gradient-to-r from-green-400 to-green-600 text-white cursor-default"
+                : "bg-red-600 hover:bg-red-700 text-white"} px-4 py-1 rounded`}
               onClick={() => handleSendOrSchedule(i)}
-              disabled={!block.message || block.customerIds.length === 0}
+              disabled={block.sent || !block.message || block.customerIds.length === 0}
             >
-              {block.schedule ? "Schedule" : "Send"}
+              {block.sent ? "✅ Scheduled" : block.schedule ? "Schedule" : "Send"}
             </Button>
           </div>
         </div>
       ))}
 
       <Button
+        id="add-another"
         variant="ghost"
-        className="text-blue-400 hover:text-blue-300 mb-4"
+        className="text-white text-lg font-semibold bg-gradient-to-r from-green-400 to-blue-500 hover:from-green-500 hover:to-blue-600 px-6 py-3 rounded animate-pulse"
         onClick={() => setNudgeBlocks([...nudgeBlocks, { topic: "", message: "", customerIds: [], schedule: false, datetime: "" }])}
       >
-        + Add another message block
+        💬 Add another message
       </Button>
     </div>
   );
