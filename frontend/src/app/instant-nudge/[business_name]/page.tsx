@@ -65,7 +65,9 @@ export default function InstantNudgePage() {
     apiClient.get(`/nudge/instant-status/slug/${business_name}`)
       .then(res => {
         console.log("📩 Restoring scheduled messages:", res.data);
-        const restoredBlocks: NudgeBlock[] = res.data.map((m: any) => ({
+        const restoredBlocks: NudgeBlock[] = res.data
+          .filter((m: any) => !m.is_hidden)
+          .map((m: any) => ({
           topic: "", // can't recover original topic
           message: m.message,
           customerIds: [m.customer_id],
@@ -354,27 +356,43 @@ export default function InstantNudgePage() {
 
           {(block.sent || block.tempScheduled) && (
             <div className="flex items-center gap-3 mt-2">
-              <Button
-                className="bg-yellow-500 hover:bg-yellow-600 text-white"
-                onClick={() => {
-                  const copy = [...nudgeBlocks];
-                  copy[i].sent = false;
-                  copy[i].tempScheduled = false;
-                  setNudgeBlocks(copy);
-                }}
-              >
-                ✏️ Edit
-              </Button>
-              <Button
-                className="bg-gray-700 hover:bg-gray-800 text-white"
-                onClick={() => {
-                  const copy = [...nudgeBlocks];
-                  copy.splice(i, 1);
-                  setNudgeBlocks(copy);
-                }}
-              >
-                🗑️ Delete
-              </Button>
+              {!block.sent && (
+                <>
+                  <Button
+                    className="bg-yellow-500 hover:bg-yellow-600 text-white"
+                    onClick={() => {
+                      const copy = [...nudgeBlocks];
+                      copy[i].sent = false;
+                      copy[i].tempScheduled = false;
+                      setNudgeBlocks(copy);
+                    }}
+                  >
+                    ✏️ Edit
+                  </Button>
+                  <Button
+                    className="bg-gray-700 hover:bg-gray-800 text-white"
+                    onClick={() => {
+                      const copy = [...nudgeBlocks];
+                      copy.splice(i, 1);
+                      setNudgeBlocks(copy);
+                    }}
+                  >
+                    🗑️ Delete
+                  </Button>
+                </>
+              )}
+              {block.sent && (
+                <Button
+                  className="bg-gray-700 hover:bg-gray-800 text-white"
+                  onClick={() => {
+                    const copy = [...nudgeBlocks];
+                    copy.splice(i, 1); // You may replace this with a `hidden` flag in future
+                    setNudgeBlocks(copy);
+                  }}
+                >
+                  🙈 Hide
+                </Button>
+              )}
             </div>
           )}
         </div>

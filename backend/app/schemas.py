@@ -87,3 +87,17 @@ class ConversationMessage(BaseModel):
 class ConversationResponse(BaseModel):
     customer: dict  # Contains "id" and "name"
     messages: List[ConversationMessage]
+
+class ScheduledSMSOut(BaseModel):
+    id: int
+    customer_id: int
+    business_id: int
+    message: str
+    status: str
+    send_time: str
+    source: Optional[str] = None
+    roadmap_id: Optional[int] = None
+    is_hidden: bool
+
+    class Config:
+        orm_mode = True

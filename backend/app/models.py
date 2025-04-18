@@ -48,6 +48,9 @@ class ScheduledSMS(Base):
     send_time = Column(DateTime, default=datetime.datetime.utcnow)
     customer = relationship("Customer")
     source = Column(String, nullable=True)  # e.g., 'instant_nudge', 'roadmap'
+    roadmap_id = Column(Integer, ForeignKey("roadmap_messages.id"), nullable=True)  # <-- ADD THIS LINE
+    roadmap_message = relationship("RoadmapMessage")  # <-- ADD THIS LINE
+    is_hidden = Column(Boolean, default=False)  # <-- ADD THIS LINE
 
 class Engagement(Base):
     __tablename__ = "engagements"

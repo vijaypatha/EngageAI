@@ -16,6 +16,7 @@ interface SMSMessage {
   smsContent: string;
   send_datetime_utc: string;
   status: string;
+  is_hidden?: boolean;
 }
 
 interface GroupedMessages {
@@ -30,6 +31,7 @@ export default function AllEngagementPlansPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
   const [editedTime, setEditedTime] = useState<string>("");
+  const [hiddenIds, setHiddenIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     const loadMessages = async () => {
@@ -38,7 +40,13 @@ export default function AllEngagementPlansPage() {
       try {
         const res = await apiClient.get(`/review/all-engagements?business_id=${businessId}`);
         console.log("📦 Loaded messages from backend:", res.data);
-        setMessages(res.data.engagements);
+        
+        console.log("💾 Raw messages:", res.data.engagements);
+
+        const filtered = res.data.engagements.filter(
+          (msg: SMSMessage) => msg.status !== "sent" || (msg.status === "sent" && !msg.is_hidden)
+        );
+        setMessages(filtered);
       } catch (err) {
         console.error("❌ Failed to fetch messages", err);
       } finally {
@@ -79,10 +87,22 @@ export default function AllEngagementPlansPage() {
     }
   }, [messages]);
 
-  const handleDelete = async (id: number) => {
+  const handleHide = async (id: number) => {
     try {
-      await apiClient.delete(`/review/${id}?source=roadmap`);
-      setMessages((prev) => prev.filter((m) => m.id !== id));
+      await apiClient.put(`/review/hide-sent/${id}?hide=true`);
+      setHiddenIds(prev => new Set(prev).add(id));
+      console.log(`🙈 Message ${id} marked hidden`);
+    } catch (err) {
+      console.error("❌ Failed to hide message", err);
+    }
+  };
+
+  const handleDelete = async (msg: SMSMessage) => {
+    const source = msg.status === "scheduled" ? "scheduled" : "roadmap";
+    try {
+      const res = await apiClient.delete(`/review/${msg.id}?source=${source}`);
+      console.log(`🗑️ Deleted message ID=${res.data.id} from ${res.data.deleted_from}`);
+      setMessages((prev) => prev.filter((m) => m.id !== msg.id));
     } catch (err) {
       console.error("❌ Failed to delete", err);
     }
@@ -90,10 +110,11 @@ export default function AllEngagementPlansPage() {
 
   const handleSchedule = async (id: number) => {
     try {
-      await apiClient.put(`/review/${id}/schedule`);
+      const res = await apiClient.put(`/review/${id}/schedule`);
+      const newId = res.data.scheduled_sms_id;
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === id ? { ...m, status: "scheduled" } : m
+          m.id === id ? { ...m, id: newId, status: "scheduled" } : m
         )
       );
     } catch (err) {
@@ -162,7 +183,7 @@ export default function AllEngagementPlansPage() {
             <h2 className="text-xl font-semibold mb-4">{timeframe}</h2>
             <div className="relative border-l-4 border-purple-500 ml-8 mt-12">
               <div className="space-y-4">
-                {msgs.map((msg) => {
+                {msgs.filter(msg => !hiddenIds.has(msg.id)).map((msg) => {
                   const dateObj = parseISO(msg.send_datetime_utc);
                   const month = format(dateObj, "LLL").toUpperCase();
                   const day = format(dateObj, "d");
@@ -224,8 +245,14 @@ export default function AllEngagementPlansPage() {
                                 <span>{msg.customer_name}</span>
                               </div>
                               <div className="flex gap-2">
-                                <Button className="bg-red-600 hover:bg-red-700 text-white" size="sm" onClick={() => handleDelete(msg.id)}>Remove</Button>
-                                <Button className="bg-blue-600 hover:bg-blue-700 text-white" size="sm" onClick={() => handleEdit(msg)}>Edit</Button>
+                                {msg.status === "sent" ? (
+                                  <Button className="bg-gray-600 hover:bg-gray-700 text-white" size="sm" onClick={() => handleHide(msg.id)}>Hide</Button>
+                                ) : (
+                                  <Button className="bg-red-600 hover:bg-red-700 text-white" size="sm" onClick={() => handleDelete(msg)}>Remove</Button>
+                                )}
+                                {msg.status !== "sent" && (
+                                  <Button className="bg-blue-600 hover:bg-blue-700 text-white" size="sm" onClick={() => handleEdit(msg)}>Edit</Button>
+                                )}
                                 {msg.status === "pending_review" && (
                                   <Button className="bg-green-600 hover:bg-green-700 text-white" size="sm" onClick={() => handleSchedule(msg.id)}>Schedule</Button>
                                 )}

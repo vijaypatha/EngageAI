@@ -64,7 +64,8 @@ def get_instant_nudge_status(slug: str, db: Session = Depends(get_db)):
             "message": m.message,
             "customer_id": m.customer_id,
             "status": m.status,
-            "send_time": m.send_time
+            "send_time": m.send_time,
+            "is_hidden": m.is_hidden
         }
         for m in messages
     ]

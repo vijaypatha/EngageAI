@@ -96,12 +96,11 @@ export default function DashboardPage() {
         <Tile
           icon={<Send size={22} />}
           title="Community Outreach Plan"
+          subtitle="Planned nudges to your community"
           statSection={
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white">
               <span className="flex items-center gap-1 text-yellow-400"><Clock size={14} /> {stats.pending} Pending</span>
-              <span className="flex items-center gap-1 text-red-400"><XCircle size={14} /> {stats.rejected} Rejected</span>
               <span className="flex items-center gap-1 text-green-400"><CalendarClock size={14} /> {stats.scheduled} Scheduled</span>
-              <span className="flex items-center gap-1 text-white"><Send size={14} /> {stats.sent} Sent</span>
             </div>
           }
           buttonText="Manage Plans"
@@ -120,7 +119,12 @@ export default function DashboardPage() {
         <Tile
           icon={<MessageSquare size={22} />}
           title="Community Inbox"
-          subtitle="Chat history with your community"
+          subtitle="Nudge history with contacts in your community"
+          statSection={
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white">
+              <span className="flex items-center gap-1 text-white"><Send size={14} /> {stats.sent} Sent</span>
+            </div>
+          }
           buttonText="Open Conversations"
           onClick={() => router.push(`/inbox/${business_name}`)}
         />

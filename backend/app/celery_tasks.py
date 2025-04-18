@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import os
 import logging
+from typing import Optional
 from datetime import datetime
 
 from app.services.twilio_sms_service import send_sms_via_twilio
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @celery.task(bind=True, max_retries=3, default_retry_delay=60,  name="app.celery_tasks.schedule_sms_task",
     queue="celery")
-def schedule_sms_task(self, scheduled_sms_id: int):
+def schedule_sms_task(self, scheduled_sms_id: int, roadmap_id: Optional[int] = None):
     """
     Celery task to send SMS by ID.
     Logs details and sends message via Twilio if time is reached.
@@ -37,6 +38,17 @@ def schedule_sms_task(self, scheduled_sms_id: int):
             return
         else:
             logger.info(f"[✅] SMS ID {scheduled_sms_id} found with status: {sms.status}")
+
+        # 🚫 Skip execution if status is not scheduled
+        if sms.status != "scheduled":
+            logger.info(f"[⏹] SMS {sms.id} skipped due to status: {sms.status}")
+            return
+        
+        # Link roadmap_id if available and not already set
+        if roadmap_id and not sms.roadmap_id:
+            sms.roadmap_id = roadmap_id
+            db.commit()
+            logger.info(f"[🧭 SMS {sms.id}] Linked to roadmap_id={roadmap_id}")
 
         if sms.status == "sent":
             logger.info(f"[🛑] SMS {sms.id} already sent. Skipping to prevent duplicate.")

@@ -87,17 +87,19 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
             business_id=msg.business_id,
             message=msg.smsContent,
             send_time=msg.send_datetime_utc,
-            status="scheduled"
+            status="scheduled",
+            roadmap_id=msg.id  # <-- link the originating roadmap message
         )
         db.add(scheduled)
         db.flush()
         print(f"📤 Scheduling SMS via Celery: ScheduledSMS id={scheduled.id}, ETA={msg.send_datetime_utc}")
         schedule_sms_task.apply_async(args=[scheduled.id], eta=msg.send_datetime_utc)
-        db.delete(msg)
+        msg.status = "scheduled"
         db.commit()
 
         return {
             "status": "scheduled",
+            "scheduled_sms_id": scheduled.id,
             "scheduled_sms": {
                 "id": scheduled.id,
                 "customer_name": db.query(Customer).get(msg.customer_id).customer_name,
@@ -176,7 +178,15 @@ def get_engagement_stats(business_id: int, db: Session = Depends(get_db)):
         "pending": roadmap.filter(RoadmapMessage.status == "pending_review").count(),
         "rejected": roadmap.filter(RoadmapMessage.status == "rejected").count(),
         "scheduled": scheduled.filter(ScheduledSMS.status == "scheduled").count(),
-        "sent": scheduled.filter(ScheduledSMS.status == "sent").count()
+        "sent": (
+            db.query(ScheduledSMS).join(Customer)
+            .filter(Customer.business_id == business_id, ScheduledSMS.status == "sent")
+            .count()
+            +
+            db.query(Engagement).join(Customer)
+            .filter(Customer.business_id == business_id, Engagement.status == "sent")
+            .count()
+        )
     }
 
 @router.get("/customers/without-engagement-count/{business_id}")
@@ -229,7 +239,8 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
             "status": sms.status,
             "customer_name": customer_map.get(sms.customer_id, "Unknown"),
             "send_datetime_utc": sms.send_time.isoformat() if sms.send_time else None,
-            "source": "scheduled"
+            "source": "scheduled",
+            "is_hidden": sms.is_hidden  # 👈 include this field
         }
         for sms in scheduled
     ]
@@ -286,19 +297,31 @@ def update_message_time(
 
 @router.delete("/{id}")
 def delete_sms(id: int, source: str = Query(...), db: Session = Depends(get_db)):
-    if source == "roadmap":
-        sms = db.query(RoadmapMessage).filter(RoadmapMessage.id == id).first()
-    elif source == "scheduled":
-        sms = db.query(ScheduledSMS).filter(ScheduledSMS.id == id).first()
-    else:
-        raise HTTPException(status_code=400, detail="Invalid source")
+    # Try ScheduledSMS by ID
+    sms = db.query(ScheduledSMS).filter(ScheduledSMS.id == id).first()
+    if sms:
+        db.delete(sms)
+        db.commit()
+        print(f"🗑️ Deleted ScheduledSMS ID={sms.id}")
+        return {"success": True, "deleted_from": "ScheduledSMS by ID", "id": sms.id}
 
-    if not sms:
-        raise HTTPException(status_code=404, detail="SMS not found")
+    # Try ScheduledSMS by roadmap_id
+    sms = db.query(ScheduledSMS).filter(ScheduledSMS.roadmap_id == id).first()
+    if sms:
+        db.delete(sms)
+        db.commit()
+        print(f"🗑️ Deleted ScheduledSMS (roadmap) ID={sms.id}")
+        return {"success": True, "deleted_from": "ScheduledSMS by roadmap_id", "id": sms.id}
 
-    db.delete(sms)
-    db.commit()
-    return {"success": True}
+    # Fallback to RoadmapMessage
+    sms = db.query(RoadmapMessage).filter(RoadmapMessage.id == id).first()
+    if sms:
+        db.delete(sms)
+        db.commit()
+        print(f"🗑️ Deleted RoadmapMessage ID={sms.id}")
+        return {"success": True, "deleted_from": "RoadmapMessage", "id": sms.id}
+
+    raise HTTPException(status_code=404, detail="SMS not found")
 
 @router.put("/update-time-debug/{id}")
 def debug_update_message_time(
@@ -432,3 +455,15 @@ def update_engagement_draft(engagement_id: int, payload: dict = Body(...), db: S
     engagement.ai_response = ai_response
     db.commit()
     return {"message": f"Engagement {engagement_id} draft updated successfully"}
+
+@router.put("/hide-sent/{scheduled_id}")
+def hide_sent_message(scheduled_id: int, hide: bool = Query(True), db: Session = Depends(get_db)):
+    sms = db.query(ScheduledSMS).filter(ScheduledSMS.id == scheduled_id).first()
+    if not sms:
+        raise HTTPException(status_code=404, detail="Scheduled SMS not found")
+
+    sms.is_hidden = hide
+    db.commit()
+    action = "hidden" if hide else "unhidden"
+    print(f"🙈 ScheduledSMS ID={scheduled_id} marked as {action}")
+    return {"success": True, "id": scheduled_id, "is_hidden": hide}
