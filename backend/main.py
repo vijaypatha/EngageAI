@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import business, customers, review, engagement, twilio_webhook, auth
+from app.routes import business, customers, review, engagement, twilio_webhook, auth, onboarding_preview_route
 from app.database import engine, Base
 from starlette.middleware.sessions import SessionMiddleware
-from app.routes import sms_scheduling, sms_roadmap, message_status, sms_businessowner_style_endpoints, conversations
+from app.routes import sms_scheduling, sms_roadmap, message_status, sms_businessowner_style_endpoints, conversations, instant_nudge_route
 
 from app.celery_app import ping  # ✅ import ping early
 import os
@@ -51,6 +51,8 @@ app.include_router(message_status.router)
 app.include_router(sms_businessowner_style_endpoints.router)
 app.include_router(conversations.router)
 app.include_router(auth.router)
+app.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["Onboarding Preview"])
+app.include_router(instant_nudge_route.router)
 
 # ✅ Root
 @app.get("/")

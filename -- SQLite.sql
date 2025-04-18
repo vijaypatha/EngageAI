@@ -181,3 +181,5 @@ SELECT * FROM customers WHERE phone = '+13856268825';
 
 SELECT * FROM business_profiles;
 SELECT * FROM customers;
+
+ALTER TABLE business_profiles ADD COLUMN slug VARCHAR UNIQUE;

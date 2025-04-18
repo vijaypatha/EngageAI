@@ -62,7 +62,7 @@ def generate_ai_response(message: str, business=None, customer=None) -> str:
         model="gpt-4o",  # Use the correct model (gpt-4o or gpt-4)
         messages=messages,  # Pass the conversation messages as an argument
         temperature=0.7,
-        max_tokens=100,  # Increased max tokens to allow for more detailed responses
+        max_tokens=50,  # Increased max tokens to allow for more detailed responses
     )
 
     # Accessing the response object correctly
