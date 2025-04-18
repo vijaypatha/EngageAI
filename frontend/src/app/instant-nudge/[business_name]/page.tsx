@@ -33,7 +33,7 @@ export default function InstantNudgePage() {
   useEffect(() => {
     if (!business_name) return;
     apiClient
-      .get(`/business/resolve-id/${business_name}`)
+      .get(`/business-profile/business-id/slug/${business_name}`)
       .then((res) => {
         console.log("📛 Resolved business_id:", res.data.business_id);
         setBusinessId(res.data.business_id);
