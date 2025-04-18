@@ -6,11 +6,14 @@ from typing import List, Dict
 from datetime import datetime
 import openai
 import os
+import pytz
 
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import BusinessProfile, BusinessOwnerStyle, ScheduledSMS, Engagement, Customer
 from app.services.twilio_sms_service import send_sms_via_twilio
+from app.utils import parse_sms_timing
+from app.celery_tasks import schedule_sms_task
 
 
 # Helper: Call OpenAI to generate short SMS message
@@ -59,7 +62,7 @@ async def generate_instant_nudge(topic: str, business_id: int) -> dict:
 
 
 # Handle sending or scheduling multiple instant nudges
-def handle_instant_nudge_batch(messages: List[dict]):
+async def handle_instant_nudge_batch(messages: List[dict]):
     db: Session = SessionLocal()
     sent_ids = []
 
@@ -82,16 +85,27 @@ def handle_instant_nudge_batch(messages: List[dict]):
             personalized = base_msg.replace("{customer_name}", customer.customer_name)
 
             if scheduled_time:
-                # Schedule message for future
-                sms = ScheduledSMS(
-                    customer_id=customer_id,
-                    sms_content=personalized,
-                    send_datetime_utc=scheduled_time,
-                    status="scheduled",
-                    source="instant_nudge"
-                )
-                db.add(sms)
-                print(f"📅 Scheduled SMS for {customer.customer_name} at {scheduled_time}")
+                try:
+                    customer_timezone = getattr(customer, "timezone", "UTC")
+                    scheduled_time_utc = datetime.fromisoformat(scheduled_time)
+                    scheduled_time_utc = scheduled_time_utc.astimezone(pytz.timezone(customer_timezone)).astimezone(pytz.UTC)
+
+                    sms = ScheduledSMS(
+                        customer_id=customer_id,
+                        business_id=customer.business_id,
+                        message=personalized,
+                        status="scheduled",
+                        send_time=scheduled_time_utc,
+                        source="instant_nudge"
+                    )
+                    db.add(sms)
+                    db.flush()  # Get ID before scheduling
+
+                    schedule_sms_task.apply_async(args=[sms.id], eta=scheduled_time_utc)
+                    print(f"📅 Scheduled SMS for {customer.customer_name} at {scheduled_time_utc} UTC")
+                except Exception as e:
+                    print(f"❌ Failed to schedule SMS for {customer.customer_name}: {e}")
+                    continue
             else:
                 # Send immediately and log in engagements
                 business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
