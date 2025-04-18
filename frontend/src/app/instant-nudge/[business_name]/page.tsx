@@ -31,9 +31,17 @@ export default function InstantNudgePage() {
   const [businessId, setBusinessId] = useState<number | null>(null);
 
   useEffect(() => {
-    const id = localStorage.getItem("business_id");
-    if (id) setBusinessId(Number(id));
-  }, []);
+    if (!business_name) return;
+    apiClient
+      .get(`/business/resolve-id/${business_name}`)
+      .then((res) => {
+        console.log("📛 Resolved business_id:", res.data.business_id);
+        setBusinessId(res.data.business_id);
+      })
+      .catch((err) => {
+        console.error("❌ Failed to resolve business ID from slug:", err);
+      });
+  }, [business_name]);
 
   useEffect(() => {
     if (!businessId) return;
