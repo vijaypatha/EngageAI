@@ -47,6 +47,7 @@ class ScheduledSMS(Base):
     status = Column(String, default="pending_review")
     send_time = Column(DateTime, default=datetime.datetime.utcnow)
     customer = relationship("Customer")
+    source = Column(String, nullable=True)  # e.g., 'instant_nudge', 'roadmap'
 
 class Engagement(Base):
     __tablename__ = "engagements"
