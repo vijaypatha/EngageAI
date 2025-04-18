@@ -1,11 +1,10 @@
- "use client";
+"use client";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-
 
 interface Customer {
   id: number;
@@ -70,17 +69,19 @@ export default function InstantNudgePage() {
     }
   };
 
-  const handleSend = async () => {
-    const payload = nudgeBlocks.map(b => ({
-      customer_ids: b.customerIds,
-      message: b.message,
-      send_datetime_utc: b.schedule && b.datetime ? new Date(b.datetime).toISOString() : null
-    }));
+  const handleSendOrSchedule = async (i: number) => {
+    const block = nudgeBlocks[i];
+    if (!businessId || !block.message || block.customerIds.length === 0) return;
+    const payload = [{
+      customer_ids: block.customerIds,
+      message: block.message,
+      send_datetime_utc: block.schedule && block.datetime ? new Date(block.datetime).toISOString() : null
+    }];
     try {
       await apiClient.post("/nudge/instant-multi", { messages: payload });
-      console.log("Nudges sent/scheduled successfully!");
+      console.log("✅ Nudges sent/scheduled");
     } catch (err) {
-      console.error("Failed to send/schedule nudges:", err);
+      console.error("❌ Failed to send/schedule nudge:", err);
     }
   };
 
@@ -104,8 +105,7 @@ export default function InstantNudgePage() {
                 checked={block.customerIds.length === contacts.length}
                 onChange={() => {
                   const copy = [...nudgeBlocks];
-                  copy[i].customerIds =
-                    block.customerIds.length === contacts.length ? [] : contacts.map(c => c.id);
+                  copy[i].customerIds = block.customerIds.length === contacts.length ? [] : contacts.map(c => c.id);
                   setNudgeBlocks(copy);
                 }}
               />
@@ -144,8 +144,8 @@ export default function InstantNudgePage() {
           />
 
           <Button
-            variant= "ghost"
-            className="mb-3 text-white border-gray-500 hover:bg-gray-700"
+            variant="ghost"
+            className="mb-3 text-white bg-gradient-to-r from-green-400 to-blue-500 hover:from-green-500 hover:to-blue-600"
             onClick={() => handleDraft(i)}
             disabled={!block.topic || block.customerIds.length === 0}
           >
@@ -205,6 +205,14 @@ export default function InstantNudgePage() {
                 min={new Date().toISOString().slice(0, 16)}
               />
             )}
+
+            <Button
+              className="ml-auto bg-red-600 hover:bg-red-700 text-white px-4 py-1 rounded"
+              onClick={() => handleSendOrSchedule(i)}
+              disabled={!block.message || block.customerIds.length === 0}
+            >
+              {block.schedule ? "Schedule" : "Send"}
+            </Button>
           </div>
         </div>
       ))}
@@ -215,14 +223,6 @@ export default function InstantNudgePage() {
         onClick={() => setNudgeBlocks([...nudgeBlocks, { topic: "", message: "", customerIds: [], schedule: false, datetime: "" }])}
       >
         + Add another message block
-      </Button>
-
-      <Button
-        className="w-full bg-gradient-to-r from-green-400 to-blue-500 hover:from-green-500 hover:to-blue-600 text-black font-semibold py-2 px-4 rounded"
-        onClick={handleSend}
-        disabled={nudgeBlocks.length === 0 || nudgeBlocks.every(b => !b.message || b.customerIds.length === 0)}
-      >
-        Send & Schedule All
       </Button>
     </div>
   );
