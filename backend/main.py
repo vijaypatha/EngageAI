@@ -20,6 +20,8 @@ app.add_middleware(
         "https://engage-ai-seven.vercel.app",
         "https://www.engage-ai-seven.vercel.app",
         "https://nudge-ai-seven.vercel.app",
+        "https://ainudge.app",
+        "https://www.ainudge.app",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
