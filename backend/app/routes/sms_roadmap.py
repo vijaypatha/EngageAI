@@ -34,6 +34,8 @@ def generate_or_return_roadmap(
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+    if customer.opted_in is False:
+        raise HTTPException(status_code=403, detail="Customer has declined SMS consent.")
 
     business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
     if not business:

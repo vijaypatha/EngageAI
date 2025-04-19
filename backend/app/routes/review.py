@@ -74,6 +74,10 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
     if msg.status == "scheduled":
         return {"status": "already scheduled"}
 
+    customer = db.query(Customer).filter(Customer.id == msg.customer_id).first()
+    if not customer or not customer.opted_in:
+        raise HTTPException(status_code=403, detail="Customer has not opted in to receive SMS")
+
     existing_sms = db.query(ScheduledSMS).filter(
         ScheduledSMS.customer_id == msg.customer_id,
         ScheduledSMS.business_id == msg.business_id,
@@ -139,6 +143,9 @@ def approve_all(customer_id: int, db: Session = Depends(get_db)):
             RoadmapMessage.status == "pending_review"
         )
     ).all()
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer or not customer.opted_in:
+        return {"scheduled": 0, "skipped": len(messages), "reason": "Customer has not opted in"}
 
     new_scheduled_count = 0
 
@@ -173,6 +180,10 @@ def get_engagement_stats(business_id: int, db: Session = Depends(get_db)):
     roadmap = db.query(RoadmapMessage).join(Customer).filter(Customer.business_id == business_id)
     scheduled = db.query(ScheduledSMS).join(Customer).filter(Customer.business_id == business_id)
 
+    opted_in = db.query(Customer).filter(Customer.business_id == business_id, Customer.opted_in.is_(True)).count()
+    opted_out = db.query(Customer).filter(Customer.business_id == business_id, Customer.opted_in.is_(False)).count()
+    opt_in_pending = db.query(Customer).filter(Customer.business_id == business_id, Customer.opted_in.is_(None)).count()
+
     return {
         "communitySize": total_customers,
         "pending": roadmap.filter(RoadmapMessage.status == "pending_review").count(),
@@ -186,7 +197,10 @@ def get_engagement_stats(business_id: int, db: Session = Depends(get_db)):
             db.query(Engagement).join(Customer)
             .filter(Customer.business_id == business_id, Engagement.status == "sent")
             .count()
-        )
+        ),
+        "optedIn": opted_in,
+        "optedOut": opted_out,
+        "optInPending": opt_in_pending
     }
 
 @router.get("/customers/without-engagement-count/{business_id}")

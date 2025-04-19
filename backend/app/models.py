@@ -31,6 +31,7 @@ class Customer(Base):
     business = relationship("BusinessProfile")
     roadmap_messages = relationship("RoadmapMessage", back_populates="customer")
     is_generating_roadmap = Column(Boolean, default=False)  # <-- ADD THIS LINE
+    opted_in = Column(Boolean, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("phone", "business_id", name="unique_customer_phone_per_business"),
@@ -83,3 +84,16 @@ class RoadmapMessage(Base):
     send_datetime_utc = Column(DateTime, nullable=True) 
 
     customer = relationship("Customer", back_populates="roadmap_messages")
+
+class ConsentLog(Base):
+    __tablename__ = "consent_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    business_id = Column(Integer, ForeignKey("business_profiles.id"), nullable=False)
+    method = Column(String, nullable=False)  # e.g., "double_opt_in"
+    phone_number = Column(String, nullable=False)
+    message_sid = Column(String, nullable=True)
+    status = Column(String, default="pending")  # "pending", "opted_in", "declined", "stopped"
+    sent_at = Column(DateTime, default=datetime.datetime.utcnow)
+    replied_at = Column(DateTime, nullable=True)

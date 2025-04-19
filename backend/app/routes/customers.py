@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Customer, BusinessProfile
 from app.schemas import CustomerCreate, CustomerUpdate
+from app.services.sms_optin import send_double_optin_sms
 
 router = APIRouter()
 
@@ -28,6 +29,7 @@ def add_customer(customer: CustomerCreate, db: Session = Depends(get_db)):
     db.add(new_customer)
     db.commit()
     db.refresh(new_customer)
+    send_double_optin_sms(new_customer.id)
     return new_customer
 
 # 📦 Get all customers under a business
