@@ -97,7 +97,10 @@ export default function LandingPage() {
           Registered A2P 10DLC Messaging Provider (USA) · Fully compliant with carrier guidelines
         </div>
         <div className="text-gray-500 italic">
-          All messages include opt-out language · “Reply STOP to unsubscribe. Standard message rates may apply.”
+          All messages include opt-out language · Reply STOP to unsubscribe. Standard message rates may apply. Message frequency varies.
+        </div>
+        <div className="text-xs text-gray-500 space-y-1 mt-6 text-center">
+          <p>Message and data rates may apply. Carriers are not liable for delayed or undelivered messages.</p>
         </div>
       </footer>
     </main>
