@@ -25,6 +25,13 @@ def generate_sms_roadmap(
     prompt = f"""
 You are an AI writing **4 short SMS messages** for a small business owner named {representative_name}, who runs a {business_type} business.
 
+The timing of these messages should be determined by any specific scheduling instructions found in the `interaction_history` or other customer information. For example: 
+- "Birthday is April 25. Send 1 message per month"
+- "Follow up weekly"
+- "Send something encouraging around Thanksgiving"
+
+If no specific timing is found, default to a reasonable weekly cadence: (dayOffsets: 0, 7, 14, 21).
+
 Each message is meant to:
 - Reconnect with a customer named {customer_name}
 - Sound natural, friendly, and personal
@@ -53,20 +60,39 @@ Each message is meant to:
 - Use contractions and natural phrasing
 - Every SMS must end with a signature in this format: “– {representative_name}, {business_name}”
 - Don’t hard-sell or push — be light, human, and sincere
-- Messages should feel like a check-in or helpful nudge
+- Messages should feel like a check-in or helpful nudge — never robotic
+- Avoid generic content — make each message feel relevant to the timing or context
 
-⚠️ Do NOT invent any past events or conversations. Use only what’s given above. If unsure, keep it neutral and warm.
+🧠 Voice Matching:
+The business owner wants these messages to sound like *they* wrote them personally.
+
+- Match their voice, vocabulary, and phrasing.
+- Review the tone examples provided above and write in that style.
+- Avoid robotic, overly formal, or generic phrasing.
+- SMS should feel like it's coming straight from the business owner’s phone — natural, personal, and human.
+
+💌 Personal Touch:
+Many business owners want their customers to feel remembered, especially during meaningful or joyful life moments — such as birthdays, holidays, or anniversaries. If events like these are mentioned in the customer info, you should:
+- Center one or more messages around those moments
+- Adjust your spacing/frequency as needed to make the timing feel intentional and caring
+
+⚠️ Timing Logic:
+- Inspect all customer info (especially interaction history) for cues like: "monthly check-in", "birthday April 25", "follow up after onboarding"
+- Use those cues to decide each message’s `smsTiming` and `dayOffset`
+- You may vary spacing (e.g., weekly, monthly) based on what's appropriate for that customer
+- If no timing logic is found, use default dayOffsets: 0, 7, 14, 21
+- Always set dayOffset=0 for the first message in the sequence
 
 ---
 
 Return a JSON array of 4 objects. Each must include:
 - "SMS Number"
 - "smsContent"
-- "smsTiming": e.g., "Day 3, 10:00 AM" — required and must match this format exactly
-- "dayOffset": e.g., 3, 10, 17, 24
-- "relevance": Why this message makes sense now
+- "smsTiming": A friendly description of when to send it (e.g., "On Birthday (April 25), 10:00 AM" or "30 days after message 1, 10:00 AM")
+- "dayOffset": Integer days from the first message
+- "relevance": Why this message fits that timing
 - "successIndicator": What would be a good result
-- "whatif_customer_does_not_respond": Polite follow-up suggestion
+- "whatif_customer_does_not_respond": Polite next step suggestion
 
 Respond ONLY with a valid JSON array. Do not include commentary, markdown, or explanation.
 """

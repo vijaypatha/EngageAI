@@ -58,6 +58,10 @@ def schedule_sms_task(self, scheduled_sms_id: int, roadmap_id: Optional[int] = N
         if not customer:
             logger.error(f"[❌] No customer for SMS ID {scheduled_sms_id}")
             return
+        
+        if not customer.opted_in:
+            logger.warning(f"[🔒 SMS {sms.id}] Blocked: Customer {customer.id} has not opted in.")
+            return
 
         # Log timing
         scheduled_time = sms.send_time.strftime('%Y-%m-%d %H:%M:%S')
