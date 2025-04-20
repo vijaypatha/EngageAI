@@ -24,6 +24,9 @@ interface EngagementStats {
   conversations: number;
   waitingReplies: number;
   draftsReady: number;
+  optedIn: number;
+  optedOut: number;
+  optInPending: number;
 }
 
 const tooltipTextMap: Record<string, string> = {
@@ -47,6 +50,9 @@ export default function DashboardPage() {
     conversations: 0,
     waitingReplies: 0,
     draftsReady: 0,
+    optedIn: 0,
+    optedOut: 0,
+    optInPending: 0,
   });
 
   useEffect(() => {
@@ -66,6 +72,9 @@ export default function DashboardPage() {
           scheduled: generalStatsRes.data.scheduled ?? 0,
           sent: generalStatsRes.data.sent ?? 0,
           rejected: generalStatsRes.data.rejected ?? 0,
+          optedIn: generalStatsRes.data.optedIn ?? 0,
+          optedOut: generalStatsRes.data.optedOut ?? 0,
+          optInPending: generalStatsRes.data.optInPending ?? 0,
           conversations: generalStatsRes.data.conversations ?? 0,
           waitingReplies: replyStatsRes.data.customers_waiting ?? 0,
           draftsReady: replyStatsRes.data.messages_total ?? 0,
@@ -88,7 +97,15 @@ export default function DashboardPage() {
           icon={<Users size={22} />}
           title="Community Size"
           stat={stats.communitySize ?? 0}
-          subtitle={`${stats.withoutPlanCount ?? 0} contacts without engagement plan`}
+          subtitle="🛡️ Messaging is only allowed after a contact replies “YES” to the opt-in SMS."
+          statSection={
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white">
+              <span className="flex items-center gap-1 text-gray-400">{stats.withoutPlanCount} without plan</span>
+              <span className="flex items-center gap-1 text-green-400">✅ {stats.optedIn} Opted In</span>
+              <span className="flex items-center gap-1 text-red-400">❌ {stats.optedOut} Opted Out</span>
+              <span className="flex items-center gap-1 text-yellow-400">⏳ {stats.optInPending} Not Yet Responded</span>
+            </div>
+          }
           buttonText="Manage Community"
           onClick={() => router.push(`/contacts/${business_name}`)}
         />
@@ -111,7 +128,12 @@ export default function DashboardPage() {
           icon={<MailCheck size={22} />}
           title="Community Responses"
           stat={stats.waitingReplies}
-          subtitle={`${stats.waitingReplies ?? 0} contact waiting on your reply` + ((stats.draftsReady ?? 0) > 0 ? `\n${stats.draftsReady} response drafts ready for you ❤️` : '')}
+          statSection={
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white">
+              <span className="flex items-center gap-1 text-green-400"><MailCheck size={14} /> {stats.waitingReplies} Waiting</span>
+              <span className="flex items-center gap-1 text-pink-400">❤️ {stats.draftsReady} Drafts</span>
+            </div>
+          }
           buttonText="Review & Reply"
           onClick={() => router.push(`/replies/${business_name}`)}
         />
@@ -119,10 +141,9 @@ export default function DashboardPage() {
         <Tile
           icon={<MessageSquare size={22} />}
           title="Community Inbox"
-          subtitle="Nudge history with contacts in your community"
           statSection={
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white">
-              <span className="flex items-center gap-1 text-white"><Send size={14} /> {stats.sent} Sent</span>
+            <div className="flex items-center gap-2 text-sm text-white">
+              <span className="flex items-center gap-1 text-green-400"><Send size={14} /> {stats.sent} Sent</span>
             </div>
           }
           buttonText="Open Conversations"

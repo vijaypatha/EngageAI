@@ -4,40 +4,57 @@
 
 from app.models import RoadmapMessage
 from datetime import datetime
-from app.utils import parse_sms_timing
+from app.utils import parse_sms_timing, get_formatted_timing
 import json
 import pytz
+import logging
+
+logger = logging.getLogger(__name__)
 
 def save_roadmap_messages(roadmap_json_str, customer, db):
-    roadmap = json.loads(roadmap_json_str)
-    customer_timezone_str = "America/Denver"
+    """Parse and save roadmap messages to the database."""
+    try:
+        roadmap = json.loads(roadmap_json_str)
+        customer_timezone_str = "America/Denver"
+        logger.info(f"Processing roadmap for customer {customer.id}")
 
-    for item in roadmap:
-        sms_timing = item["smsTiming"]
+        # Sort messages by dayOffset
+        roadmap.sort(key=lambda x: x["dayOffset"])
 
-        # Correctly convert to UTC
-        send_time = parse_sms_timing(sms_timing, customer_timezone_str)
+        for item in roadmap:
+            try:
+                sms_timing = item["smsTiming"]
+                logger.info(f"Processing timing: {sms_timing}")
+                
+                # Parse send time
+                send_time = parse_sms_timing(sms_timing, customer_timezone_str)
+                
+                # Format for display
+                formatted_timing = get_formatted_timing(send_time, customer_timezone_str)
+                
+                sms = RoadmapMessage(
+                    customer_id=customer.id,
+                    business_id=customer.business_id,
+                    smsContent=item["smsContent"],
+                    smsTiming=json.dumps(formatted_timing),
+                    send_datetime_utc=send_time.astimezone(pytz.UTC),
+                    status="pending_review",
+                    relevance=item.get("relevance", ""),
+                    success_indicator=item.get("successIndicator", ""),
+                    no_response_plan=item.get("whatif_customer_does_not_respond", "")
+                )
 
-        # Extract day offset from "Day 3, 10:00 AM"
-        day_offset = int(sms_timing.split(",")[0].strip().split(" ")[1])
+                logger.info(f"Created message for {formatted_timing['display_date']} at {formatted_timing['display_time']}")
+                db.add(sms)
 
-        # Format smsTiming string for UI
-        local_dt = send_time.astimezone(pytz.timezone(customer_timezone_str))
-        human_date = local_dt.strftime("%A, %b %d")
-        time_part = local_dt.strftime("%I:%M %p")
-        formatted_timing = f"{human_date} (Day {day_offset}), {time_part}"
+            except Exception as e:
+                logger.error(f"Error processing message: {str(e)}")
+                raise
 
-        # Create and store the SMS message
-        sms = RoadmapMessage(
-            customer_id=customer.id,
-            business_id=customer.business_id,
-            smsContent=item["smsContent"],
-            smsTiming=f"Day {day_offset}, {time_part}",  # Display string
-            send_datetime_utc=send_time,  # Used for scheduling + filtering
-            status="pending_review",
-        )
-
-        print(f"[Parsed SMS] Will send on: {formatted_timing} (UTC: {send_time})")
-        db.add(sms)
-
-    db.commit()
+        db.commit()
+        logger.info("Successfully saved all roadmap messages")
+        
+    except Exception as e:
+        logger.error(f"Error saving roadmap messages: {str(e)}")
+        db.rollback()
+        raise

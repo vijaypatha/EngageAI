@@ -159,8 +159,11 @@ export default function OnboardingPage() {
                 Here’s a sample nudge {businessProfile.business_name} could use to start a thoughtful conversation:
               </p>
               <p className="italic text-sm mt-2">Here’s a preview:</p>
-              <div className="bg-gray-100 mt-2 p-3 rounded text-sm text-black">
-                {previewMessage || 'Loading preview...'}
+              <div className="bg-gray-100 mt-2 p-3 rounded text-sm text-black space-y-2">
+                <p>{previewMessage || 'Loading preview...'}</p>
+                <p className="text-xs text-gray-600 pt-2">
+                  Reply STOP to unsubscribe. Standard message rates may apply.
+                </p>
               </div>
             </div>
           )}
@@ -217,6 +220,10 @@ export default function OnboardingPage() {
             value={customer.customer_name}
             onChange={e => setCustomer({ ...customer, customer_name: e.target.value })}
           />
+          <p className="text-sm text-yellow-400 bg-[#1A1E2E] border border-yellow-500 p-3 rounded-md mb-4">
+            🛡️ Before you can message this contact, we’ll send them a one-time opt-in SMS.
+            They’ll need to reply “YES” to receive messages from you. Messaging will unlock only after they consent.
+          </p>
           <input
             type="tel"
             autoComplete="off"

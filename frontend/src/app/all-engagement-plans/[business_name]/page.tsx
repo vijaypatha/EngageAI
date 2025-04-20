@@ -17,6 +17,7 @@ interface SMSMessage {
   send_datetime_utc: string;
   status: string;
   is_hidden?: boolean;
+  latest_consent_status?: string;
 }
 
 interface GroupedMessages {
@@ -130,8 +131,8 @@ export default function AllEngagementPlansPage() {
 
   const handleSave = async (id: number) => {
     try {
-  const localDate = new Date(editedTime);
-  const utcDate = zonedTimeToUtc(localDate, "America/Denver").toISOString();
+      const localDate = new Date(editedTime);
+      const utcDate = zonedTimeToUtc(localDate, "America/Denver").toISOString();
 
       const msg = messages.find((m) => m.id === id);
       const source = msg?.status === "scheduled" ? "scheduled" : "roadmap";
@@ -243,6 +244,15 @@ export default function AllEngagementPlansPage() {
                               <div className="flex items-center gap-2 text-white font-bold text-lg">
                                 <span className="text-xl">👤</span>
                                 <span>{msg.customer_name}</span>
+                                <span className="ml-3 text-sm font-medium">
+                                  {msg.latest_consent_status === "opted_in" ? (
+                                    <span className="text-green-400">✅ Opted In</span>
+                                  ) : msg.latest_consent_status === "opted_out" ? (
+                                    <span className="text-red-400">❌ Declined</span>
+                                  ) : (
+                                    <span className="text-yellow-300">⏳ Waiting</span>
+                                  )}
+                                </span>
                               </div>
                               <div className="flex gap-2">
                                 {msg.status === "sent" ? (
@@ -254,7 +264,18 @@ export default function AllEngagementPlansPage() {
                                   <Button className="bg-blue-600 hover:bg-blue-700 text-white" size="sm" onClick={() => handleEdit(msg)}>Edit</Button>
                                 )}
                                 {msg.status === "pending_review" && (
-                                  <Button className="bg-green-600 hover:bg-green-700 text-white" size="sm" onClick={() => handleSchedule(msg.id)}>Schedule</Button>
+                                  <Button
+                                    size="sm"
+                                    disabled={msg.latest_consent_status === "opted_out"}
+                                    onClick={() => handleSchedule(msg.id)}
+                                    className={`text-white ${
+                                      msg.latest_consent_status === "opted_out"
+                                        ? "bg-gray-600 cursor-not-allowed"
+                                        : "bg-green-600 hover:bg-green-700"
+                                    }`}
+                                  >
+                                    Schedule
+                                  </Button>
                                 )}
                               </div>
                             </div>

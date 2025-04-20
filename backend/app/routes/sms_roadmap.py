@@ -1,4 +1,4 @@
-# ✨ What’s Powerful About It
+# ✨ What's Powerful About It
 # ✅ Auto-fetches customer + business info
 # ✅ Injects owner tone style
 # ✅ Prevents LLM cost duplication by checking if roadmap exists
@@ -16,6 +16,7 @@ from app.services.sms_roadmap_parser import save_roadmap_messages
 import json
 import traceback
 from pydantic import BaseModel
+from datetime import datetime, timedelta
 
 router = APIRouter()
 
@@ -64,13 +65,23 @@ def generate_or_return_roadmap(
             "message": "AI roadmap already exists. Skipped regeneration."
         }
 
+    if force:
+        customer.is_generating_roadmap = False
+        db.commit()
+
     if customer.is_generating_roadmap:
-        raise HTTPException(
-            status_code=409,
-            detail="Roadmap generation already in progress for this customer."
-        )
+        last_updated = getattr(customer, 'last_generation_attempt', None)
+        if last_updated and (datetime.utcnow() - last_updated) > timedelta(minutes=5):
+            customer.is_generating_roadmap = False
+            db.commit()
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail="Roadmap generation already in progress. Please wait a few moments and try again."
+            )
 
     customer.is_generating_roadmap = True
+    customer.last_generation_attempt = datetime.utcnow()
     db.commit()
 
     try:
@@ -124,3 +135,13 @@ def generate_or_return_roadmap(
             "roadmap": parsed_roadmap,
             "message": "New roadmap generated and saved."
         }
+
+@router.post("/reset-generation-flag/{customer_id}")
+def reset_generation_flag(customer_id: int, db: Session = Depends(get_db)):
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    customer.is_generating_roadmap = False
+    db.commit()
+    return {"message": "Reset successful"}

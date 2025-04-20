@@ -1,6 +1,85 @@
 import openai
 import os
-import json  # needed for logging prompt input
+import json
+from datetime import datetime, timedelta
+import logging
+from app.services.style_analyzer import get_style_guide
+
+logger = logging.getLogger(__name__)
+
+def extract_special_dates(customer_info: str) -> dict:
+    """Extract special dates from customer information."""
+    import re
+    
+    special_dates = {}
+    info_lower = customer_info.lower()
+    
+    # Extract birthday
+    birthday_patterns = [
+        r'birthday\s+(?:is\s+)?(?:on\s+)?([a-z]+)\s+(\d+)(?:st|nd|rd|th)?',
+        r'birthday:?\s+([a-z]+)\s+(\d+)(?:st|nd|rd|th)?'
+    ]
+    
+    for pattern in birthday_patterns:
+        match = re.search(pattern, info_lower)
+        if match:
+            month_name, day = match.groups()
+            month_num = {
+                'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
+                'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6, 'july': 7, 'jul': 7,
+                'august': 8, 'aug': 8, 'september': 9, 'sep': 9, 'october': 10, 'oct': 10,
+                'november': 11, 'nov': 11, 'december': 12, 'dec': 12
+            }.get(month_name.lower())
+            
+            if month_num:
+                special_dates['birthday'] = {
+                    'month': month_num,
+                    'day': int(day),
+                    'importance': 'high'
+                }
+    
+    # Extract holidays
+    holidays = {
+        'july 4th': {'month': 7, 'day': 4},
+        'thanksgiving': {'month': 11, 'day': lambda y: get_thanksgiving_day(y)},
+        'christmas': {'month': 12, 'day': 25},
+        'new year': {'month': 1, 'day': 1}
+    }
+    
+    for holiday, date_info in holidays.items():
+        if holiday in info_lower:
+            importance = 'high' if f'loves {holiday}' in info_lower else 'medium'
+            special_dates[holiday] = {
+                'month': date_info['month'],
+                'day': date_info['day'] if isinstance(date_info['day'], int) else date_info['day'](datetime.now().year),
+                'importance': importance
+            }
+    
+    return special_dates
+
+def get_thanksgiving_day(year):
+    """Calculate Thanksgiving day for a given year."""
+    import calendar
+    c = calendar.monthcalendar(year, 11)
+    return [day for day in [week[calendar.THURSDAY] for week in c] if day != 0][3]
+
+def calculate_days_until(special_dates):
+    """Calculate days until each special date."""
+    today = datetime.now()
+    date_offsets = {}
+    
+    for event, info in special_dates.items():
+        target_date = datetime(today.year, info['month'], info['day'])
+        if target_date < today:
+            target_date = datetime(today.year + 1, info['month'], info['day'])
+        
+        days_until = (target_date - today).days
+        date_offsets[event] = {
+            'days_until': days_until,
+            'importance': info['importance']
+        }
+    
+    return date_offsets
 
 def generate_sms_roadmap(
     business_type,
@@ -8,114 +87,124 @@ def generate_sms_roadmap(
     lifecycle_stage,
     pain_points,
     interaction_history,
-    tone_examples,
+    business_id,
+    db,
     representative_name=None,
     business_name=None,
     business_goal="build strong customer relationships",
     primary_services="general services",
-    preferred_tone="conversational and friendly"
 ):
-    if representative_name is None:
-        representative_name = "Your Name"
-    if business_name is None:
-      business_name = "Your Business"
+    """Generate SMS roadmap with proper timing and matching business owner's exact style."""
+    
+    # Get the business owner's comprehensive style guide
+    style_guide = get_style_guide(business_id, db)
+    
+    # Extract dates and calculate offsets
+    all_customer_info = f"{lifecycle_stage} {pain_points} {interaction_history}"
+    special_dates = extract_special_dates(all_customer_info)
+    date_offsets = calculate_days_until(special_dates)
+    
+    # Sort dates by proximity
+    sorted_dates = sorted(
+        date_offsets.items(),
+        key=lambda x: (x[1]['importance'] != 'high', x[1]['days_until'])
+    )
+    
+    # Format dates for prompt
+    special_dates_text = "\n".join([
+        f"   - {event.title()}: in {info['days_until']} days (Importance: {info['importance']})"
+        for event, info in sorted_dates
+    ])
 
-    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # Format the style guide elements
+    style_elements = {
+        'phrases': '\n'.join(style_guide.get('key_phrases', [])),
+        'patterns': '\n'.join(style_guide.get('message_patterns', [])),
+        'personality': '\n'.join(style_guide.get('personality_traits', [])),
+        'special': json.dumps(style_guide.get('special_elements', {}), indent=2),
+        'style_notes': style_guide.get('style_notes', {})
+    }
 
     prompt = f"""
-You are an AI writing **4 short SMS messages** for a small business owner named {representative_name}, who runs a {business_type} business.
+You are writing **4 SMS messages** as {representative_name} from {business_name}.
+You MUST perfectly match their unique communication style.
 
-The timing of these messages should be determined by any specific scheduling instructions found in the `interaction_history` or other customer information. For example: 
-- "Birthday is April 25. Send 1 message per month"
-- "Follow up weekly"
-- "Send something encouraging around Thanksgiving"
+YOUR EXACT VOICE & STYLE:
+1. Phrases You Use:
+{style_elements['phrases']}
 
-If no specific timing is found, default to a reasonable weekly cadence: (dayOffsets: 0, 7, 14, 21).
+2. How You Structure Messages:
+{style_elements['patterns']}
 
-Each message is meant to:
-- Reconnect with a customer named {customer_name}
-- Sound natural, friendly, and personal
-- Be grounded only in the facts provided — DO NOT assume any past events or conversations
-- Bridge lightly between relationship and business, without being salesy
+3. Your Personality Traits:
+{style_elements['personality']}
 
----
+4. Your Special Elements (references, characters, etc):
+{style_elements['special']}
 
-📇 Business Info:
-- Services: {primary_services}
-- Goal: {business_goal}
-- Tone Style: {preferred_tone}
+5. Your Style Notes:
+{json.dumps(style_elements['style_notes'], indent=2)}
 
-👤 Customer Info:
+✍️ Guidelines:
+- Keep under 160 characters
+- Use 1-2 relevant emojis naturally
+- End with "– {representative_name}, {business_name}"
+
+⚠️ CRITICAL TIMING REQUIREMENTS:
+1. Use EXACT "Day X, HH:MM AM/PM" format for smsTiming
+2. Important dates for this customer:
+{special_dates_text}
+
+3. Message Sequence MUST be:
+   - Message 1: Day 0 (Initial consultation follow-up)
+   - Messages 2-4: Schedule around special dates above
+   
+📅 Timing Rules:
+- First message MUST be "Day 0, 10:00 AM"
+- Special date messages should be 2 days before the event
+- All times between 9:00 AM and 5:00 PM
+- Monthly spacing between messages when no special dates
+
+👤 Customer Context:
 - Name: {customer_name}
-- Lifecycle Stage: {lifecycle_stage}
+- Status: {lifecycle_stage}
 - Pain Points: {pain_points}
 - Interaction History: {interaction_history}
 
-✍️ Style Guide:
-- Use this tone style based on examples from {representative_name}:
-{tone_examples}
+CRITICAL RULES:
+1. Write EXACTLY as if you are this person - match their voice perfectly
+2. Use their exact communication patterns
+3. Include their specific types of phrases and references
+4. Keep their personality consistent across all messages
+5. Each message must be under 160 characters
+6. Don't miss the basics:
+    - Greetings
+    - Closing
+    - Signoff
+    - Wishes on holidays and birthdays
 
-- Vary your greetings across messages
-- Keep messages under 160 characters
-- Use contractions and natural phrasing
-- Every SMS must end with a signature in this format: “– {representative_name}, {business_name}”
-- Don’t hard-sell or push — be light, human, and sincere
-- Messages should feel like a check-in or helpful nudge — never robotic
-- Avoid generic content — make each message feel relevant to the timing or context
-
-🧠 Voice Matching:
-The business owner wants these messages to sound like *they* wrote them personally.
-
-- Match their voice, vocabulary, and phrasing.
-- Review the tone examples provided above and write in that style.
-- Avoid robotic, overly formal, or generic phrasing.
-- SMS should feel like it's coming straight from the business owner’s phone — natural, personal, and human.
-
-💌 Personal Touch:
-Many business owners want their customers to feel remembered, especially during meaningful or joyful life moments — such as birthdays, holidays, or anniversaries. If events like these are mentioned in the customer info, you should:
-- Center one or more messages around those moments
-- Adjust your spacing/frequency as needed to make the timing feel intentional and caring
-
-⚠️ Timing Logic:
-- Inspect all customer info (especially interaction history) for cues like: "monthly check-in", "birthday April 25", "follow up after onboarding"
-- Use those cues to decide each message’s `smsTiming` and `dayOffset`
-- You may vary spacing (e.g., weekly, monthly) based on what's appropriate for that customer
-- If no timing logic is found, use default dayOffsets: 0, 7, 14, 21
-- Always set dayOffset=0 for the first message in the sequence
-
----
-
-Return a JSON array of 4 objects. Each must include:
-- "SMS Number"
-- "smsContent"
-- "smsTiming": A friendly description of when to send it (e.g., "On Birthday (April 25), 10:00 AM" or "30 days after message 1, 10:00 AM")
-- "dayOffset": Integer days from the first message
-- "relevance": Why this message fits that timing
-- "successIndicator": What would be a good result
-- "whatif_customer_does_not_respond": Polite next step suggestion
-
-Respond ONLY with a valid JSON array. Do not include commentary, markdown, or explanation.
+Return ONLY a JSON array of 4 messages with this structure:
+{{
+    "SMS Number": 1,
+    "smsContent": "Message text...",
+    "smsTiming": "Day X, HH:MM AM/PM",
+    "dayOffset": X,
+    "relevance": "Why this timing...",
+    "successIndicator": "Expected response...",
+    "whatif_customer_does_not_respond": "Next steps..."
+}}
 """
 
-
-    # 🔍 Log the prompt inputs
-    print("📦 Prompt data for LLM:")
-    print(json.dumps({
-        "customer_name": customer_name,
-        "lifecycle_stage": lifecycle_stage,
-        "pain_points": pain_points,
-        "interaction_history": interaction_history,
-        "tone_examples": tone_examples,
-    }, indent=2))
-
-    # 🔁 Call OpenAI
+    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    
+    logger.info(f"Generating roadmap for customer {customer_name} using business style guide")
+    
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "system", "content": prompt}]
+        messages=[
+            {"role": "system", "content": "You are an expert at matching exact communication styles."},
+            {"role": "user", "content": prompt}
+        ]
     )
-
-    # 🧠 Log the raw LLM response
-    print("🧠 LLM raw response:")
-    print(response.choices[0].message.content)
-
+    
     return response.choices[0].message.content.strip()

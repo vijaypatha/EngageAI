@@ -1,9 +1,8 @@
-### ✅ customers.py
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import select, func
 from app.database import get_db
-from app.models import Customer, BusinessProfile
+from app.models import Customer, BusinessProfile, ConsentLog
 from app.schemas import CustomerCreate, CustomerUpdate
 from app.services.sms_optin import send_double_optin_sms
 
@@ -35,7 +34,28 @@ def add_customer(customer: CustomerCreate, db: Session = Depends(get_db)):
 # 📦 Get all customers under a business
 @router.get("/by-business/{business_id}", summary="List customers by business")
 def get_customers_by_business(business_id: int, db: Session = Depends(get_db)):
-    return db.query(Customer).filter(Customer.business_id == business_id).all()
+    subquery = (
+        db.query(
+            ConsentLog.customer_id,
+            func.max(ConsentLog.replied_at).label("latest_reply"),
+            ConsentLog.status
+        )
+        .filter(ConsentLog.business_id == business_id)
+        .group_by(ConsentLog.customer_id, ConsentLog.status)
+        .subquery()
+    )
+
+    results = (
+        db.query(Customer, subquery.c.status.label("latest_consent_status"))
+        .outerjoin(subquery, Customer.id == subquery.c.customer_id)
+        .filter(Customer.business_id == business_id)
+        .all()
+    )
+
+    return [
+        {**customer.__dict__, "latest_consent_status": consent_status}
+        for customer, consent_status in results
+    ]
 
 # 🔍 Get specific customer
 @router.get("/{customer_id}", summary="Get customer")
@@ -61,10 +81,20 @@ def update_customer(customer_id: int, customer: CustomerUpdate, db: Session = De
 # 🚗️ Delete customer
 @router.delete("/{customer_id}", summary="Delete customer")
 def delete_customer(customer_id: int, db: Session = Depends(get_db)):
-    db_customer = db.query(Customer).filter(Customer.id == customer_id).first()
-    if not db_customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
-
-    db.delete(db_customer)
-    db.commit()
-    return {"message": "Customer deleted successfully"}
+    try:
+        # Start a transaction
+        # First, delete all consent logs for this customer
+        db.query(ConsentLog).filter(ConsentLog.customer_id == customer_id).delete()
+        
+        # Then delete the customer
+        result = db.query(Customer).filter(Customer.id == customer_id).delete()
+        if not result:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        
+        # Commit the transaction
+        db.commit()
+        return {"message": "Customer deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting customer: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

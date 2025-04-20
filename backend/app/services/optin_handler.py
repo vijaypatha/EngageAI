@@ -1,5 +1,3 @@
-# app/services/optin_handler.py
-
 from fastapi.responses import PlainTextResponse
 from datetime import datetime
 from app.models import ConsentLog, Customer, BusinessProfile
@@ -32,13 +30,18 @@ def handle_opt_in_out(body: str, customer: Customer, business: BusinessProfile, 
                 replied_at=datetime.utcnow()
             ))
             print("➕ Creating new ConsentLog entry")
+        
+        # Update customer.opted_in to maintain single source of truth
+        customer.opted_in = True
+        customer.opted_in_at = datetime.utcnow()
+        
         db.commit()
         print("✅ Opt-in saved. Skipping AI response.")
         return PlainTextResponse("Opt-in confirmed", status_code=200)
 
     elif normalized in ["stop", "unsubscribe", "no", "no!"]:
         print("📩 Processing opt-out attempt...")
-        customer.opted_in = False
+        # No update to customer.opted_in directly — frontend should infer from latest ConsentLog.status
         log = db.query(ConsentLog).filter(ConsentLog.customer_id == customer.id).first()
         if log:
             log.status = "declined"

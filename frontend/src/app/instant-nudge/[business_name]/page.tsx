@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 interface Customer {
   id: number;
   customer_name: string;
+  latest_consent_status?: string;
 }
 
 interface NudgeBlock {
@@ -32,6 +33,7 @@ export default function InstantNudgePage() {
   ]);
   const [contacts, setContacts] = useState<Customer[]>([]);
   const [businessId, setBusinessId] = useState<number | null>(null);
+  const [messages, setMessages] = useState<any[]>([]);
 
   useEffect(() => {
     if (!business_name) return;
@@ -52,7 +54,11 @@ export default function InstantNudgePage() {
     // Fetching contacts for the business
     apiClient.get(`/customers/by-business/${businessId}`).then(res => {
       console.log("📞 Fetched contacts:", res.data);
-      setContacts(res.data);
+      // Filter to only show opted-in contacts
+      const optedInContacts = res.data.filter((c: Customer) => 
+        c.latest_consent_status === "opted_in"
+      );
+      setContacts(optedInContacts);
     }).catch(err => {
       console.error("❌ Failed to fetch contacts:", err);
       setContacts([]);
@@ -108,33 +114,27 @@ export default function InstantNudgePage() {
   };
 
   useEffect(() => {
-    // Periodically polling for instant status every 15 seconds
+    if (!businessId) return;
+
+    // Define fetch function
     const fetchMessages = async () => {
       try {
-        const { data } = await apiClient.get(`/nudge/instant-status/slug/${business_name}`);
-        const statusMap = new Map<number, string>();
-        data.forEach((m: any) => {
-          statusMap.set(m.id, m.status);
-        });
-        setNudgeBlocks(prev =>
-          prev.map(block =>
-            block.scheduledSmsId && statusMap.get(block.scheduledSmsId) === "sent"
-              ? { ...block, sent: true, tempScheduled: false }
-              : block
-          )
-        );
-      } catch (err) {
-        console.error("❌ Failed to fetch instant status:", err);
+        const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
+        setMessages(res.data || []);
+      } catch (error) {
+        console.error("Failed to fetch messages:", error);
       }
     };
 
-    const interval = setInterval(() => {
-      console.log("🔁 Starting periodic poll");
-      fetchMessages();
-    }, 15000); // every 15s
-    fetchMessages(); // initial fetch
+    // Initial fetch
+    fetchMessages();
+
+    // Set up polling with 30-second interval
+    const interval = setInterval(fetchMessages, 30000);
+
+    // Cleanup on unmount
     return () => clearInterval(interval);
-  }, [business_name]);
+  }, [businessId]);
 
   const handleDraft = async (i: number) => {
     const block = nudgeBlocks[i];
@@ -198,8 +198,20 @@ export default function InstantNudgePage() {
     <div className="max-w-2xl mx-auto py-10">
       <h1 className="text-3xl font-bold text-center text-white mb-2">Instant Nudge</h1>
       <p className="text-center text-gray-400 mb-6">
-        Send instant nudges or plan your nudges based your needs.
+        Send instant nudges or plan your nudges based on your needs.
       </p>
+      
+      {/* Add info banner about opted-in contacts only */}
+      <div className="bg-blue-900/50 border border-blue-500 rounded-lg p-4 mb-8 text-sm text-blue-200">
+        <p className="flex items-center">
+          <span className="mr-2">ℹ️</span>
+          <span>
+            Only showing contacts who have opted in to receive messages ({contacts.length} total). 
+            Other contacts will need to opt in before they can receive messages.
+          </span>
+        </p>
+      </div>
+
       <p className="text-center text-white font-medium mb-8">
         {nudgeBlocks.length} messages for {nudgeBlocks.reduce((acc, b) => acc + b.customerIds.length, 0)} customers
       </p>
@@ -213,7 +225,7 @@ export default function InstantNudgePage() {
               : "bg-[#111827] border-gray-700"
           }`}
         >
-          <label className="text-sm font-medium text-gray-300 block mb-2">Select customers</label>
+          <label className="text-sm font-medium text-gray-300 block mb-2">Select customers (opted-in only)</label>
           <div className="bg-[#1f2937] rounded p-3 border border-gray-600 mb-4">
             <label className="flex items-center text-white mb-2">
               <input
@@ -225,7 +237,7 @@ export default function InstantNudgePage() {
                   setNudgeBlocks(copy);
                 }}
               />
-              <span className="ml-2">Select All</span>
+              <span className="ml-2">Select All Opted-In Contacts</span>
             </label>
             {contacts.map(c => (
               <label key={c.id} className="flex items-center text-white mb-1">

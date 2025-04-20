@@ -13,13 +13,13 @@ def send_double_optin_sms(customer_id: int):
         raise ValueError("Customer or Business not found")
 
     message_body = (
-        f"Hi {customer.customer_name} — {business.representative_name} from {business.business_name} "
-        "would love to send you helpful updates, tips, or reminders by SMS.\n"
-        "Reply YES to opt in. Reply STOP to unsubscribe.\nStandard message rates may apply."
+        f"👋 Hi {customer.customer_name}! This is {business.representative_name} from "
+        f"{business.business_name}. I'd like to send you helpful updates and reminders.\n\n"
+        "Reply YES to opt in or STOP to opt out. Msg&data rates may apply."
     )
 
     client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
-    from_number = business.twilio_number  # Assumes already assigned
+    from_number = business.twilio_number
     to_number = customer.phone
 
     if not from_number:

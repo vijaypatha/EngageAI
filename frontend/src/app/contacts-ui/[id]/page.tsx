@@ -20,6 +20,7 @@ export default function ContactEngagementPage() {
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState<RoadmapMessage[]>([]);
   const [customerName, setCustomerName] = useState("");
+  const [optedIn, setOptedIn] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
   const [editedTime, setEditedTime] = useState<string>("");
@@ -28,13 +29,14 @@ export default function ContactEngagementPage() {
     const load = async () => {
       try {
         const res = await apiClient.get(`/review/engagement-plan/${id}`);
-        const data = res.data.engagements;
-
-        if (data && data.length > 0) {
-          setMessages([...data].sort((a, b) => new Date(a.send_datetime_utc || "").getTime() - new Date(b.send_datetime_utc || "").getTime()));
+        if (res.data.engagements && res.data.engagements.length > 0) {
+          setMessages([...res.data.engagements].sort((a, b) => 
+            new Date(a.send_datetime_utc || "").getTime() - new Date(b.send_datetime_utc || "").getTime()
+          ));
         }
         const custRes = await apiClient.get(`/customers/${id}`);
         setCustomerName(custRes.data.customer_name);
+        setOptedIn(res.data.latest_consent_status);
       } catch (err) {
         console.error("Failed to fetch engagement plan", err);
       } finally {
@@ -135,6 +137,15 @@ export default function ContactEngagementPage() {
     <div className="max-w-4xl mx-auto p-6 space-y-6 bg-nudge-gradient text-white min-h-screen">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">📬 Engagement Plan for {customerName}</h1>
+        <span className="ml-3 text-sm font-medium">
+          {optedIn === "opted_in" ? (
+            <span className="text-green-400">✅ Opted In</span>
+          ) : optedIn === "declined" ? (
+            <span className="text-red-400">❌ Declined</span>
+          ) : (
+            <span className="text-yellow-300">⏳ Waiting</span>
+          )}
+        </span>
         <button
           onClick={regeneratePlan}
           className="bg-gradient-to-r from-purple-600 to-pink-500 hover:from-purple-700 hover:to-pink-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-300"
@@ -241,7 +252,12 @@ export default function ContactEngagementPage() {
                             </button>
                             <button
                               onClick={() => handleApprove(msg.id)}
-                              className="text-sm px-3 py-1 bg-primary hover:bg-primary/80 rounded text-white shadow"
+                              disabled={optedIn === "declined"}
+                              className={`text-sm px-3 py-1 rounded text-white shadow ${
+                                optedIn === "declined"
+                                  ? 'bg-gray-600 cursor-not-allowed'
+                                  : 'bg-primary hover:bg-primary/80'
+                              }`}
                             >
                               Schedule
                             </button>

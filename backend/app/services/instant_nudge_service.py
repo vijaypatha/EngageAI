@@ -7,6 +7,7 @@ from datetime import datetime
 import openai
 import os
 import pytz
+import json
 
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
@@ -14,6 +15,7 @@ from app.models import BusinessProfile, BusinessOwnerStyle, ScheduledSMS, Engage
 from app.services.twilio_sms_service import send_sms_via_twilio
 from app.utils import parse_sms_timing
 from app.celery_tasks import schedule_sms_task
+from app.services.style_analyzer import get_style_guide
 
 
 # Helper: Call OpenAI to generate short SMS message
@@ -31,34 +33,65 @@ def call_openai_completion(prompt: str) -> str:
 
 
 # Generate a single AI message with customer name placeholder
-async def generate_instant_nudge(topic: str, business_id: int) -> dict:
-    db: Session = SessionLocal()
-
-    # Lookup business profile
+async def generate_instant_nudge(topic: str, business_id: int, db: Session) -> dict:
+    """Generate a message that perfectly matches the business owner's style"""
+    
+    # Get business profile
     business = db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
     if not business:
-        print(f"❌ BusinessProfile not found for business_id={business_id}")
         raise Exception("Business not found")
-
-    # Lookup tone/style if saved by business owner
-    style = db.query(BusinessOwnerStyle).filter(BusinessOwnerStyle.business_id == business_id).first()
-    tone_instructions = style.response if style else "friendly and helpful tone"
-
-    # Build prompt to feed OpenAI
-    prompt = (
-        f"You're {business.representative_name} from {business.business_name}. "
-        f"Write a short, helpful SMS message to a customer about: '{topic}'. "
-        f"Match the tone described here: \"{tone_instructions}\" — but do not repeat these words directly. "
-        f"Make it feel natural, personal, and relevant. Include '{{customer_name}}' where the customer's name should go."
+    
+    # Get comprehensive style guide
+    style_guide = get_style_guide(business_id, db)
+    
+    # Format style guide for prompt
+    style_elements = {
+        'phrases': '\n'.join(style_guide.get('key_phrases', [])),
+        'patterns': '\n'.join(style_guide.get('message_patterns', [])),
+        'personality': '\n'.join(style_guide.get('personality_traits', [])),
+        'special': json.dumps(style_guide.get('special_elements', {}), indent=2)
+    }
+    
+    prompt = f"""
+    You are {business.representative_name} from {business.business_name}.
+    Write a message about: '{topic}'
+    
+    YOUR UNIQUE VOICE:
+    
+    Common Phrases You Use:
+    {style_elements['phrases']}
+    
+    How You Structure Messages:
+    {style_elements['patterns']}
+    
+    Your Personality Traits:
+    {style_elements['personality']}
+    
+    Your Special Elements:
+    {style_elements['special']}
+    
+    CRITICAL RULES:
+    1. Write EXACTLY as if you are this person
+    2. Use their exact communication patterns
+    3. Include their type of phrases and references
+    4. Match their personality perfectly
+    5. Keep message under 160 characters
+    
+    Write your message:
+    """
+    
+    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are an expert at matching exact communication styles."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.7
     )
-
-    print(f"🧠 Generating instant nudge with prompt:\n{prompt}")
-
-    # Send to OpenAI
-    response = call_openai_completion(prompt)
-    message = response.strip()
-
-    print(f"✅ Generated Instant Nudge message:\n{message}")
+    
+    message = response.choices[0].message.content.strip()
+    
     return {"message": message}
 
 

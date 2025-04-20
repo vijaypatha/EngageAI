@@ -3,9 +3,9 @@ print("✅ review.py loaded")
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import RoadmapMessage, ScheduledSMS, Customer, Engagement
+from app.models import RoadmapMessage, ScheduledSMS, Customer, Engagement, ConsentLog
 from datetime import datetime, timezone
-from sqlalchemy import and_
+from sqlalchemy import and_, func, desc
 from app.celery_tasks import schedule_sms_task
 
 
@@ -18,6 +18,16 @@ def get_engagement_plan(customer_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Customer not found")
 
     now_utc = datetime.now(timezone.utc)
+
+    # Get latest consent status
+    latest_consent = (
+        db.query(ConsentLog)
+        .filter(ConsentLog.customer_id == customer_id)
+        .order_by(desc(ConsentLog.replied_at))
+        .first()
+    )
+
+    consent_status = latest_consent.status if latest_consent else "pending"
 
     roadmap_messages = db.query(RoadmapMessage).filter(
         and_(
@@ -60,7 +70,10 @@ def get_engagement_plan(customer_id: int, db: Session = Depends(get_db)):
         for sms in scheduled_sms
     ]
 
-    return {"engagements": roadmap_data + scheduled_data}
+    return {
+        "engagements": roadmap_data + scheduled_data,
+        "latest_consent_status": consent_status
+    }
 
 @router.put("/{roadmap_id}/approve")
 def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
@@ -180,9 +193,35 @@ def get_engagement_stats(business_id: int, db: Session = Depends(get_db)):
     roadmap = db.query(RoadmapMessage).join(Customer).filter(Customer.business_id == business_id)
     scheduled = db.query(ScheduledSMS).join(Customer).filter(Customer.business_id == business_id)
 
-    opted_in = db.query(Customer).filter(Customer.business_id == business_id, Customer.opted_in.is_(True)).count()
-    opted_out = db.query(Customer).filter(Customer.business_id == business_id, Customer.opted_in.is_(False)).count()
-    opt_in_pending = db.query(Customer).filter(Customer.business_id == business_id, Customer.opted_in.is_(None)).count()
+    # Get latest consent status for each customer
+    consent_subquery = (
+        db.query(
+            ConsentLog.customer_id,
+            func.max(ConsentLog.replied_at).label("latest_reply")
+        )
+        .filter(ConsentLog.business_id == business_id)
+        .group_by(ConsentLog.customer_id)
+        .subquery()
+    )
+
+    latest_consent_status = (
+        db.query(
+            ConsentLog.customer_id,
+            ConsentLog.status
+        )
+        .join(
+            consent_subquery,
+            and_(
+                ConsentLog.customer_id == consent_subquery.c.customer_id,
+                ConsentLog.replied_at == consent_subquery.c.latest_reply
+            )
+        )
+        .subquery()
+    )
+
+    opted_in = db.query(latest_consent_status).filter(latest_consent_status.c.status == "opted_in").count()
+    opted_out = db.query(latest_consent_status).filter(latest_consent_status.c.status == "declined").count()
+    opt_in_pending = total_customers - (opted_in + opted_out)
 
     return {
         "communitySize": total_customers,
@@ -224,13 +263,54 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
     if not customer_map:
         return {"engagements": []}
 
+    now_utc = datetime.now(timezone.utc)
+
+    # Get latest consent status for each customer
+    consent_subquery = (
+        db.query(
+            ConsentLog.customer_id,
+            func.max(ConsentLog.replied_at).label("latest_reply")
+        )
+        .filter(ConsentLog.business_id == business_id)
+        .group_by(ConsentLog.customer_id)
+        .subquery()
+    )
+
+    latest_consent = (
+        db.query(
+            ConsentLog.customer_id,
+            ConsentLog.status.label("latest_status")
+        )
+        .join(
+            consent_subquery,
+            and_(
+                ConsentLog.customer_id == consent_subquery.c.customer_id,
+                ConsentLog.replied_at == consent_subquery.c.latest_reply
+            )
+        )
+    ).all()
+
+    consent_status_map = {
+        customer_id: status
+        for customer_id, status in latest_consent
+    }
+
     roadmap = db.query(RoadmapMessage).filter(
         and_(
             RoadmapMessage.customer_id.in_(customer_map.keys()),
-            RoadmapMessage.status != "scheduled"
+            RoadmapMessage.send_datetime_utc != None,
+            RoadmapMessage.send_datetime_utc >= now_utc,
+            RoadmapMessage.status != "deleted"
         )
     )
-    scheduled = db.query(ScheduledSMS).filter(ScheduledSMS.customer_id.in_(customer_map.keys()))
+
+    scheduled = db.query(ScheduledSMS).filter(
+        and_(
+            ScheduledSMS.customer_id.in_(customer_map.keys()),
+            ScheduledSMS.send_time != None,
+            ScheduledSMS.send_time >= now_utc
+        )
+    )
 
     roadmap_data = [
         {
@@ -240,7 +320,8 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
             "status": msg.status,
             "customer_name": customer_map.get(msg.customer_id, "Unknown"),
             "send_datetime_utc": msg.send_datetime_utc.isoformat() if msg.send_datetime_utc else None,
-            "source": "roadmap"
+            "source": "roadmap",
+            "latest_consent_status": consent_status_map.get(msg.customer_id, "pending")
         }
         for msg in roadmap
     ]
@@ -254,7 +335,8 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
             "customer_name": customer_map.get(sms.customer_id, "Unknown"),
             "send_datetime_utc": sms.send_time.isoformat() if sms.send_time else None,
             "source": "scheduled",
-            "is_hidden": sms.is_hidden  # 👈 include this field
+            "is_hidden": sms.is_hidden,
+            "latest_consent_status": consent_status_map.get(sms.customer_id, "pending")
         }
         for sms in scheduled
     ]
@@ -421,28 +503,57 @@ def get_full_customer_history(
     business_id: int = Query(...),
     db: Session = Depends(get_db)
 ):
-    results = (
-        db.query(Engagement)
-        .join(Engagement.customer)
+    # Get latest consent status for each customer
+    consent_subquery = (
+        db.query(
+            ConsentLog.customer_id,
+            func.max(ConsentLog.replied_at).label("latest_reply")
+        )
+        .filter(ConsentLog.business_id == business_id)
+        .group_by(ConsentLog.customer_id)
+        .subquery()
+    )
+
+    latest_consent = (
+        db.query(
+            ConsentLog.customer_id,
+            ConsentLog.status.label("latest_status")
+        )
+        .join(
+            consent_subquery,
+            and_(
+                ConsentLog.customer_id == consent_subquery.c.customer_id,
+                ConsentLog.replied_at == consent_subquery.c.latest_reply
+            )
+        )
+    ).all()
+
+    consent_status_map = {
+        customer_id: status
+        for customer_id, status in latest_consent
+    }
+
+    # Get all engagements with customer info
+    engagements = (
+        db.query(Engagement, Customer)
+        .join(Customer)
         .filter(Customer.business_id == business_id)
+        .order_by(Engagement.sent_at.desc())
         .all()
     )
 
     return [
         {
             "id": e.id,
-            "customer_name": e.customer.customer_name if e.customer else "Unknown",
+            "customer_id": e.customer_id,
+            "customer_name": customer.customer_name,
             "response": e.response,
             "ai_response": e.ai_response,
             "status": e.status,
             "sent_at": e.sent_at.isoformat() if e.sent_at else None,
-            "phone": e.customer.phone if e.customer else None,
-            "lifecycle_stage": e.customer.lifecycle_stage if e.customer else None,
-            "pain_points": e.customer.pain_points if e.customer else None,
-            "interaction_history": e.customer.interaction_history if e.customer else None,
-            "customer_id": e.customer_id,  # Explicitly include the customer_id
+            "opted_in": consent_status_map.get(e.customer_id) == "opted_in"
         }
-        for e in results
+        for e, customer in engagements
     ]
 
 

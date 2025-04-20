@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import business, customers, review, engagement, twilio_webhook, auth, onboarding_preview_route
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from app.routes import business, customers, review, engagement, twilio_webhook, auth, onboarding_preview_route, consent
 from app.database import engine, Base
 from starlette.middleware.sessions import SessionMiddleware
 from app.routes import sms_scheduling, sms_roadmap, message_status, sms_businessowner_style_endpoints, conversations, instant_nudge_route
@@ -17,6 +19,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "https://engage-ai-seven.vercel.app",
         "https://www.engage-ai-seven.vercel.app",
         "https://nudge-ai-seven.vercel.app",
@@ -27,6 +30,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # ✅ DB Init
@@ -36,8 +40,8 @@ Base.metadata.create_all(bind=engine)
 app.add_middleware(
     SessionMiddleware,
     secret_key="your-secret-key",
-    same_site="none",
-    https_only=True,
+    same_site="lax",
+    https_only=False,
     session_cookie="session"
 )
 
@@ -55,6 +59,7 @@ app.include_router(conversations.router)
 app.include_router(auth.router)
 app.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["Onboarding Preview"])
 app.include_router(instant_nudge_route.router)
+app.include_router(consent.router, prefix="/consent", tags=["Consent"])
 
 # ✅ Root
 @app.get("/")
@@ -94,6 +99,21 @@ print("\n📡 Active Routes:")
 for route in app.routes:
     if isinstance(route, APIRoute):
         print(f"🔹 {route.path} [{','.join(route.methods)}]")
+
+# ✅ Add error handlers
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": str(exc)},
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 # ✅ Main entry point
 if __name__ == "__main__":

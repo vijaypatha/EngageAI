@@ -15,6 +15,7 @@ interface Message {
   ai_response?: string;
   status: string;
   sent_at?: string;
+  opted_in: boolean;
 }
 
 type TimelineEntry = {
@@ -146,6 +147,7 @@ export default function InboxPage() {
           response: newMessage.trim(),
           status: "sent",
           sent_at: new Date().toISOString(),
+          opted_in: false,
         }]);
       }
 
@@ -249,6 +251,31 @@ export default function InboxPage() {
 
       <main className="w-full flex flex-col p-4 space-y-4">
         <h1 className="text-2xl font-bold">Chat with {filteredMessages[0]?.customer_name || "…"}</h1>
+
+        {activeCustomerId && (() => {
+          const customerMsgs = messages.filter(m => m.customer_id === activeCustomerId);
+          const latestMsg = customerMsgs[0];
+          const optedIn = latestMsg?.opted_in ?? false;
+
+          return !optedIn ? (
+            <div className="flex justify-between items-center bg-zinc-900 border border-red-500 text-sm text-red-400 rounded-md px-4 py-2 mb-2">
+              <div>❌ This contact has not opted in. Messaging is blocked.</div>
+              <button
+                onClick={async () => {
+                  try {
+                    await apiClient.post(`/resend-optin/${activeCustomerId}`);
+                    alert("Opt-in request sent again.");
+                  } catch (err) {
+                    alert("Failed to resend opt-in request.");
+                  }
+                }}
+                className="ml-4 bg-blue-700 hover:bg-blue-600 text-white text-sm px-4 py-1 rounded-full"
+              >
+                💌 Request Opt-In Again
+              </button>
+            </div>
+          ) : null;
+        })()}
 
         <div className="flex flex-col gap-4 overflow-y-auto max-h-[calc(100vh-250px)] pr-2">
           {timelineEntries.map((entry) => (

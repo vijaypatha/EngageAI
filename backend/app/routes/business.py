@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import BusinessProfile
 from app.schemas import BusinessProfileCreate, BusinessProfileUpdate
 import re
+import logging
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 def slugify(name: str) -> str:
     return re.sub(r'[^a-zA-Z0-9]+', '-', name.strip().lower())
@@ -64,8 +68,18 @@ def get_business_id_by_name(business_name: str, db: Session = Depends(get_db)):
     return {"business_id": business.id}
 
 @router.get("/business-id/slug/{slug}")
-def get_business_id_by_slug(slug: str, db: Session = Depends(get_db)):
-    business = db.query(BusinessProfile).filter(BusinessProfile.slug == slug).first()
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
-    return {"business_id": business.id}
+async def get_business_id_by_slug(slug: str, db: Session = Depends(get_db)):
+    logger.info(f"Attempting to fetch business with slug: {slug}")
+    try:
+        business = db.query(BusinessProfile).filter(BusinessProfile.slug == slug).first()
+        if not business:
+            logger.warning(f"No business found with slug: {slug}")
+            raise HTTPException(status_code=404, detail="Business not found")
+        logger.info(f"Successfully found business with ID: {business.id}")
+        return {"business_id": business.id}
+    except Exception as e:
+        logger.error(f"Error fetching business by slug: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while fetching business"
+        )
