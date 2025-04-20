@@ -97,8 +97,12 @@ def generate_or_return_roadmap(
             lifecycle_stage=customer.lifecycle_stage,
             pain_points=customer.pain_points,
             interaction_history=customer.interaction_history,
-            tone_examples=tone_examples,
-            representative_name=business.representative_name,
+            business_id=business.id,
+            db=db,
+            representative_name=business.owner_name,
+            business_name=business.business_name,
+            business_goal=business.business_goal,
+            primary_services=business.primary_services
         )
 
         if not roadmap or not roadmap.strip():
