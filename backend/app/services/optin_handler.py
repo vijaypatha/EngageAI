@@ -37,7 +37,7 @@ def handle_opt_in_out(body: str, customer: Customer, business: BusinessProfile, 
         
         db.commit()
         print("✅ Opt-in saved. Skipping AI response.")
-        return PlainTextResponse("Opt-in confirmed", status_code=200)
+        return PlainTextResponse("Opt-in confirmed. To opt out, reply STOP.", status_code=200)
 
     elif normalized in ["stop", "unsubscribe", "no", "no!"]:
         print("📩 Processing opt-out attempt...")
