@@ -46,20 +46,18 @@ export default function AddContactPage() {
     return digits;
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    
-    // Apply special formatting for phone field
-    if (name === 'phone') {
-      setForm(prev => ({
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
+    if (e.target.name === "phone") {
+      setForm((prev) => ({
         ...prev,
-        [name]: formatPhoneInput(value)
+        [e.target.name]: formatPhoneInput(e.target.value),
       }));
     } else {
-      // Handle other fields normally
-      setForm(prev => ({
+      setForm((prev) => ({
         ...prev,
-        [name]: value
+        [e.target.name]: e.target.value,
       }));
     }
   };
