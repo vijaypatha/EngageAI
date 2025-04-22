@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
-import { Clock, Send } from "lucide-react";
+import { Clock, Send, MessageSquare, Check, AlertCircle } from "lucide-react";
 import clsx from "clsx";
 import { formatDistanceToNow } from "date-fns";
 
@@ -176,56 +176,45 @@ export default function InboxPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white grid grid-cols-1 md:grid-cols-[300px,1fr]">
-      {/* Mobile Drawer Toggle Button */}
-      <button
-        onClick={() => setShowMobileDrawer(true)}
-        className="md:hidden p-2 text-white bg-zinc-800 border border-white rounded-lg m-4 self-start"
-      >
-        ☰ Inbox
-      </button>
+    <div className="h-screen flex md:flex-row flex-col bg-[#0B0E1C]">
+      {/* Mobile Header - Only shows on mobile */}
+      <div className="md:hidden flex items-center justify-between p-4 bg-[#1A1D2D] border-b border-[#2A2F45]">
+        <h1 className="text-xl font-semibold text-white">Inbox</h1>
+        <button
+          onClick={() => setShowMobileDrawer(!showMobileDrawer)}
+          className="p-2 hover:bg-[#242842] rounded-lg transition-colors"
+        >
+          <MessageSquare className="w-5 h-5 text-white" />
+        </button>
+      </div>
 
-      {/* Slide-out Drawer */}
-      {showMobileDrawer && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex flex-col p-4 overflow-y-auto">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold">Inbox</h2>
-            <button onClick={() => setShowMobileDrawer(false)} className="text-white text-lg">✖</button>
-          </div>
-          {getLatestMessagesByCustomer().map((msg) => {
-            const isUnread = msg.sent_at && (!lastSeenMap[msg.customer_id] || new Date(msg.sent_at) > new Date(lastSeenMap[msg.customer_id]));
-            return (
-              <div
-                key={`${msg.customer_id}-${msg.id}`}
-                onClick={() => {
-                  setActiveCustomerId(msg.customer_id);
-                  setSelectedDraftId(null);
-                  setNewMessage("");
-                  setPendingReplyCustomerId(null);
-                  fetchScheduledSms(msg.customer_id);
-                  setLastSeenMap(prev => ({ ...prev, [msg.customer_id]: new Date().toISOString() }));
-                  setShowMobileDrawer(false);
-                }}
-                className={clsx("p-3 rounded-lg cursor-pointer hover:bg-zinc-800", msg.customer_id === activeCustomerId && "bg-zinc-800")}
-              >
-                <div className="flex justify-between items-center">
-                  <span className="font-semibold">{msg.customer_name}</span>
-                  {isUnread && <span className="text-xs text-green-400">●</span>}
-                </div>
-                <div className="text-sm text-neutral-400">{msg.response?.slice(0, 40) || msg.ai_response?.slice(0, 40)}</div>
-                {msg.sent_at && <div className="text-xs text-zinc-600 mt-1">{formatDistanceToNow(new Date(msg.sent_at))} ago</div>}
-              </div>
-            );
-          })}
+      {/* Sidebar */}
+      <aside className={clsx(
+        "w-full md:w-80 bg-[#1A1D2D] border-r border-[#2A2F45]",
+        "md:relative fixed inset-0 z-50",
+        "transition-transform duration-300 ease-in-out",
+        showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        "flex flex-col h-full md:h-screen"
+      )}>
+        {/* Sidebar Header - Only visible on desktop */}
+        <div className="hidden md:block p-4 border-b border-[#2A2F45]">
+          <h2 className="text-xl font-semibold text-white">Inbox</h2>
         </div>
-      )}
 
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:block border-r border-zinc-800 p-4 space-y-3 bg-zinc-950">
-        <h2 className="text-xl font-semibold mb-2">Inbox</h2>
-        {getLatestMessagesByCustomer().map((msg) => {
-          const isUnread = msg.sent_at && (!lastSeenMap[msg.customer_id] || new Date(msg.sent_at) > new Date(lastSeenMap[msg.customer_id]));
-          return (
+        {/* Mobile Close Button */}
+        <div className="md:hidden flex justify-between items-center p-4 border-b border-[#2A2F45]">
+          <h2 className="text-xl font-semibold text-white">Contacts</h2>
+          <button 
+            onClick={() => setShowMobileDrawer(false)}
+            className="p-2 hover:bg-[#242842] rounded-lg"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Contact List */}
+        <div className="flex-1 overflow-y-auto">
+          {getLatestMessagesByCustomer().map((msg) => (
             <div
               key={`${msg.customer_id}-${msg.id}`}
               onClick={() => {
@@ -235,76 +224,104 @@ export default function InboxPage() {
                 setPendingReplyCustomerId(null);
                 fetchScheduledSms(msg.customer_id);
                 setLastSeenMap(prev => ({ ...prev, [msg.customer_id]: new Date().toISOString() }));
+                setShowMobileDrawer(false);
               }}
-              className={clsx("p-3 rounded-lg cursor-pointer hover:bg-zinc-800", msg.customer_id === activeCustomerId && "bg-zinc-800")}
+              className={clsx(
+                "p-4 cursor-pointer border-b border-[#2A2F45] last:border-b-0",
+                "hover:bg-[#242842] transition-colors",
+                msg.customer_id === activeCustomerId && "bg-[#242842]"
+              )}
             >
-              <div className="flex justify-between items-center">
-                <span className="font-semibold">{msg.customer_name}</span>
-                {isUnread && <span className="text-xs text-green-400">●</span>}
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 
+                  flex items-center justify-center text-white font-medium">
+                  {msg.customer_name[0]?.toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-white truncate">
+                      {msg.customer_name}
+                    </span>
+                    {msg.sent_at && !lastSeenMap[msg.customer_id] && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-400 truncate">
+                    {msg.response?.slice(0, 40) || msg.ai_response?.slice(0, 40)}
+                  </p>
+                </div>
               </div>
-              <div className="text-sm text-neutral-400">{msg.response?.slice(0, 40) || msg.ai_response?.slice(0, 40)}</div>
-              {msg.sent_at && <div className="text-xs text-zinc-600 mt-1">{formatDistanceToNow(new Date(msg.sent_at))} ago</div>}
             </div>
-          );
-        })}
+          ))}
+        </div>
       </aside>
 
-      <main className="w-full flex flex-col p-4 space-y-4">
-        <h1 className="text-2xl font-bold">Chat with {filteredMessages[0]?.customer_name || "…"}</h1>
-
-        {activeCustomerId && (() => {
-          const customerMsgs = messages.filter(m => m.customer_id === activeCustomerId);
-          const latestMsg = customerMsgs[0];
-          const optedIn = latestMsg?.opted_in ?? false;
-
-          return !optedIn ? (
-            <div className="flex justify-between items-center bg-zinc-900 border border-red-500 text-sm text-red-400 rounded-md px-4 py-2 mb-2">
-              <div>❌ This contact has not opted in. Messaging is blocked.</div>
-              <button
-                onClick={async () => {
-                  try {
-                    await apiClient.post(`/resend-optin/${activeCustomerId}`);
-                    alert("Opt-in request sent again.");
-                  } catch (err) {
-                    alert("Failed to resend opt-in request.");
-                  }
-                }}
-                className="ml-4 bg-blue-700 hover:bg-blue-600 text-white text-sm px-4 py-1 rounded-full"
-              >
-                💌 Request Opt-In Again
-              </button>
+      {/* Main Chat Area */}
+      <main className="flex-1 flex flex-col h-[calc(100vh-4rem)] md:h-screen">
+        {/* Chat Header */}
+        {activeCustomerId && (
+          <div className="bg-[#1A1D2D] border-b border-[#2A2F45] p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 
+                flex items-center justify-center text-white font-medium">
+                {filteredMessages[0]?.customer_name[0]?.toUpperCase()}
+              </div>
+              <div className="flex-1">
+                <h1 className="text-lg font-semibold text-white">
+                  {filteredMessages[0]?.customer_name || "..."}
+                </h1>
+                <div className="flex items-center gap-2">
+                  <span className={clsx(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
+                    filteredMessages[0]?.opted_in 
+                      ? "bg-emerald-400/10 text-emerald-400"
+                      : "bg-red-400/10 text-red-400"
+                  )}>
+                    {filteredMessages[0]?.opted_in 
+                      ? <><Check className="w-3 h-3" /> Opted In</> 
+                      : <><AlertCircle className="w-3 h-3" /> Not Opted In</>}
+                  </span>
+                </div>
+              </div>
             </div>
-          ) : null;
-        })()}
+          </div>
+        )}
 
-        <div className="flex flex-col gap-4 overflow-y-auto max-h-[calc(100vh-250px)] pr-2">
+        {/* Messages Area */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {timelineEntries.map((entry) => (
-            <div key={`${entry.type}-${entry.id}`} className="flex flex-col">
+            <div key={`${entry.type}-${entry.id}`} 
+              className={clsx(
+                "flex flex-col",
+                entry.type === "customer" ? "items-start" : "items-end"
+              )}
+            >
               {entry.timestamp && (
-                <div className={clsx("text-xs", entry.type === "customer" ? "text-left" : "text-right")}>
-                  <Clock className="inline w-3 h-3 mr-1" />
+                <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
                   {new Date(entry.timestamp).toLocaleString()}
                 </div>
               )}
-              <div
-                className={clsx(
-                  "max-w-md px-4 py-2 rounded-xl shadow-md",
-                  entry.type === "customer" && "bg-zinc-800 self-start",
-                  entry.type === "sent" && "bg-green-700 text-white self-end",
-                  entry.type === "ai_draft" && "bg-purple-600 text-white self-end"
+              <div className={clsx(
+                "max-w-[85%] md:max-w-md px-4 py-2.5 rounded-2xl",
+                entry.type === "customer" && "bg-[#242842] text-white",
+                entry.type === "sent" && "bg-gradient-to-r from-emerald-500 to-blue-500 text-white",
+                entry.type === "ai_draft" && "bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white"
+              )}>
+                {entry.type === "ai_draft" && (
+                  <div className="text-xs font-medium mb-1">💡 Draft Reply</div>
                 )}
-              >
-                {entry.type === "ai_draft" && <div className="text-xs mb-1">💡 Draft Reply</div>}
-                <div className="whitespace-pre-wrap">{entry.content}</div>
+                <div className="whitespace-pre-wrap break-words">{entry.content}</div>
                 {entry.type === "ai_draft" && (
                   <button
-                    className="text-xs underline mt-2"
                     onClick={() => {
                       setPendingReplyCustomerId(entry.customer_id);
                       setActiveCustomerId(entry.customer_id);
                       setNewMessage(entry.content);
                       setSelectedDraftId(typeof entry.id === 'string' ? parseInt(entry.id) : entry.id);
                     }}
+                    className="mt-2 text-xs font-medium text-white/90 hover:text-white 
+                      flex items-center gap-1 transition-colors"
                   >
                     ✏️ Edit & Send
                   </button>
@@ -314,27 +331,73 @@ export default function InboxPage() {
           ))}
         </div>
 
-        <div className="border-t border-zinc-800 pt-4">
+        {/* Message Input Area */}
+        <div className="bg-[#1A1D2D] border-t border-[#2A2F45] p-4">
+          {/* Opt-in Warning */}
+          {activeCustomerId && (() => {
+            const customerMsgs = messages.filter(m => m.customer_id === activeCustomerId);
+            const latestMsg = customerMsgs[0];
+            const optedIn = latestMsg?.opted_in ?? false;
+
+            if (!optedIn) {
+              return (
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between 
+                  bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-4 py-3 mb-4 gap-3">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="text-sm">Messaging is blocked (not opted in)</span>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await apiClient.post(`/resend-optin/${activeCustomerId}`);
+                        alert("Opt-in request sent again.");
+                      } catch (err) {
+                        alert("Failed to resend opt-in request.");
+                      }
+                    }}
+                    className="w-full md:w-auto bg-[#242842] hover:bg-[#2A2F45] text-white text-sm 
+                      px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    💌 Request Opt-In
+                  </button>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
+          {/* Message Input */}
           <div className="flex gap-2">
             <input
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               placeholder="Type your message..."
-              className="w-full bg-zinc-800 px-4 py-2 rounded-full text-sm focus:outline-none text-white"
+              className="flex-1 bg-[#242842] border border-[#2A2F45] px-4 py-3 rounded-lg 
+                text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500/50 
+                focus:ring-1 focus:ring-emerald-500/50 transition-all"
             />
             <button
               onClick={handleSendMessage}
-              className={clsx(
-                "p-2 rounded-full bg-gradient-to-br from-purple-600 to-fuchsia-600",
-                isSending && "animate-pulse",
-                !newMessage.trim() && "opacity-50"
-              )}
               disabled={isSending || !newMessage.trim()}
+              className={clsx(
+                "p-3 rounded-lg transition-all duration-200",
+                "bg-gradient-to-r from-emerald-500 to-blue-500 hover:opacity-90",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+                isSending && "animate-pulse"
+              )}
             >
-              <Send className="w-4 h-4 text-white" />
+              <Send className="w-5 h-5 text-white" />
             </button>
           </div>
-          {sendError && <div className="text-xs text-red-400 mt-1">{sendError}</div>}
+          
+          {/* Error Message */}
+          {sendError && (
+            <div className="text-xs text-red-400 mt-2 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              {sendError}
+            </div>
+          )}
         </div>
       </main>
     </div>

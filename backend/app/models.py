@@ -16,6 +16,9 @@ class BusinessProfile(Base):
     primary_services = Column(String, nullable=True)
     representative_name = Column(String, nullable=True)
     twilio_number = Column(String, nullable=True)
+    timezone = Column(String, default="UTC")  # Store IANA timezone name
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     
 
 class Customer(Base):
@@ -27,11 +30,14 @@ class Customer(Base):
     lifecycle_stage = Column(String, nullable=True)
     pain_points = Column(Text, nullable=True)
     interaction_history = Column(Text, nullable=True)
+    timezone = Column(String, nullable=True)  # Optional customer timezone
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     business_id = Column(Integer, ForeignKey("business_profiles.id"), nullable=False)
     business = relationship("BusinessProfile")
     roadmap_messages = relationship("RoadmapMessage", back_populates="customer")
-    is_generating_roadmap = Column(Boolean, default=False)  # <-- ADD THIS LINE
+    is_generating_roadmap = Column(Boolean, default=False)
     opted_in = Column(Boolean, nullable=True)
     last_generation_attempt = Column(DateTime, nullable=True)
 

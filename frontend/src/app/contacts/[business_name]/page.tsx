@@ -14,6 +14,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { OptInStatusBadge } from "@/components/OptInStatus";
 
 interface Customer {
   id: number;
@@ -71,20 +72,24 @@ export default function ContactsPage() {
   return (
     <div className="min-h-screen bg-nudge-gradient text-white px-4 py-8">
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold mb-4">🖨️ {customers.length} Contact{customers.length !== 1 ? "s" : ""}</h1>
+        <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent"> 🖨️ {customers.length} Contacts{customers.length !== 1 ? "s" : ""}</h1>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {customers.map((customer) => (
             <div key={customer.id} className="rounded-xl border border-neutral p-5 bg-zinc-800 shadow-md">
               <h2 className="text-lg font-semibold">{customer.customer_name}</h2>
-              <p className="text-sm mt-1">
-                {customer.latest_consent_status === "opted_in" ? (
-                  <span className="text-green-400">✅ Opted In</span>
-                ) : customer.latest_consent_status === "opted_out" ? (
-                  <span className="text-red-400">❌ Declined</span>
-                ) : (
-                  <span className="text-yellow-300">⏳ Waiting</span>
-                )}
-              </p>
+              <div className="mt-1">
+                <OptInStatusBadge 
+                  status={
+                    customer.latest_consent_status === "opted_in" 
+                      ? "opted_in" 
+                      : customer.latest_consent_status === "opted_out" 
+                        ? "opted_out" 
+                        : "waiting"
+                  } 
+                  size="sm" 
+                />
+              </div>
               <p className="text-sm text-neutral">📞 {customer.phone}</p>
               <p className="text-sm text-red-300">📍 {customer.lifecycle_stage}</p>
               <p className="mt-2 text-sm">Pain: {customer.pain_points}</p>

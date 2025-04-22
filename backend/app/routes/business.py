@@ -24,7 +24,8 @@ def create_business_profile(profile: BusinessProfileCreate, db: Session = Depend
         industry=profile.industry,
         business_goal=profile.business_goal,
         primary_services=profile.primary_services,
-        representative_name=profile.representative_name
+        representative_name=profile.representative_name,
+        timezone=profile.timezone
     )
     new_profile.slug = slugify(profile.business_name)
     db.add(new_profile)
@@ -56,6 +57,25 @@ def update_business_profile(business_id: int, update: BusinessProfileUpdate, db:
     db.commit()
     db.refresh(profile)
     return profile
+
+# Get business timezone
+@router.get("/{business_id}/timezone", summary="Get business timezone")
+def get_business_timezone(business_id: int, db: Session = Depends(get_db)):
+    profile = db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Business profile not found")
+    return {"timezone": profile.timezone}
+
+# Update business timezone
+@router.put("/{business_id}/timezone", summary="Update business timezone")
+def update_business_timezone(business_id: int, timezone: dict, db: Session = Depends(get_db)):
+    profile = db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Business profile not found")
+    
+    profile.timezone = timezone.get("timezone", "UTC")
+    db.commit()
+    return {"timezone": profile.timezone}
 
 #  endpoint to get the business_id using the business_name
 @router.get("/business-id/{business_name}")

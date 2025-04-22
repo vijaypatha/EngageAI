@@ -8,11 +8,11 @@ import {
   Send,
   MailCheck,
   MessageSquare,
-  Bot,
   Clock,
   CalendarClock,
-  XCircle,
+  TrendingUp,
 } from "lucide-react";
+import { OptInStatusBadge } from "@/components/OptInStatus";
 
 interface EngagementStats {
   communitySize: number;
@@ -88,119 +88,169 @@ export default function DashboardPage() {
   }, [business_name, router]);
 
   return (
-    <div className="min-h-screen bg-nudge-gradient text-white px-6 py-12">
-      <h1 className="text-4xl font-bold mb-2">Welcome back 👋</h1>
-      <p className="text-gray-400 mb-10">Here’s your business overview</p>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Tile
-          icon={<Users size={22} />}
-          title="Community Size"
-          stat={stats.communitySize ?? 0}
-          subtitle="🛡️ Messaging is only allowed after a contact replies “YES” to the opt-in SMS."
-          statSection={
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white">
-              <span className="flex items-center gap-1 text-gray-400">{stats.withoutPlanCount} without plan</span>
-              <span className="flex items-center gap-1 text-green-400">✅ {stats.optedIn} Opted In</span>
-              <span className="flex items-center gap-1 text-red-400">❌ {stats.optedOut} Opted Out</span>
-              <span className="flex items-center gap-1 text-yellow-400">⏳ {stats.optInPending} Not Yet Responded</span>
+    <div className="min-h-screen bg-nudge-gradient">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Main Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {/* Community Size Card */}
+          <div className="bg-[#1A1D2D] rounded-xl border border-[#2A2F45] p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gradient-to-br from-emerald-400/10 to-blue-500/10 rounded-lg">
+                  <Users className="w-5 h-5 text-emerald-400" />
+                </div>
+                <h2 className="text-lg font-semibold text-white">Community Size</h2>
+              </div>
+              <span className="text-4xl font-bold bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent">
+                {stats.communitySize}
+              </span>
             </div>
-          }
-          buttonText="Manage Community"
-          onClick={() => router.push(`/contacts/${business_name}`)}
-        />
-
-        <Tile
-          icon={<Send size={22} />}
-          title="Community Outreach Plan"
-          subtitle="Planned nudges to your community"
-          statSection={
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white">
-              <span className="flex items-center gap-1 text-yellow-400"><Clock size={14} /> {stats.pending} Pending</span>
-              <span className="flex items-center gap-1 text-green-400"><CalendarClock size={14} /> {stats.scheduled} Scheduled</span>
+            
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <OptInStatusBadge status="opted_in" size="sm" />
+                <span className="font-medium text-emerald-400">{stats.optedIn}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <OptInStatusBadge status="waiting" size="sm" />
+                <span className="font-medium text-yellow-400">{stats.optInPending}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <OptInStatusBadge status="opted_out" size="sm" />
+                <span className="font-medium text-red-400">{stats.optedOut}</span>
+              </div>
             </div>
-          }
-          buttonText="Manage Plans"
-          onClick={() => router.push(`/all-engagement-plans/${business_name}`)}
-        />
 
-        <Tile
-          icon={<MailCheck size={22} />}
-          title="Community Responses"
-          stat={stats.waitingReplies}
-          statSection={
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-white">
-              <span className="flex items-center gap-1 text-green-400"><MailCheck size={14} /> {stats.waitingReplies} Waiting</span>
-              <span className="flex items-center gap-1 text-pink-400">❤️ {stats.draftsReady} Drafts</span>
+            <button
+              onClick={() => router.push(`/contacts/${business_name}`)}
+              className="mt-6 w-full bg-[#242842] hover:bg-[#2A2F45] text-white py-2.5 px-4 rounded-lg 
+                transition-colors duration-200 flex items-center justify-center gap-2 text-sm font-medium"
+            >
+              View Community
+            </button>
+          </div>
+
+          {/* Outreach Plan Card */}
+          <div className="bg-[#1A1D2D] rounded-xl border border-[#2A2F45] p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gradient-to-br from-blue-400/10 to-purple-500/10 rounded-lg">
+                  <Send className="w-5 h-5 text-blue-400" />
+                </div>
+                <h2 className="text-lg font-semibold text-white">Community Nudge Plan</h2>
+              </div>
             </div>
-          }
-          buttonText="Review & Reply"
-          onClick={() => router.push(`/replies/${business_name}`)}
-        />
 
-        <Tile
-          icon={<MessageSquare size={22} />}
-          title="Community Inbox"
-          statSection={
-            <div className="flex items-center gap-2 text-sm text-white">
-              <span className="flex items-center gap-1 text-green-400"><Send size={14} /> {stats.sent} Sent</span>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm">
+                  <Clock className="w-4 h-4 text-yellow-400" />
+                  <span className="text-gray-300">Pending</span>
+                </div>
+                <span className="font-medium text-yellow-400">{stats.pending}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm">
+                  <CalendarClock className="w-4 h-4 text-emerald-400" />
+                  <span className="text-gray-300">Scheduled</span>
+                </div>
+                <span className="font-medium text-emerald-400">{stats.scheduled}</span>
+              </div>
             </div>
-          }
-          buttonText="Open Conversations"
-          onClick={() => router.push(`/inbox/${business_name}`)}
-        />
-      </div>
 
-      <button
-        onClick={() => router.push(`/instant-nudge/${business_name}`)}
-        className="fixed bottom-6 right-6 z-50 bg-gradient-to-r from-fuchsia-500 to-cyan-500 text-white px-6 py-3 rounded-full shadow-2xl hover:scale-105 transition-all duration-300 font-bold text-sm md:text-base tracking-wide"
-      >
-        ✨ Instant Nudge
-      </button>
-    </div>
-  );
-}
+            <button
+              onClick={() => router.push(`/all-engagement-plans/${business_name}`)}
+              className="mt-6 w-full bg-[#242842] hover:bg-[#2A2F45] text-white py-2.5 px-4 rounded-lg 
+                transition-colors duration-200 flex items-center justify-center gap-2 text-sm font-medium"
+            >
+              Manage Plans
+            </button>
+          </div>
 
-function Tile({
-  icon,
-  title,
-  stat,
-  statSection,
-  subtitle,
-  buttonText,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  stat?: number;
-  statSection?: React.ReactNode;
-  subtitle?: string;
-  buttonText: string;
-  onClick: () => void;
-}) {
-  return (
-    <div className="rounded-xl bg-[#1f1f1f] p-6 shadow-md text-white flex flex-col justify-between min-h-[200px]">
-      <div>
-        <div className="flex items-center gap-2 mb-4">
-          {icon}
-          <h2 className="text-xl font-bold text-white">{title}</h2>
+          {/* Responses Card */}
+          <div className="bg-[#1A1D2D] rounded-xl border border-[#2A2F45] p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gradient-to-br from-purple-400/10 to-pink-500/10 rounded-lg">
+                  <MailCheck className="w-5 h-5 text-purple-400" />
+                </div>
+                <h2 className="text-lg font-semibold text-white">Community Responses</h2>
+              </div>
+              <span className="text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">
+                {stats.waitingReplies}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm">
+                  <MailCheck className="w-4 h-4 text-purple-400" />
+                  <span className="text-gray-300">Waiting</span>
+                </div>
+                <span className="font-medium text-purple-400">{stats.waitingReplies}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm">
+                  <TrendingUp className="w-4 h-4 text-pink-400" />
+                  <span className="text-gray-300">AI Drafts</span>
+                </div>
+                <span className="font-medium text-pink-400">{stats.draftsReady}</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => router.push(`/replies/${business_name}`)}
+              className="mt-6 w-full bg-[#242842] hover:bg-[#2A2F45] text-white py-2.5 px-4 rounded-lg 
+                transition-colors duration-200 flex items-center justify-center gap-2 text-sm font-medium"
+            >
+              Review & Reply
+            </button>
+          </div>
+
+          {/* Inbox Card */}
+          <div className="bg-[#1A1D2D] rounded-xl border border-[#2A2F45] p-6 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gradient-to-br from-cyan-400/10 to-blue-500/10 rounded-lg">
+                  <MessageSquare className="w-5 h-5 text-cyan-400" />
+                </div>
+                <h2 className="text-lg font-semibold text-white">Community Inbox</h2>
+              </div>
+              <span className="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+                {stats.sent}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm">
+                  <Send className="w-4 h-4 text-cyan-400" />
+                  <span className="text-gray-300">Messages Sent</span>
+                </div>
+                <span className="font-medium text-cyan-400">{stats.sent}</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => router.push(`/inbox/${business_name}`)}
+              className="mt-6 w-full bg-[#242842] hover:bg-[#2A2F45] text-white py-2.5 px-4 rounded-lg 
+                transition-colors duration-200 flex items-center justify-center gap-2 text-sm font-medium"
+            >
+              Open Inbox
+            </button>
+          </div>
         </div>
 
-        {typeof stat === "number" ? (
-          <div className="text-3xl font-bold text-green-400 mb-1">{stat}</div>
-        ) : null}
-
-        {statSection && <div className="mb-2">{statSection}</div>}
-
-        {subtitle && <p className="text-gray-400 text-sm whitespace-pre-line">{subtitle}</p>}
+        {/* Instant Nudge Button */}
+        <button
+          onClick={() => router.push(`/instant-nudge/${business_name}`)}
+          className="fixed bottom-6 right-6 z-50 bg-gradient-to-r from-emerald-400 to-blue-500 
+            text-white px-6 py-3 rounded-full shadow-xl hover:shadow-2xl hover:scale-105 
+            transition-all duration-300 font-medium text-sm md:text-base"
+        >
+          ✨ Instant Nudge
+        </button>
       </div>
-
-      <button
-        onClick={onClick}
-        className="mt-4 bg-gradient-to-r from-blue-500 to-purple-500 hover:scale-105 transition-transform text-white py-2 px-4 rounded-lg font-semibold"
-      >
-        {buttonText}
-      </button>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { apiClient } from "@/lib/api";
+import { US_TIMEZONES, TIMEZONE_LABELS } from "@/lib/timezone";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ export default function AddContactPage() {
     lifecycle_stage: "",
     pain_points: "",
     interaction_history: "",
+    timezone: "America/New_York", // Default timezone
   });
 
   const formatPhoneInput = (value: string) => {
@@ -94,47 +96,74 @@ export default function AddContactPage() {
   };
 
   return (
-    <>
-      <div className="max-w-xl mx-auto p-6 space-y-4">
-        <h1 className="text-2xl font-bold">➕ Add New Contact</h1>
-        <Input 
-          name="customer_name" 
-          placeholder="Full Name" 
-          value={form.customer_name} 
-          onChange={handleChange} 
-        />
-        <Input 
-          name="phone" 
-          placeholder="Phone Number (e.g. 3856268825)" 
-          value={form.phone} 
-          onChange={handleChange}
-          maxLength={12} // +1 plus 10 digits
-        />
-        <Input 
-          name="lifecycle_stage" 
-          placeholder="Lifecycle Stage (e.g. Lead)" 
-          value={form.lifecycle_stage} 
-          onChange={handleChange} 
-        />
-        <Textarea 
-          name="pain_points" 
-          placeholder="Pain Points" 
-          value={form.pain_points} 
-          onChange={handleChange} 
-        />
-        <Textarea 
-          name="interaction_history" 
-          placeholder="Interaction History: Birthday, Holidays, Work Situation, # of Dogs, Frequency of SMS." 
-          value={form.interaction_history} 
-          onChange={handleChange} 
-        />
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => router.back()}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit}>
-            Save Contact
-          </Button>
+    <div className="flex min-h-screen bg-[#0C0F1F] items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+      <div className="w-full max-w-2xl rounded-xl border border-white/10 bg-gradient-to-b from-[#0C0F1F] to-[#111629] shadow-2xl p-8 space-y-6">
+        <h1 className="text-3xl font-bold text-center text-white">➕ Add New Contact</h1>
+        <div className="space-y-6">
+          <Input 
+            name="customer_name" 
+            placeholder="Full Name" 
+            value={form.customer_name} 
+            onChange={handleChange}
+            className="bg-white text-black" 
+          />
+          <Input 
+            name="phone" 
+            placeholder="Phone Number (e.g. 3856268825)" 
+            value={form.phone} 
+            onChange={handleChange}
+            maxLength={12}
+            className="bg-white text-black" 
+          />
+          <Input 
+            name="lifecycle_stage" 
+            placeholder="Lifecycle Stage (e.g. Lead)" 
+            value={form.lifecycle_stage} 
+            onChange={handleChange}
+            className="bg-white text-black" 
+          />
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-white">
+              Customer's Timezone
+            </label>
+            <select
+              name="timezone"
+              value={form.timezone}
+              onChange={handleChange}
+              className="w-full border border-gray-300 rounded-md p-3 text-black bg-white"
+            >
+              {US_TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>
+                  {TIMEZONE_LABELS[tz]}
+                </option>
+              ))}
+            </select>
+            <p className="text-sm text-gray-400">
+              This helps us send messages at appropriate times for your customer
+            </p>
+          </div>
+          <Textarea 
+            name="pain_points" 
+            placeholder="Pain Points" 
+            value={form.pain_points} 
+            onChange={handleChange}
+            className="bg-white text-black" 
+          />
+          <Textarea 
+            name="interaction_history" 
+            placeholder="Interaction History: Birthday, Holidays, Work Situation, # of Dogs, Frequency of SMS." 
+            value={form.interaction_history} 
+            onChange={handleChange}
+            className="bg-white text-black" 
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => router.back()} className="text-white">
+              Cancel
+            </Button>
+            <Button onClick={handleSubmit} className="bg-gradient-to-r from-green-400 to-blue-500 text-white">
+              Save Contact
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -172,6 +201,6 @@ export default function AddContactPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }

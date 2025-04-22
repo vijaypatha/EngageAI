@@ -1,11 +1,14 @@
 // 📄 src/app/layout.tsx
 import "./../styles/globals.css";
 import type { Metadata } from "next";
-import { Navigation } from "@/components/Navigation";
+import { Inter } from 'next/font/google';
+import ClientLayout from '@/components/ClientLayout';
+
+const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: "AI Nudge",
-  description: "AI-powered SMS engagement platform",
+  title: "EngageAI - Smart Customer Engagement",
+  description: "Intelligent customer engagement platform powered by AI",
 };
 
 export default function RootLayout({
@@ -15,13 +18,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
-        <Navigation />
-        <div className="min-h-screen bg-nudge-gradient md:pl-64">
-          <div className="max-w-6xl mx-auto p-4 md:p-8 pb-20 md:pb-8">
-            {children}
-          </div>
-        </div>
+      <body className={inter.className}>
+        <ClientLayout>
+          {children}
+        </ClientLayout>
       </body>
     </html>
   );

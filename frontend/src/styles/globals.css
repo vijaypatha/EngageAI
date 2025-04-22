@@ -1,8 +1,91 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-black text-white font-sans antialiased;
+:root {
+  --gradient-primary: linear-gradient(to right, #22c55e, #60a5fa);
+  --gradient-background: radial-gradient(circle at top, #1A1D2D, #0C0F1F);
+  --spacing-base: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+}
+
+@layer base {
+  body {
+    @apply bg-[#0C0F1F] text-white antialiased;
+  }
+
+  input, select, textarea {
+    @apply focus:outline-none;
+  }
+}
+
+@layer components {
+  .bg-nudge-gradient {
+    background: var(--gradient-background);
+    @apply min-h-screen;
+  }
+
+  .text-gradient {
+    @apply bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-emerald-400 to-blue-500 
+           hover:opacity-90 transition-all 
+           font-semibold text-white shadow-lg 
+           disabled:opacity-50 
+           hover:shadow-xl hover:scale-[1.02] 
+           active:scale-[0.98] 
+           disabled:hover:scale-100
+           rounded-lg py-3 px-6;
+  }
+
+  .card {
+    @apply rounded-xl border border-white/10 
+           bg-gradient-to-b from-[#0C0F1F] to-[#111629] 
+           shadow-2xl backdrop-blur-sm;
+  }
+
+  .input-field {
+    @apply w-full border border-white/10 rounded-lg p-3 
+           text-black placeholder-gray-500 bg-white/95 
+           focus:ring-2 focus:ring-emerald-400/50 
+           focus:border-transparent transition-all duration-200;
+  }
+}
+
+/* Animations */
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-[#1A1E2E];
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gradient-to-b from-emerald-400 to-blue-500 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply from-emerald-500 to-blue-600;
 }

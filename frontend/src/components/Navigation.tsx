@@ -175,18 +175,18 @@ export function Navigation() {
           <Link
             href={`/profile/${business_name}`}
             className={cn(
-              "flex items-center justify-between p-4 transition-all duration-200 bg-[#1A1D2D] hover:bg-[#242842]",
-              pathname.startsWith(`/profile/${business_name}`) && "bg-[#242842]"
+              "flex items-center justify-between p-4 transition-all duration-200",
+              pathname.startsWith(`/profile/${business_name}`)
+                ? "bg-gradient-to-r from-emerald-400/10 to-blue-500/10"
+                : "text-gray-400 hover:bg-white/5 hover:text-white"
             )}
           >
-            <div className="flex items-center gap-3">
-              <div className="p-1 rounded-full">
-                <UserCircle className="w-6 h-6 text-gray-400" />
-              </div>
-              <div className="flex flex-col items-start">
-                <span className="text-white font-medium">{businessProfile.representative_name}</span>
-                <span className="text-gray-500 text-sm">{businessProfile.business_name}</span>
-                <span className="text-gray-400 text-sm">View Profile</span>
+            <div className="flex items-center space-x-3">
+              <UserCircle className="w-6 h-6" />
+              <div className="flex flex-col">
+                <span className="font-medium text-white">{businessProfile.representative_name}</span>
+                <span className="text-sm text-gray-500">{businessProfile.business_name}</span>
+                <span className="text-sm text-gray-400">View Profile</span>
               </div>
             </div>
             <Settings className="w-5 h-5 text-gray-400" />
