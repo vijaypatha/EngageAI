@@ -17,25 +17,32 @@ def extract_special_dates(customer_info: str) -> dict:
     # Extract birthday
     birthday_patterns = [
         r'birthday\s+(?:is\s+)?(?:on\s+)?([a-z]+)\s+(\d+)(?:st|nd|rd|th)?',
-        r'birthday:?\s+([a-z]+)\s+(\d+)(?:st|nd|rd|th)?'
+        r'birthday:?\s+([a-z]+)\s+(\d+)(?:st|nd|rd|th)?',
+        r'birthday:?\s*(\d{1,2})/(\d{1,2})'  # Add support for MM/DD format
     ]
     
     for pattern in birthday_patterns:
         match = re.search(pattern, info_lower)
         if match:
-            month_name, day = match.groups()
-            month_num = {
-                'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
-                'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6, 'july': 7, 'jul': 7,
-                'august': 8, 'aug': 8, 'september': 9, 'sep': 9, 'october': 10, 'oct': 10,
-                'november': 11, 'nov': 11, 'december': 12, 'dec': 12
-            }.get(month_name.lower())
+            month, day = match.groups()
+            if month.isdigit():  # Handle MM/DD format
+                month_num = int(month)
+                day = int(day)
+            else:  # Handle month name format
+                month_num = {
+                    'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
+                    'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6, 'july': 7, 'jul': 7,
+                    'august': 8, 'aug': 8, 'september': 9, 'sep': 9, 'october': 10, 'oct': 10,
+                    'november': 11, 'nov': 11, 'december': 12, 'dec': 12
+                }.get(month.lower())
+                day = int(day)
             
             if month_num:
                 special_dates['birthday'] = {
                     'month': month_num,
-                    'day': int(day),
-                    'importance': 'high'
+                    'day': day,
+                    'importance': 'high',
+                    'send_before': 2  # Add this to indicate we want to send 2 days before
                 }
     
     # Extract holidays
@@ -72,6 +79,10 @@ def calculate_days_until(special_dates):
         target_date = datetime(today.year, info['month'], info['day'])
         if target_date < today:
             target_date = datetime(today.year + 1, info['month'], info['day'])
+        
+        # If we want to send before the date (e.g., for birthdays)
+        send_before = info.get('send_before', 0)
+        target_date = target_date - timedelta(days=send_before)
         
         days_until = (target_date - today).days
         date_offsets[event] = {

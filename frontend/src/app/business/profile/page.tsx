@@ -3,9 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useTimezone } from '@/hooks/useTimezone';
 import { getUserTimezone } from '@/lib/timezone';
+import { apiClient } from '@/lib/api';
+import { useParams } from 'next/navigation';
 
 export default function BusinessProfilePage() {
     const { businessTimezone, updateBusinessTimezone } = useTimezone();
+    const { business_name } = useParams();
+    const [businessId, setBusinessId] = useState<number | null>(null);
     const [formData, setFormData] = useState({
         businessName: '',
         industry: '',
@@ -19,44 +23,54 @@ export default function BusinessProfilePage() {
         // Fetch business profile data
         const fetchProfile = async () => {
             try {
-                const response = await fetch('/api/business/profile');
-                if (response.ok) {
-                    const data = await response.json();
-                    setFormData(prev => ({
-                        ...prev,
-                        ...data,
-                        timezone: data.timezone || businessTimezone || getUserTimezone()
-                    }));
-                }
+                // First get the business ID from slug
+                const idRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
+                const businessId = idRes.data.business_id;
+                setBusinessId(businessId);
+                
+                // Then get the full profile using the ID
+                const profileRes = await apiClient.get(`/business-profile/${businessId}`);
+                const data = profileRes.data;
+                
+                setFormData(prev => ({
+                    ...prev,
+                    businessName: data.business_name,
+                    industry: data.industry,
+                    businessGoal: data.business_goal,
+                    primaryServices: data.primary_services,
+                    representativeName: data.representative_name,
+                    timezone: data.timezone || businessTimezone || getUserTimezone()
+                }));
             } catch (error) {
                 console.error('Error fetching business profile:', error);
             }
         };
 
-        fetchProfile();
-    }, [businessTimezone]);
+        if (business_name) {
+            fetchProfile();
+        }
+    }, [businessTimezone, business_name]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         
+        if (!businessId) return;
+        
         try {
-            const response = await fetch('/api/business/profile', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(formData),
+            const response = await apiClient.put(`/business-profile/${businessId}`, {
+                business_name: formData.businessName,
+                industry: formData.industry,
+                business_goal: formData.businessGoal,
+                primary_services: formData.primaryServices,
+                representative_name: formData.representativeName,
+                timezone: formData.timezone
             });
 
-            if (response.ok) {
-                // Update the business timezone in the context
-                if (formData.timezone) {
-                    updateBusinessTimezone(formData.timezone);
-                }
-                alert('Profile updated successfully');
-            } else {
-                console.error('Failed to update business profile');
+            // Update the business timezone in the context
+            if (formData.timezone) {
+                updateBusinessTimezone(formData.timezone);
             }
+            alert('Profile updated successfully');
         } catch (error) {
             console.error('Error updating business profile:', error);
         }

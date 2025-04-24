@@ -1,5 +1,5 @@
 from twilio.rest import Client
-from app.models import ScheduledSMS, Customer, BusinessProfile
+from app.models import Message, Customer, BusinessProfile
 from app.database import SessionLocal
 import os
 import logging
@@ -29,44 +29,48 @@ def send_sms_via_twilio(to, message, business):
         logger.exception(f"❌ Failed to send SMS to {to} from {from_number}: {e}")
         return None
 
-
-def send_sms_by_id(scheduled_sms_id: int):
+def send_sms_by_id(message_id: int):
     """
-    Looks up a scheduled SMS by ID, sends it via Twilio, and marks it as sent.
+    Looks up a message by ID, sends it via Twilio, and marks it as sent.
     Called from Celery or direct trigger.
     """
     db = SessionLocal()
     try:
-        sms = db.query(ScheduledSMS).filter(ScheduledSMS.id == scheduled_sms_id).first()
-        if not sms:
-            logger.error(f"❌ Scheduled SMS ID {scheduled_sms_id} not found.")
+        message = db.query(Message).filter(
+            Message.id == message_id,
+            Message.message_type == 'scheduled'
+        ).first()
+        
+        if not message:
+            logger.error(f"❌ Message ID {message_id} not found.")
             return
 
-        customer = db.query(Customer).filter(Customer.id == sms.customer_id).first()
+        customer = db.query(Customer).filter(Customer.id == message.customer_id).first()
         if not customer or not customer.phone:
-            logger.error(f"❌ Customer not found or missing phone for SMS ID {scheduled_sms_id}")
+            logger.error(f"❌ Customer not found or missing phone for Message ID {message_id}")
             return
 
-        business = db.query(BusinessProfile).filter(BusinessProfile.id == sms.business_id).first()
+        business = db.query(BusinessProfile).filter(BusinessProfile.id == message.business_id).first()
         if not business:
-            logger.error(f"❌ Business not found for SMS ID {scheduled_sms_id}")
+            logger.error(f"❌ Business not found for Message ID {message_id}")
             return
 
         # 🕒 Check time before sending
         now_utc = datetime.now(timezone.utc)
-        if sms.send_time > now_utc:
-            logger.info(f"⏱️ Not time yet to send SMS ID {scheduled_sms_id}. Scheduled for {sms.send_time}, now is {now_utc}")
+        if message.scheduled_time and message.scheduled_time > now_utc:
+            logger.info(f"⏱️ Not time yet to send Message ID {message_id}. Scheduled for {message.scheduled_time}, now is {now_utc}")
             return
 
-        sid = send_sms_via_twilio(customer.phone, sms.message, business)
+        sid = send_sms_via_twilio(customer.phone, message.content, business)
         if sid:
-            sms.status = "sent"
+            message.status = "sent"
+            message.sent_at = now_utc
             db.commit()
-            logger.info(f"✅ SMS status updated to 'sent' for SMS ID {scheduled_sms_id}")
+            logger.info(f"✅ Message status updated to 'sent' for Message ID {message_id}")
         else:
-            logger.error(f"❌ SMS sending failed for SMS ID {scheduled_sms_id}")
+            logger.error(f"❌ Message sending failed for Message ID {message_id}")
 
     except Exception as e:
-        logger.exception(f"❌ Error sending SMS ID {scheduled_sms_id}: {str(e)}")
+        logger.exception(f"❌ Error sending Message ID {message_id}: {str(e)}")
     finally:
         db.close()

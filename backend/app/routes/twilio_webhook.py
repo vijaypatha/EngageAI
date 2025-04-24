@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Customer, Engagement, BusinessProfile, ConsentLog
@@ -7,9 +7,11 @@ from app.services.optin_handler import handle_opt_in_out
 from fastapi.responses import PlainTextResponse
 import os
 from twilio.rest import Client
-from datetime import datetime
+from datetime import datetime, timezone
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # -------------------- Twilio Client Setup --------------------
 account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -21,77 +23,98 @@ client = Client(account_sid, auth_token) if account_sid and auth_token else None
 def normalize_phone(number: str) -> str:
     return "+" + number.strip().replace(" ", "").lstrip("+")
 
+def update_customer_consent(customer: Customer, status: str, db: Session):
+    """Update customer consent status and log the change."""
+    now = datetime.now(timezone.utc)
+    
+    # Update customer opted_in status
+    if status == "opted_in":
+        customer.opted_in = True
+    elif status == "opted_out":
+        customer.opted_in = False
+    
+    # Create consent log entry
+    consent_log = ConsentLog(
+        customer_id=customer.id,
+        business_id=customer.business_id,
+        status=status,
+        method="sms",
+        replied_at=now
+    )
+    
+    db.add(consent_log)
+    try:
+        db.commit()
+        logger.info(f"Updated consent status for customer {customer.id} to {status}")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to update consent status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update consent status")
+
 # -------------------- Inbound SMS Webhook --------------------
 @router.post("/inbound", response_class=PlainTextResponse)
 async def receive_sms(request: Request, db: Session = Depends(get_db)):
     try:
-        print("🚨 Twilio webhook received — starting /twilio/inbound processing")
-        content_type = request.headers.get("content-type")
-        print(f"📥 Incoming request content-type: {content_type}")
-
-        raw = await request.body()
-        print(f"📦 Raw body content: {raw.decode(errors='ignore')}")
         form = await request.form()
-        from_number_raw = (form.get("From") or "").strip()
-        to_number_raw = (form.get("To") or "").strip()
-        from_number = normalize_phone(from_number_raw)
-        to_number = normalize_phone(to_number_raw)
-        body = form.get("Body")
+        from_number = normalize_phone(form.get("From", ""))
+        to_number = normalize_phone(form.get("To", ""))
+        body = form.get("Body", "").strip().lower()
 
-        if not body:
-            print("⚠️ No SMS body received.")
-            return PlainTextResponse("No SMS body received", status_code=400)
+        # -------------------- STEP 1: Validate Input --------------------
+        if not from_number or not to_number or not body:
+            logger.error("Missing required SMS webhook parameters")
+            return PlainTextResponse("Missing parameters", status_code=400)
 
-        print(f"🔍 Incoming SMS: From={from_number}, To={to_number}, Body={body}")
-
-        # -------------------- STEP 1: Identify Business by To Number --------------------
-        business = db.query(BusinessProfile).filter(BusinessProfile.twilio_number == to_number).first()
-        if not business:
-            print(f"❌ No business matches Twilio number {to_number}")
-            return PlainTextResponse("Business not found", status_code=404)
-
-        # -------------------- STEP 2: Match Latest Customer by From Number + Business --------------------
-        customer = db.query(Customer)\
-            .filter(Customer.phone == from_number, Customer.business_id == business.id)\
-            .order_by(Customer.id.desc())\
-            .first()
-
+        # -------------------- STEP 2: Match Customer + Business --------------------
+        customer = db.query(Customer).filter(Customer.phone == from_number).first()
         if not customer:
-            print(f"❌ Customer {from_number} not found for business {business.id}")
+            logger.warning(f"No customer found for phone number {from_number}")
             return PlainTextResponse("Customer not found", status_code=404)
 
-        print(f"📇 Matched customer: ID={customer.id}, phone={customer.phone}, opted_in={customer.opted_in}")
+        business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
+        if not business:
+            logger.error(f"No business found for customer {customer.id}")
+            return PlainTextResponse("Business not found", status_code=404)
 
-        # -------------------- STEP 3: Normalize Body + Handle Consent --------------------
-        response = handle_opt_in_out(body, customer, business, db)
-        if response:
-            return response
+        logger.info(f"📇 Matched customer: ID={customer.id}, phone={customer.phone}, opted_in={customer.opted_in}")
 
-        # -------------------- STEP 4: Abort if user has opted out --------------------
-        if customer.opted_in is False:
-            print(f"🔒 Customer {customer.id} has opted out. Ignoring message.")
+        # -------------------- STEP 3: Handle Consent --------------------
+        consent_words = {
+            "opted_in": ["yes", "start", "unstop", "subscribe", "opt in", "opt-in"],
+            "opted_out": ["no", "stop", "unsubscribe", "opt out", "opt-out"]
+        }
+        
+        # Check for consent-related keywords
+        for status, keywords in consent_words.items():
+            if any(keyword in body for keyword in keywords):
+                update_customer_consent(customer, status, db)
+                message = "You've successfully opted in to messages." if status == "opted_in" else "You've been unsubscribed from messages."
+                return PlainTextResponse(message, status_code=200)
+
+        # -------------------- STEP 4: Handle Regular Message --------------------
+        if not customer.opted_in:
+            logger.warning(f"Ignoring message from opted-out customer {customer.id}")
             return PlainTextResponse("Opted-out user. No response generated.", status_code=200)
 
-        # -------------------- STEP 5: Generate AI Drafted Reply --------------------
-        print("🧠 Proceeding to AI response generation...")
+        # Generate AI response
+        logger.info("🧠 Proceeding to AI response generation...")
         ai_response = generate_ai_response(body, business=business, customer=customer)
-        print(f"🤖 AI Response: {ai_response}")
+        logger.info(f"🤖 AI Response: {ai_response}")
 
-        # -------------------- STEP 6: Save Engagement Record --------------------
+        # Save engagement record
         engagement = Engagement(
             customer_id=customer.id,
             response=body,
-            ai_response=ai_response,  # Stored for manual review
-            status="pending_review"
+            ai_response=ai_response,
+            status="pending_review",
+            sent_at=datetime.now(timezone.utc)
         )
         db.add(engagement)
         db.commit()
-        print(f"✅ Engagement saved with AI response for customer {customer.id} (Engagement ID: {engagement.id})")
+        logger.info(f"✅ Engagement saved with AI response for customer {customer.id} (Engagement ID: {engagement.id})")
 
-        # -------------------- STEP 7: Manual Approval Flow --------------------
-        print("✅ AI reply stored. Waiting for manual approval before sending.")
         return PlainTextResponse("Received", status_code=200)
 
     except Exception as e:
-        print(f"❌ Exception in webhook: {str(e)}")
+        logger.error(f"❌ Exception in webhook: {str(e)}")
         return PlainTextResponse("Internal Error", status_code=500)

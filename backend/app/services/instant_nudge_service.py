@@ -8,10 +8,12 @@ import openai
 import os
 import pytz
 import json
+import uuid
+import traceback
 
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
-from app.models import BusinessProfile, BusinessOwnerStyle, ScheduledSMS, Engagement, Customer
+from app.models import BusinessProfile, BusinessOwnerStyle, Message, Engagement, Customer, Conversation
 from app.services.twilio_sms_service import send_sms_via_twilio
 from app.utils import parse_sms_timing
 from app.celery_tasks import schedule_sms_task
@@ -98,7 +100,7 @@ async def generate_instant_nudge(topic: str, business_id: int, db: Session) -> d
 # Handle sending or scheduling multiple instant nudges
 async def handle_instant_nudge_batch(messages: List[dict]):
     db: Session = SessionLocal()
-    scheduled_ids = []
+    message_ids = []
     sent_customers = []
     scheduled_customers = []
 
@@ -120,28 +122,52 @@ async def handle_instant_nudge_batch(messages: List[dict]):
             # Replace placeholder with customer's name
             personalized = base_msg.replace("{customer_name}", customer.customer_name)
 
+            # Get or create conversation
+            conversation = db.query(Conversation).filter(
+                Conversation.customer_id == customer.id,
+                Conversation.business_id == customer.business_id,
+                Conversation.status == 'active'
+            ).first()
+            
+            if not conversation:
+                conversation = Conversation(
+                    id=uuid.uuid4(),
+                    customer_id=customer.id,
+                    business_id=customer.business_id,
+                    started_at=datetime.now(pytz.UTC),
+                    last_message_at=datetime.now(pytz.UTC),
+                    status='active'
+                )
+                db.add(conversation)
+                db.flush()
+
             if scheduled_time:
                 try:
-                    customer_timezone = getattr(customer, "timezone", "UTC")
+                    customer_timezone = getattr(customer, "timezone") or "UTC"
                     scheduled_time_utc = datetime.fromisoformat(scheduled_time)
                     scheduled_time_utc = scheduled_time_utc.astimezone(pytz.timezone(customer_timezone)).astimezone(pytz.UTC)
 
-                    sms = ScheduledSMS(
+                    message = Message(
+                        conversation_id=conversation.id,
                         customer_id=customer_id,
                         business_id=customer.business_id,
-                        message=personalized,
+                        content=personalized,
+                        message_type='scheduled',
                         status="scheduled",
-                        send_time=scheduled_time_utc,
-                        source="instant_nudge"
+                        scheduled_time=scheduled_time_utc,
+                        metadata={
+                            'source': 'instant_nudge'
+                        }
                     )
-                    db.add(sms)
+                    db.add(message)
                     db.flush()  # Get ID before scheduling
-                    scheduled_ids.append(sms.id)
+                    message_ids.append(message.id)
                     db.commit()  # Commit immediately so scheduled message is visible to frontend
-                    schedule_sms_task.apply_async(args=[sms.id], eta=scheduled_time_utc)
-                    print(f"📅 Scheduled SMS for {customer.customer_name} at {scheduled_time_utc} UTC")
+                    schedule_sms_task.apply_async(args=[message.id], eta=scheduled_time_utc)
+                    print(f"📅 Scheduled message for {customer.customer_name} at {scheduled_time_utc} UTC")
                 except Exception as e:
-                    print(f"❌ Failed to schedule SMS for {customer.customer_name}: {e}")
+                    print(f"❌ Failed to schedule message for {customer.customer_name}: {e}")
+                    print(f"Traceback: {traceback.format_exc()}")
                     continue
             else:
                 # Send immediately and log in engagements
@@ -150,16 +176,34 @@ async def handle_instant_nudge_batch(messages: List[dict]):
                     print(f"⚠️ Skipping customer {customer_id}: business not found.")
                     continue
 
+                # Create message record for immediate send
+                message = Message(
+                    conversation_id=conversation.id,
+                    customer_id=customer_id,
+                    business_id=customer.business_id,
+                    content=personalized,
+                    message_type='scheduled',
+                    status="sent",
+                    scheduled_time=datetime.now(pytz.UTC),
+                    sent_at=datetime.now(pytz.UTC),
+                    message_metadata={
+                        'source': 'instant_nudge'
+                    }
+                )
+                db.add(message)
+                db.flush()
+
                 send_sms_via_twilio(customer.phone, personalized, business)
 
                 engagement = Engagement(
                     customer_id=customer_id,
+                    message_id=message.id,
                     ai_response=personalized,
                     status="sent",
                     sent_at=datetime.utcnow()
                 )
                 db.add(engagement)
-                print(f"📤 Sent SMS to {customer.customer_name} ({customer.phone})")
+                print(f"📤 Sent message to {customer.customer_name} ({customer.phone})")
 
             if scheduled_time:
                 scheduled_customers.append(customer.customer_name)
@@ -172,4 +216,4 @@ async def handle_instant_nudge_batch(messages: List[dict]):
         print("📤 Sent immediately:", ", ".join(sent_customers))
     if scheduled_customers:
         print("📅 Scheduled:", ", ".join(scheduled_customers))
-    return scheduled_ids
+    return message_ids

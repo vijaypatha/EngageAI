@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Customer, BusinessProfile, RoadmapMessage
+from app.models import Customer, BusinessProfile, RoadmapMessage, Message, Conversation
 from app.services.sms_businessowner_style import get_owner_style_samples
 from app.services.sms_customer_roadmap import generate_sms_roadmap
 from app.services.sms_roadmap_parser import save_roadmap_messages
@@ -17,6 +17,8 @@ import json
 import traceback
 from pydantic import BaseModel
 from datetime import datetime, timedelta
+import pytz
+import uuid
 
 router = APIRouter()
 
@@ -54,8 +56,8 @@ def generate_or_return_roadmap(
             "roadmap": [
                 {
                     "SMS Number": f"SMS {i+1}",
-                    "smsContent": sms.sms_content,
-                    "smsTiming": sms.send_time.strftime("Day %d, %I:%M %p") if sms.send_time else "",
+                    "smsContent": sms.smsContent,
+                    "smsTiming": sms.send_datetime_utc.strftime("Day %d, %I:%M %p") if sms.send_datetime_utc else "",
                     "relevance": sms.relevance or "(from AI)",
                     "successIndicator": sms.success_indicator or "(from AI)",
                     "whatif_customer_does_not_respond": sms.no_response_plan or "(from AI)"
@@ -71,7 +73,7 @@ def generate_or_return_roadmap(
 
     if customer.is_generating_roadmap:
         last_updated = getattr(customer, 'last_generation_attempt', None)
-        if last_updated and (datetime.utcnow() - last_updated) > timedelta(minutes=5):
+        if last_updated and (datetime.now(pytz.UTC) - last_updated) > timedelta(minutes=5):
             customer.is_generating_roadmap = False
             db.commit()
         else:
@@ -81,14 +83,23 @@ def generate_or_return_roadmap(
             )
 
     customer.is_generating_roadmap = True
-    customer.last_generation_attempt = datetime.utcnow()
+    customer.last_generation_attempt = datetime.now(pytz.UTC)
     db.commit()
 
     try:
         if existing_roadmap and force:
-            for sms in existing_roadmap:
-                if sms.status != "sent":
-                    db.delete(sms)
+            # First, handle the scheduled messages
+            for roadmap_msg in existing_roadmap:
+                if roadmap_msg.status != "sent":
+                    # Delete any associated scheduled messages first
+                    messages = db.query(Message).filter(
+                        Message.metadata['roadmap_id'].astext.cast(Integer) == roadmap_msg.id,
+                        Message.message_type == 'scheduled'
+                    ).all()
+                    for msg in messages:
+                        db.delete(msg)
+                    # Then delete the roadmap message
+                    db.delete(roadmap_msg)
             db.commit()
 
         roadmap = generate_sms_roadmap(
@@ -113,7 +124,6 @@ def generate_or_return_roadmap(
             .replace("Your Name", owner_signature) \
             .replace("Your Business", business.business_name)
       
-
         if cleaned_roadmap.startswith("```json"):
             cleaned_roadmap = cleaned_roadmap.removeprefix("```json").strip()
         if cleaned_roadmap.startswith("```"):

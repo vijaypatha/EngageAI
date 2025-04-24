@@ -40,6 +40,7 @@ class BusinessProfileUpdate(BaseModel):
     primary_services: Optional[str] = None
     representative_name: Optional[str] = None
     timezone: Optional[str] = None
+    twilio_number: Optional[str] = None
 
     @validator('timezone')
     def validate_timezone(cls, v):
@@ -92,8 +93,14 @@ class CustomerUpdate(BaseModel):
 ### ✅ SMS Schemas
 class SMSCreate(BaseModel):
     customer_id: int
-    message: str
+    message: constr(max_length=160)  # Enforces SMS character limit
     send_time: Optional[str] = None  # ISO format datetime string in business timezone
+
+    @validator('message')
+    def validate_message_length(cls, v):
+        if len(v) > 160:
+            raise ValueError("Message length exceeds 160 characters")
+        return v
 
 class SMSUpdate(BaseModel):
     updated_message: str

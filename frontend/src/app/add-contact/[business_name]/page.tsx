@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,34 +15,55 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+interface BusinessProfile {
+  business_name: string;
+  representative_name: string;
+}
+
+interface FormData {
+  customer_name: string;
+  phone: string;
+  lifecycle_stage: string;
+  pain_points: string;
+  interaction_history: string;
+  timezone: string;
+}
+
 export default function AddContactPage() {
   const { business_name } = useParams();
   const router = useRouter();
+  const [businessProfile, setBusinessProfile] = useState<BusinessProfile | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<FormData>({
     customer_name: "",
     phone: "",
     lifecycle_stage: "",
     pain_points: "",
     interaction_history: "",
-    timezone: "America/New_York", // Default timezone
+    timezone: "America/New_York",
   });
 
+  // Fetch business profile when component mounts
+  useEffect(() => {
+    const fetchBusinessProfile = async () => {
+      try {
+        const idRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
+        const { business_id } = idRes.data;
+        
+        const profileRes = await apiClient.get(`/business-profile/${business_id}`);
+        setBusinessProfile(profileRes.data);
+      } catch (err) {
+        console.error("Failed to fetch business profile:", err);
+      }
+    };
+
+    fetchBusinessProfile();
+  }, [business_name]);
+
   const formatPhoneInput = (value: string) => {
-    // Remove all non-digits first
     const digits = value.replace(/\D/g, '');
-    
-    // If user enters 10 digits, automatically add +1
-    if (digits.length === 10) {
-      return `+1${digits}`;
-    }
-    
-    // If user is typing with country code, preserve the +
-    if (value.startsWith('+')) {
-      return `+${digits}`;
-    }
-    
-    // For partial input, just return the digits
+    if (digits.length === 10) return `+1${digits}`;
+    if (value.startsWith('+')) return `+${digits}`;
     return digits;
   };
 
@@ -64,29 +85,14 @@ export default function AddContactPage() {
 
   const handleSubmit = async () => {
     try {
-      // Update the endpoint path to match the working ones
       const businessRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
       const { business_id } = businessRes.data;
 
-      // Then create the customer
-      const res = await apiClient.post("/customers", {
+      await apiClient.post("/customers", {
         ...form,
         business_id,
       });
       
-      alert(
-        "✅ Contact Added Successfully\n" +
-        "──────────────────────\n" +
-        "We've sent an opt-in request to your contact.\n" +
-        "They'll need to reply 'YES' to receive messages.\n\n" +
-        "Preview of their message:\n" +
-        "──────────────────────\n" +
-        `👋 Hi ${form.customer_name}! This is your therapist from BridgetoNowhere Therapy. ` +
-        "I'd like to send you helpful updates and reminders.\n\n" +
-        "Reply YES to opt in or STOP to opt out. Msg&data rates may apply."
-      );
-      
-      console.log("✅ Contact added:", res.data);
       router.back();
     } catch (err) {
       console.error("❌ Failed to add contact:", err);
@@ -154,11 +160,36 @@ export default function AddContactPage() {
             onChange={handleChange}
             className="bg-white text-black" 
           />
+
+          {/* Opt-in Message Preview */}
+          <div className="mt-8 p-4 rounded-lg bg-black/30 border border-white/10 space-y-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-blue-400 text-xl">📱</span>
+              <h3 className="text-white font-medium">Opt-in Message Preview</h3>
+            </div>
+            <p className="text-sm text-white/70">
+              When you save this contact, we'll send them this message:
+            </p>
+            <div className="bg-[#1A1D2D] p-4 rounded-md border border-white/5 space-y-2">
+              <p className="text-white">
+                👋 Hi {form.customer_name || "[name]"}! This is {businessProfile?.representative_name || "[representative]"} from {businessProfile?.business_name || "..."}. 
+                I'd like to send you helpful updates and reminders.
+              </p>
+              <p className="text-white/80 text-sm">
+                Reply YES to opt in or STOP to opt out. Msg&data rates may apply.
+              </p>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => router.back()} className="text-white">
               Cancel
             </Button>
-            <Button onClick={handleSubmit} className="bg-gradient-to-r from-green-400 to-blue-500 text-white">
+            <Button 
+              onClick={handleSubmit} 
+              className="bg-gradient-to-r from-green-400 to-blue-500 text-white"
+              disabled={!form.customer_name || !form.phone || !form.lifecycle_stage}
+            >
               Save Contact
             </Button>
           </div>
@@ -181,7 +212,7 @@ export default function AddContactPage() {
               <div className="mt-4 p-4 rounded-lg bg-black/30 border border-white/10 space-y-2">
                 <p className="text-sm font-medium text-white/60">Preview of the opt-in message:</p>
                 <p className="text-white">
-                  👋 Hi {form.customer_name}! This is your therapist from BridgetoNowhere Therapy. I'd like to send you helpful updates and reminders.
+                  👋 Hi {form.customer_name}! This is {businessProfile?.representative_name || "[representative]"} from {businessProfile?.business_name || "..."}. I'd like to send you helpful updates and reminders.
                 </p>
                 <p className="text-white">
                   Reply YES to opt in or STOP to opt out. Msg&data rates may apply.

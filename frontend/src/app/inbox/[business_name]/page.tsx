@@ -11,19 +11,26 @@ interface Message {
   id: number;
   customer_id: number;
   customer_name: string;
-  response: string;
-  ai_response?: string;
+  phone: string;
+  content: string;
+  type: "outbound" | "inbound";
   status: string;
-  sent_at?: string;
+  scheduled_time?: string;
+  sent_time?: string;
+  source: string;
+  is_hidden?: boolean;
+  latest_consent_status: string;
   opted_in: boolean;
+  response?: string;
 }
 
 type TimelineEntry = {
-  type: "customer" | "sent" | "ai_draft";
+  type: "customer" | "sent" | "ai_draft" | "scheduled";
   content: string;
   timestamp: string | null;
   id: number | string;
   customer_id: number;
+  is_hidden?: boolean;
 };
 
 export default function InboxPage() {
@@ -49,10 +56,17 @@ export default function InboxPage() {
       setBusinessId(id);
 
       const res = await apiClient.get(`/review/full-customer-history?business_id=${id}`);
-      setMessages(res.data || []);
-      if (res.data.length > 0) {
-        setActiveCustomerId(res.data[0].customer_id);
-        fetchScheduledSms(res.data[0].customer_id);
+      const messageData = res.data || [];
+      
+      const mappedData = messageData.map((msg: any) => ({
+        ...msg,
+        latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
+      }));
+      
+      setMessages(mappedData);
+      if (mappedData.length > 0) {
+        setActiveCustomerId(mappedData[0].customer_id);
+        fetchScheduledSms(mappedData[0].customer_id);
       }
     };
     fetchBusinessAndMessages();
@@ -62,13 +76,21 @@ export default function InboxPage() {
     if (!businessId) return;
     const interval = setInterval(async () => {
       const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
-      setMessages(res.data || []);
+      const messageData = res.data || [];
+      
+      // Map the data to include opted_in status
+      const mappedData = messageData.map((msg: any) => ({
+        ...msg,
+        latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
+      }));
+      
+      setMessages(mappedData);
     }, 4000);
     return () => clearInterval(interval);
   }, [businessId]);
 
   const fetchScheduledSms = async (customerId: number) => {
-    const res = await apiClient.get(`/sent/${customerId}`);
+    const res = await apiClient.get(`/message-status/sent/${customerId}`);
     setScheduledSms(res.data || []);
   };
 
@@ -78,42 +100,85 @@ export default function InboxPage() {
   );
 
   useEffect(() => {
-    const base = filteredMessages.flatMap((msg) => {
-      const entries: TimelineEntry[] = [];
+    const base: TimelineEntry[] = [];
 
-      if (msg.response) {
-        entries.push({ id: msg.id, type: "customer", content: msg.response, timestamp: msg.sent_at || null, customer_id: msg.customer_id });
+    const customer = messages.find(m => m.customer_id === activeCustomerId);
+    if (customer && Array.isArray((customer as any).messages)) {
+      for (const msg of (customer as any).messages) {
+        if (msg.is_hidden) continue;
+
+        if (msg.type === "inbound") {
+          base.push({
+            id: msg.id,
+            type: "customer",
+            content: msg.content,
+            timestamp: msg.sent_time || null,
+            customer_id: msg.customer_id,
+            is_hidden: msg.is_hidden
+          });
+        } else if (msg.type === "outbound") {
+          if (msg.status === "pending_review") {
+            base.push({
+              id: msg.id,
+              type: "ai_draft",
+              content: msg.content,
+              timestamp: null,
+              customer_id: msg.customer_id,
+              is_hidden: msg.is_hidden
+            });
+          } else if (msg.status === "sent") {
+            base.push({
+              id: msg.id,
+              type: "sent",
+              content: msg.content,
+              timestamp: msg.sent_time || msg.scheduled_time || null,
+              customer_id: msg.customer_id,
+              is_hidden: msg.is_hidden
+            });
+          }
+        }
       }
+    }
 
-      if (msg.ai_response && msg.status === "pending_review") {
-        entries.push({ id: msg.id, type: "ai_draft", content: msg.ai_response, timestamp: null, customer_id: msg.customer_id });
+    const fetchConversationHistory = async () => {
+      if (!activeCustomerId) return;
+      try {
+        const res = await apiClient.get(`/conversations/customer/${activeCustomerId}`);
+        const conversationEntries = (res.data.messages || []).map((msg: any, index: number) => ({
+          id: msg.id || `temp-${index}`,
+          type: msg.from_business ? "sent" : "customer",
+          content: msg.text,
+          timestamp: msg.timestamp,
+          customer_id: activeCustomerId,
+          is_hidden: msg.is_hidden
+        })) as TimelineEntry[];
+
+        const scheduled: TimelineEntry[] = scheduledSms
+          .filter(sms => sms.status === "sent" && sms.customer_id === activeCustomerId)
+          .map(sms => ({
+            id: `sms-${sms.id}`,
+            type: "sent",
+            content: sms.message,
+            timestamp: sms.send_time || null,
+            customer_id: sms.customer_id,
+            is_hidden: sms.is_hidden
+          })) as TimelineEntry[];
+
+        const allEntries = [...base, ...conversationEntries, ...scheduled];
+        const sortedEntries = allEntries.sort((a, b) => {
+          if (!a.timestamp) return 1;
+          if (!b.timestamp) return -1;
+          return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+        });
+
+        setTimelineEntries(sortedEntries);
+      } catch (err) {
+        console.error("Failed to fetch conversation history:", err);
       }
+    };
 
-      if (msg.ai_response && msg.status === "sent") {
-        entries.push({ id: msg.id, type: "sent", content: msg.ai_response, timestamp: msg.sent_at || null, customer_id: msg.customer_id });
-      }
-
-      return entries;
-    });
-
-    const scheduled: TimelineEntry[] = scheduledSms
-      .filter(sms => sms.status === "sent" && sms.customer_id === activeCustomerId)
-      .map(sms => ({
-        id: `sms-${sms.id}`,
-        type: "sent",
-        content: sms.message,
-        timestamp: sms.send_time || null,
-        customer_id: sms.customer_id
-      })) as TimelineEntry[];
-
-    const merged: TimelineEntry[] = [...base, ...scheduled].sort((a, b) => {
-      if (!a.timestamp) return 1;
-      if (!b.timestamp) return -1;
-      return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-    });
-
-    setTimelineEntries(merged);
-  }, [messages, scheduledSms, activeCustomerId]);
+    fetchConversationHistory();
+  }, [messages, activeCustomerId, scheduledSms]);
 
   const handleSendMessage = async () => {
     if (!newMessage.trim()) return;
@@ -125,29 +190,34 @@ export default function InboxPage() {
         const draftMsg = messages.find((msg) => msg.id === selectedDraftId);
         if (!draftMsg) throw new Error("Draft not found");
 
-        await apiClient.put(`/review/engagement/update-draft/${draftMsg.id}`, { ai_response: newMessage.trim() });
-        await apiClient.put(`/engagement/reply/${draftMsg.id}/send`, { response: newMessage.trim() });
+        await apiClient.put(`/review/engagement/update-draft/${draftMsg.id}`, { content: newMessage.trim() });
+        await apiClient.put(`/engagement/reply/${draftMsg.id}/send`, { content: newMessage.trim() });
 
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === draftMsg.id
-              ? { ...msg, ai_response: newMessage.trim(), sent_at: new Date().toISOString(), status: "sent" }
+              ? { ...msg, content: newMessage.trim(), sent_time: new Date().toISOString(), status: "sent" }
               : msg
           )
         );
       } else if (activeCustomerId) {
         const response = await apiClient.post(`/engagement/manual-reply/${activeCustomerId}`, {
-          message: newMessage.trim(),
+          content: newMessage.trim(),
         });
 
         setMessages(prev => [...prev, {
           id: response.data.id,
           customer_id: activeCustomerId!,
           customer_name: filteredMessages[0]?.customer_name || "Unknown",
-          response: newMessage.trim(),
+          phone: filteredMessages[0]?.phone || "",
+          content: newMessage.trim(),
+          type: "outbound",
           status: "sent",
-          sent_at: new Date().toISOString(),
-          opted_in: false,
+          sent_time: new Date().toISOString(),
+          latest_consent_status: "",
+          is_hidden: false,
+          source: "manual",
+          opted_in: false
         }]);
       }
 
@@ -168,7 +238,7 @@ export default function InboxPage() {
     messages.forEach((msg) => {
       if (!msg.customer_id) return;
       const existing = grouped.get(msg.customer_id);
-      if (!existing || (msg.sent_at && existing.sent_at && new Date(msg.sent_at) > new Date(existing.sent_at))) {
+      if (!existing || (msg.sent_time && existing.sent_time && new Date(msg.sent_time) > new Date(existing.sent_time))) {
         grouped.set(msg.customer_id, msg);
       }
     });
@@ -242,12 +312,12 @@ export default function InboxPage() {
                     <span className="font-medium text-white truncate">
                       {msg.customer_name}
                     </span>
-                    {msg.sent_at && !lastSeenMap[msg.customer_id] && (
+                    {msg.sent_time && !lastSeenMap[msg.customer_id] && (
                       <span className="w-2 h-2 rounded-full bg-emerald-400" />
                     )}
                   </div>
                   <p className="text-sm text-gray-400 truncate">
-                    {msg.response?.slice(0, 40) || msg.ai_response?.slice(0, 40)}
+                    {msg.content?.slice(0, 40)}
                   </p>
                 </div>
               </div>
@@ -273,11 +343,11 @@ export default function InboxPage() {
                 <div className="flex items-center gap-2">
                   <span className={clsx(
                     "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
-                    filteredMessages[0]?.opted_in 
+                    (filteredMessages[0]?.opted_in || filteredMessages[0]?.latest_consent_status === "opted_in")
                       ? "bg-emerald-400/10 text-emerald-400"
                       : "bg-red-400/10 text-red-400"
                   )}>
-                    {filteredMessages[0]?.opted_in 
+                    {(filteredMessages[0]?.opted_in || filteredMessages[0]?.latest_consent_status === "opted_in")
                       ? <><Check className="w-3 h-3" /> Opted In</> 
                       : <><AlertCircle className="w-3 h-3" /> Not Opted In</>}
                   </span>
@@ -289,7 +359,9 @@ export default function InboxPage() {
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {timelineEntries.map((entry) => (
+          {timelineEntries
+            .filter(entry => !entry.is_hidden) // Filter out hidden messages
+            .map((entry) => (
             <div key={`${entry.type}-${entry.id}`} 
               className={clsx(
                 "flex flex-col",
@@ -304,12 +376,16 @@ export default function InboxPage() {
               )}
               <div className={clsx(
                 "max-w-[85%] md:max-w-md px-4 py-2.5 rounded-2xl",
-                entry.type === "customer" && "bg-[#242842] text-white",
-                entry.type === "sent" && "bg-gradient-to-r from-emerald-500 to-blue-500 text-white",
+                entry.type === "customer" && "bg-gradient-to-r from-emerald-500 to-blue-500 text-white",
+                entry.type === "sent" && "bg-[#242842] text-white",
+                entry.type === "scheduled" && "bg-gradient-to-r from-blue-500 to-indigo-500 text-white",
                 entry.type === "ai_draft" && "bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white"
               )}>
                 {entry.type === "ai_draft" && (
                   <div className="text-xs font-medium mb-1">💡 Draft Reply</div>
+                )}
+                {entry.type === "scheduled" && (
+                  <div className="text-xs font-medium mb-1">🕒 Scheduled</div>
                 )}
                 <div className="whitespace-pre-wrap break-words">{entry.content}</div>
                 {entry.type === "ai_draft" && (
@@ -337,7 +413,7 @@ export default function InboxPage() {
           {activeCustomerId && (() => {
             const customerMsgs = messages.filter(m => m.customer_id === activeCustomerId);
             const latestMsg = customerMsgs[0];
-            const optedIn = latestMsg?.opted_in ?? false;
+            const optedIn = latestMsg?.opted_in || latestMsg?.latest_consent_status === "opted_in";
 
             if (!optedIn) {
               return (

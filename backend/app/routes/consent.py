@@ -17,41 +17,24 @@ class ConsentStatusResponse(BaseModel):
     last_updated: Optional[datetime]
     method: Optional[str]
 
-@router.get("/consent-status/{customer_id}", response_model=ConsentStatusResponse)
-async def get_consent_status(
-    customer_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get the current consent status for a customer by checking their latest ConsentLog entry
-    and Customer.opted_in field.
-    """
-    # Get the customer
+@router.get("/status/{customer_id}")
+def get_consent_status(customer_id: int, db: Session = Depends(get_db)):
+    # First check if customer exists
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-
-    # Get the latest consent log using the new index
+    
+    # Get latest consent log
     latest_consent = (
         db.query(ConsentLog)
         .filter(ConsentLog.customer_id == customer_id)
-        .order_by(desc(ConsentLog.replied_at))
+        .order_by(ConsentLog.replied_at.desc())
         .first()
     )
-
-    if not latest_consent:
-        return ConsentStatusResponse(
-            customer_id=customer_id,
-            status="pending",
-            opted_in=False,
-            last_updated=None,
-            method=None
-        )
-
-    return ConsentStatusResponse(
-        customer_id=customer_id,
-        status=latest_consent.status,
-        opted_in=customer.opted_in or False,
-        last_updated=latest_consent.replied_at,
-        method=latest_consent.method
-    )
+    
+    return {
+        "customer_id": customer_id,
+        "status": latest_consent.status if latest_consent else "pending",
+        "last_updated": latest_consent.replied_at.isoformat() if latest_consent and latest_consent.replied_at else None,
+        "opted_in": customer.opted_in
+    }

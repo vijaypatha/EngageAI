@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { format } from "date-fns";
 // @ts-ignore
-import { zonedTimeToUtc } from "date-fns-tz";
+import { zonedTimeToUtc, utcToZonedTime } from "date-fns-tz";
 
 interface RoadmapMessage {
   id: number;
@@ -24,6 +24,7 @@ export default function ContactEngagementPage() {
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
   const [editedTime, setEditedTime] = useState<string>("");
+  const [customerTimezone, setCustomerTimezone] = useState("America/Denver");
 
   useEffect(() => {
     const load = async () => {
@@ -37,6 +38,7 @@ export default function ContactEngagementPage() {
         const custRes = await apiClient.get(`/customers/${id}`);
         setCustomerName(custRes.data.customer_name);
         setOptedIn(res.data.latest_consent_status);
+        setCustomerTimezone(custRes.data.timezone || "America/Denver");
       } catch (err) {
         console.error("Failed to fetch engagement plan", err);
       } finally {
@@ -115,7 +117,11 @@ export default function ContactEngagementPage() {
 
   const handleDelete = async (msgId: number) => {
     try {
-      const res = await apiClient.delete(`/review/${msgId}?source=roadmap`);
+      const msg = messages.find(m => m.id === msgId);
+      if (!msg) return;
+      
+      const source = msg.status === "scheduled" ? "scheduled" : "roadmap";
+      const res = await apiClient.delete(`/review/${msgId}?source=${source}`);
       console.log(`🗑️ Deleted message ID=${res.data.id} from ${res.data.deleted_from}`);
       setMessages((prev) => prev.filter((msg) => msg.id !== msgId));
     } catch (err) {
@@ -167,9 +173,10 @@ export default function ContactEngagementPage() {
             <h2 className="text-xl font-semibold text-white border-b border-white/20 mb-4 mt-12">{month}</h2>
             <div className="relative border-l-4 border-purple-500 ml-8">
               {msgs.map((msg) => {
-                const dateObj = msg.send_datetime_utc ? new Date(msg.send_datetime_utc) : null;
-                const weekday = dateObj ? format(dateObj, "EEEE") : "";
-                const time = dateObj ? format(dateObj, "h:mm a") : "";
+                const utcDate = msg.send_datetime_utc ? new Date(msg.send_datetime_utc) : null;
+                const localDate = utcDate ? utcToZonedTime(utcDate, customerTimezone) : null;
+                const weekday = localDate ? format(localDate, "EEEE") : "";
+                const time = localDate ? format(localDate, "h:mm a") : "";
 
                 return (
                   <div key={msg.id} className="relative mb-12 pl-10 mt-12">
@@ -181,18 +188,18 @@ export default function ContactEngagementPage() {
                       <div className="w-px flex-1 bg-purple-500 mt-2"></div>
                     </div>
                     <div
-                      className={`ml-4 rounded-lg shadow-md p-4 border ${
+                      className={`ml-4 rounded-lg shadow-md p-4 ${
                         msg.status === "scheduled"
-                          ? "bg-green-900 border-green-600"
+                          ? "bg-green-900/50 border-2 border-green-600"
                           : msg.status === "sent"
-                          ? "bg-blue-900 border-blue-700"
-                          : "bg-zinc-800 border-neutral"
+                          ? "bg-blue-900 border border-blue-700"
+                          : "bg-zinc-800 border border-neutral"
                       }`}
                     >
                       <div className="flex justify-between items-center mb-1">
-                        <p className="text-sm text-white font-semibold">
-                          {weekday}, {time}
-                        </p>
+                        <div className="text-lg mb-2">
+                          {weekday}, {time} ({customerTimezone.split('/')[1].replace('_', ' ')})
+                        </div>
                         <span
                           className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-sm tracking-wide ${
                             msg.status === "scheduled"
@@ -250,17 +257,19 @@ export default function ContactEngagementPage() {
                             >
                               🪄 Edit
                             </button>
-                            <button
-                              onClick={() => handleApprove(msg.id)}
-                              disabled={optedIn === "declined"}
-                              className={`text-sm px-3 py-1 rounded text-white shadow ${
-                                optedIn === "declined"
-                                  ? 'bg-gray-600 cursor-not-allowed'
-                                  : 'bg-primary hover:bg-primary/80'
-                              }`}
-                            >
-                              Schedule
-                            </button>
+                            {msg.status !== "scheduled" && (
+                              <button
+                                onClick={() => handleApprove(msg.id)}
+                                disabled={optedIn === "declined"}
+                                className={`text-sm px-3 py-1 rounded text-white shadow ${
+                                  optedIn === "declined"
+                                    ? 'bg-gray-600 cursor-not-allowed'
+                                    : 'bg-primary hover:bg-primary/80'
+                                }`}
+                              >
+                                Schedule
+                              </button>
+                            )}
                           </div>
                         </>
                       )}

@@ -13,8 +13,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { OptInStatusBadge } from "@/components/OptInStatus";
+import { OptInStatusBadge, OptInStatus } from "@/components/OptInStatus";
 
 interface Customer {
   id: number;
@@ -23,18 +24,22 @@ interface Customer {
   lifecycle_stage: string;
   pain_points: string;
   interaction_history: string;
+  opted_in: boolean;
   latest_consent_status?: string;
+  latest_consent_updated?: string;
 }
 
 export default function ContactsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [deleteCustomerId, setDeleteCustomerId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const { business_name } = useParams();
   const router = useRouter();
 
   useEffect(() => {
     const load = async () => {
       try {
+        setError(null);
         const idRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
         const business_id = idRes.data.business_id;
 
@@ -42,6 +47,7 @@ export default function ContactsPage() {
         setCustomers(custRes.data);
       } catch (err) {
         console.error("Failed to load contacts:", err);
+        setError("Failed to load contacts. Please try again.");
       }
     };
 
@@ -50,29 +56,53 @@ export default function ContactsPage() {
 
   const handleDelete = async (customerId: number) => {
     try {
-      const customer = customers.find(c => c.id === customerId);
-      
-      // Allow deletion for pending, waiting, or no status
-      if (customer?.latest_consent_status && 
-          !["pending", "waiting"].includes(customer.latest_consent_status)) {
-        alert("Cannot delete contacts that have already opted in or out.");
-        setDeleteCustomerId(null);
-        return;
-      }
-
+      setError(null);
       await apiClient.delete(`/customers/${customerId}`);
       setCustomers(prev => prev.filter(c => c.id !== customerId));
       setDeleteCustomerId(null);
     } catch (err) {
       console.error("Failed to delete contact:", err);
-      alert("Failed to delete contact. Please try again.");
+      setError("Failed to delete contact. Please try again.");
     }
   };
+
+  const getOptInStatus = (customer: Customer): OptInStatus => {
+    if (!customer.latest_consent_status) {
+      return "waiting";
+    }
+    
+    switch (customer.latest_consent_status) {
+      case "opted_in":
+        return customer.opted_in ? "opted_in" : "error";
+      case "opted_out":
+        return !customer.opted_in ? "opted_out" : "error";
+      case "pending":
+        return "pending";
+      case "waiting":
+        return "waiting";
+      default:
+        return "error";
+    }
+  };
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-nudge-gradient text-white px-4 py-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-red-400">
+            {error}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-nudge-gradient text-white px-4 py-8">
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent"> 🖨️ {customers.length} Contacts{customers.length !== 1 ? "s" : ""}</h1>
+        <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent">
+          🖨️ {customers.length} Contact{customers.length !== 1 ? "s" : ""}
+        </h1>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {customers.map((customer) => (
@@ -80,14 +110,9 @@ export default function ContactsPage() {
               <h2 className="text-lg font-semibold">{customer.customer_name}</h2>
               <div className="mt-1">
                 <OptInStatusBadge 
-                  status={
-                    customer.latest_consent_status === "opted_in" 
-                      ? "opted_in" 
-                      : customer.latest_consent_status === "opted_out" 
-                        ? "opted_out" 
-                        : "waiting"
-                  } 
-                  size="sm" 
+                  status={getOptInStatus(customer)}
+                  size="sm"
+                  lastUpdated={customer.latest_consent_updated}
                 />
               </div>
               <p className="text-sm text-neutral">📞 {customer.phone}</p>
@@ -97,7 +122,6 @@ export default function ContactsPage() {
               <div className="flex gap-2 mt-4">
                 <Button variant="secondary" onClick={() => router.push(`/edit-contact/${customer.id}`)}>Edit</Button>
                 <Button onClick={() => router.push(`/contacts-ui/${customer.id}`)}>See Engagement Plan</Button>
-                {/* Show delete button for pending, waiting, or no status */}
                 {(!customer.latest_consent_status || 
                   customer.latest_consent_status === "pending" || 
                   customer.latest_consent_status === "waiting") && (
@@ -121,20 +145,20 @@ export default function ContactsPage() {
           +
         </Button>
 
-        {/* Delete Confirmation Dialog */}
-        <AlertDialog open={deleteCustomerId !== null} onOpenChange={() => setDeleteCustomerId(null)}>
+        <AlertDialog open={deleteCustomerId !== null} onOpenChange={(open) => !open && setDeleteCustomerId(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Contact?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will delete the contact that hasn't responded to the opt-in message yet. 
-                You can add them again later if needed.
+                This will permanently delete this contact. This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel onClick={() => setDeleteCustomerId(null)}>
+                Cancel
+              </AlertDialogCancel>
               <AlertDialogAction
-                className="bg-red-600 hover:bg-red-700"
+                className="bg-red-600 hover:bg-red-700 text-white"
                 onClick={() => deleteCustomerId && handleDelete(deleteCustomerId)}
               >
                 Delete

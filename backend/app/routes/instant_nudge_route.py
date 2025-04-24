@@ -7,9 +7,11 @@ from pydantic import BaseModel
 from typing import List
 from app.services.instant_nudge_service import generate_instant_nudge
 import logging
-from app.models import BusinessProfile, ScheduledSMS
+from app.models import BusinessProfile, Message, Conversation
 from sqlalchemy.orm import Session
 from app.database import get_db
+from datetime import datetime, timezone
+from sqlalchemy import func
 
 router = APIRouter()
 
@@ -21,11 +23,14 @@ class InstantNudgeRequest(BaseModel):
 
 # Endpoint to generate an AI-personalized message based on a topic
 @router.post("/instant-nudge/generate-message")
-async def generate_instant_nudge_message(payload: InstantNudgeRequest):
+async def generate_instant_nudge_message(
+    payload: InstantNudgeRequest,
+    db: Session = Depends(get_db)
+):
     logging.info(f"✍️ Received Instant Nudge generation request for business_id={payload.business_id} | topic='{payload.topic}'")
     try:
         logging.debug(f"Payload details: {payload.json()}")
-        return await generate_instant_nudge(payload.topic, payload.business_id)
+        return await generate_instant_nudge(payload.topic, payload.business_id, db)
     except Exception as e:
         logging.error(f"❌ Instant Nudge generation failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate instant nudge message")
@@ -54,18 +59,78 @@ def get_instant_nudge_status(slug: str, db: Session = Depends(get_db)):
     if not business:
         raise HTTPException(status_code=404, detail="Business not found")
 
-    messages = db.query(ScheduledSMS).filter(
-        ScheduledSMS.business_id == business.id,
-        ScheduledSMS.source == "instant_nudge"
+    # Get all conversations for this business
+    conversations = db.query(Conversation).filter(
+        Conversation.business_id == business.id
     ).all()
+    
+    # Get all instant nudge messages for these conversations
+    messages = db.query(Message).filter(
+        Message.business_id == business.id,
+        Message.message_type == 'scheduled',
+        func.jsonb_exists(Message.message_metadata, 'source'),
+        Message.message_metadata.op('->>')('source') == 'instant_nudge'
+    ).all()
+
     return [
         {
             "id": m.id,
-            "message": m.message,
+            "message": m.content,
             "customer_id": m.customer_id,
             "status": m.status,
-            "send_time": m.send_time,
-            "is_hidden": m.is_hidden
+            "send_time": m.scheduled_time,
+            "is_hidden": m.is_hidden,
+            "conversation_id": m.conversation_id,
+            "metadata": m.message_metadata
+        }
+        for m in messages
+    ]
+
+# Endpoint to get detailed instant nudge analytics
+@router.get("/nudge/instant-analytics/business/{business_id}")
+def get_instant_nudge_analytics(business_id: int, db: Session = Depends(get_db)):
+    now_utc = datetime.now(timezone.utc)
+    
+    messages = db.query(Message).filter(
+        Message.business_id == business_id,
+        Message.message_type == 'scheduled',
+        func.jsonb_exists(Message.message_metadata, 'source'),
+        Message.message_metadata.op('->>')('source') == 'instant_nudge'
+    ).all()
+
+    # Calculate analytics
+    total_sent = sum(1 for m in messages if m.status == 'sent')
+    total_pending = sum(1 for m in messages if m.status == 'pending')
+    total_failed = sum(1 for m in messages if m.status == 'failed')
+    total_scheduled = sum(1 for m in messages if m.status == 'scheduled' and m.scheduled_time and m.scheduled_time > now_utc)
+
+    return {
+        "total_messages": len(messages),
+        "sent": total_sent,
+        "pending": total_pending,
+        "failed": total_failed,
+        "scheduled": total_scheduled,
+        "success_rate": (total_sent / len(messages)) if messages else 0
+    }
+# Endpoint to get all instant nudge messages for a customer (immediate and scheduled)
+@router.get("/nudge/instant-multi/customer/{customer_id}")
+def get_instant_nudges_for_customer(customer_id: int, db: Session = Depends(get_db)):
+    messages = db.query(Message).filter(
+        Message.customer_id == customer_id,
+        func.jsonb_exists(Message.message_metadata, 'source'),
+        Message.message_metadata.op('->>')('source') == 'instant_nudge'
+    ).order_by(Message.scheduled_time.desc()).all()
+
+    return [
+        {
+            "id": m.id,
+            "message": m.content,
+            "customer_id": m.customer_id,
+            "status": m.status,
+            "send_time": m.scheduled_time,
+            "is_hidden": m.is_hidden,
+            "conversation_id": m.conversation_id,
+            "metadata": m.message_metadata
         }
         for m in messages
     ]

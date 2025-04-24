@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from typing import Optional, Union
 import logging
@@ -95,7 +95,7 @@ def get_next_business_hour(dt: datetime, business_timezone: str,
     # If it's a weekend, move to next Monday
     if local_dt.weekday() >= 5:
         days_until_monday = 7 - local_dt.weekday()
-        local_dt = local_dt + datetime.timedelta(days=days_until_monday)
+        local_dt = local_dt + timedelta(days=days_until_monday)
         local_dt = local_dt.replace(hour=business_hours_start, minute=0, second=0, microsecond=0)
         return local_dt.astimezone(pytz.UTC)
     
@@ -106,7 +106,7 @@ def get_next_business_hour(dt: datetime, business_timezone: str,
     
     # If it's after business hours, move to next day's start of business hours
     if local_dt.hour >= business_hours_end:
-        local_dt = local_dt + datetime.timedelta(days=1)
+        local_dt = local_dt + timedelta(days=1)
         local_dt = local_dt.replace(hour=business_hours_start, minute=0, second=0, microsecond=0)
         return local_dt.astimezone(pytz.UTC)
     

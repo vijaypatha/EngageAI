@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 from pydantic import BaseModel
 from app.database import get_db
-from app.models import Engagement, Customer, ScheduledSMS, BusinessProfile
+from app.models import Engagement, Customer, Message, BusinessProfile, Conversation
 from app.celery_tasks import schedule_sms_task
+import uuid
+import pytz
 
 
 router = APIRouter(prefix="/conversations", tags=["Conversations"])
@@ -55,18 +57,22 @@ def get_conversation(customer_id: int, db: Session = Depends(get_db)):
         .filter(Engagement.customer_id == customer_id)\
         .all()
 
-    scheduled_sms = db.query(ScheduledSMS)\
-        .filter(ScheduledSMS.customer_id == customer_id)\
+    messages = db.query(Message)\
+        .filter(
+            Message.customer_id == customer_id,
+            Message.message_type == 'scheduled'
+        )\
         .all()
 
     conversation = []
+    utc = pytz.UTC
 
     for msg in engagements:
         if msg.response:
             conversation.append({
                 "sender": "customer",
                 "text": msg.response,
-                "timestamp": msg.sent_at,
+                "timestamp": msg.sent_at.astimezone(utc) if msg.sent_at else None,
                 "source": "customer_response",
                 "direction": "incoming"
             })
@@ -82,23 +88,39 @@ def get_conversation(customer_id: int, db: Session = Depends(get_db)):
             conversation.append({
                 "sender": "owner",
                 "text": msg.ai_response,
-                "timestamp": msg.sent_at,
+                "timestamp": msg.sent_at.astimezone(utc) if msg.sent_at else None,
                 "source": "manual_reply",
                 "direction": "outgoing"
             })
 
-    for sms in scheduled_sms:
+    for msg in messages:
+        # Handle message_metadata safely
+        source = 'scheduled'
+        if msg.message_metadata:
+            try:
+                metadata_dict = msg.message_metadata if isinstance(msg.message_metadata, dict) else {}
+                source = metadata_dict.get('source', 'scheduled')
+            except:
+                source = 'scheduled'
+
         conversation.append({
             "sender": "owner",
-            "text": sms.message,
-            "timestamp": sms.send_time,
-            "source": "scheduled_sms",
+            "text": msg.content,
+            "timestamp": msg.scheduled_time.astimezone(utc) if msg.scheduled_time else None,
+            "source": source,
             "direction": "outgoing"
         })
 
+    # Sort with a key function that handles None values
+    def get_sort_key(item):
+        timestamp = item.get("timestamp")
+        if timestamp is None:
+            return datetime.min.replace(tzinfo=utc)
+        return timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=utc)
+
     sorted_conversation = sorted(
         conversation,
-        key=lambda m: m["timestamp"] or datetime.min
+        key=get_sort_key
     )
 
     return {
@@ -121,11 +143,46 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    now = datetime.utcnow()
+    now = datetime.now(pytz.UTC)
 
-    # 1. Save to Engagements (for conversation history)
+    # Get or create conversation
+    conversation = db.query(Conversation).filter(
+        Conversation.customer_id == customer.id,
+        Conversation.business_id == customer.business_id,
+        Conversation.status == 'active'
+    ).first()
+    
+    if not conversation:
+        conversation = Conversation(
+            id=uuid.uuid4(),
+            customer_id=customer.id,
+            business_id=customer.business_id,
+            started_at=now,
+            last_message_at=now,
+            status='active'
+        )
+        db.add(conversation)
+        db.flush()
+
+    # Create message for SMS delivery
+    message = Message(
+        conversation_id=conversation.id,
+        customer_id=customer.id,
+        business_id=customer.business_id,
+        content=payload.message,
+        message_type='scheduled',
+        status="scheduled",
+        scheduled_time=now,
+        message_metadata={
+            'source': 'manual_reply'
+        }
+    )
+    db.add(message)
+
+    # Save to Engagements (for conversation history)
     new_msg = Engagement(
         customer_id=customer.id,
+        message_id=message.id,
         response=None,
         ai_response=payload.message,
         status="sent",
@@ -133,20 +190,8 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
     )
     db.add(new_msg)
 
-    # 2. Save to ScheduledSMS (for actual SMS delivery)
-    scheduled_sms = ScheduledSMS(
-        customer_id=customer.id,
-        business_id=customer.business_id,
-        message=payload.message,
-        status="scheduled",
-        send_time=now,
-    )
-    db.add(scheduled_sms)
-
-    # 3. Commit once (so scheduled_sms.id exists)
+    # Commit and trigger Celery task
     db.commit()
+    schedule_sms_task.delay(message.id)
 
-    # 4. Trigger Celery task
-    schedule_sms_task.delay(scheduled_sms.id)
-
-    return {"status": "success", "message": "Reply sent and scheduled", "scheduled_sms_id": scheduled_sms.id}
+    return {"status": "success", "message": "Reply sent and scheduled", "message_id": message.id}

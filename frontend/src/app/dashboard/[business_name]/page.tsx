@@ -27,6 +27,7 @@ interface EngagementStats {
   optedIn: number;
   optedOut: number;
   optInPending: number;
+  received: number;
 }
 
 const tooltipTextMap: Record<string, string> = {
@@ -53,6 +54,7 @@ export default function DashboardPage() {
     optedIn: 0,
     optedOut: 0,
     optInPending: 0,
+    received: 0,
   });
 
   useEffect(() => {
@@ -60,24 +62,26 @@ export default function DashboardPage() {
       try {
         const business = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
 
-        const [generalStatsRes, replyStatsRes] = await Promise.all([
+        const [generalStatsRes, replyStatsRes, receivedStatsRes] = await Promise.allSettled([
           apiClient.get(`/review/stats/${business.data.business_id}`),
-          apiClient.get(`/review/reply-stats/${business.data.business_id}`)
+          apiClient.get(`/review/reply-stats/${business.data.business_id}`),
+          apiClient.get(`/review/received-messages/${business.data.business_id}`)
         ]);
 
         setStats({
-          communitySize: generalStatsRes.data.communitySize ?? 0,
-          withoutPlanCount: generalStatsRes.data.withoutPlanCount ?? 0,
-          pending: generalStatsRes.data.pending ?? 0,
-          scheduled: generalStatsRes.data.scheduled ?? 0,
-          sent: generalStatsRes.data.sent ?? 0,
-          rejected: generalStatsRes.data.rejected ?? 0,
-          optedIn: generalStatsRes.data.optedIn ?? 0,
-          optedOut: generalStatsRes.data.optedOut ?? 0,
-          optInPending: generalStatsRes.data.optInPending ?? 0,
-          conversations: generalStatsRes.data.conversations ?? 0,
-          waitingReplies: replyStatsRes.data.customers_waiting ?? 0,
-          draftsReady: replyStatsRes.data.messages_total ?? 0,
+          communitySize: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.communitySize ?? 0 : 0,
+          withoutPlanCount: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.withoutPlanCount ?? 0 : 0,
+          pending: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.pending ?? 0 : 0,
+          scheduled: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.scheduled ?? 0 : 0,
+          sent: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.sent ?? 0 : 0,
+          rejected: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.rejected ?? 0 : 0,
+          optedIn: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.optedIn ?? 0 : 0,
+          optedOut: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.optedOut ?? 0 : 0,
+          optInPending: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.optInPending ?? 0 : 0,
+          conversations: generalStatsRes.status === "fulfilled" ? generalStatsRes.value.data.conversations ?? 0 : 0,
+          waitingReplies: replyStatsRes.status === "fulfilled" ? replyStatsRes.value.data.customers_waiting ?? 0 : 0,
+          draftsReady: replyStatsRes.status === "fulfilled" ? replyStatsRes.value.data.messages_total ?? 0 : 0,
+          received: receivedStatsRes.status === "fulfilled" ? receivedStatsRes.value.data.received_count ?? 0 : 0,
         });
       } catch (err) {
         console.error("Failed to fetch dashboard stats:", err);
@@ -222,6 +226,13 @@ export default function DashboardPage() {
             </div>
 
             <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm">
+                  <Send className="w-4 h-4 text-cyan-400" />
+                  <span className="text-gray-300">Messages Received</span>
+                </div>
+                <span className="font-medium text-cyan-400">{stats.received}</span>
+              </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-sm">
                   <Send className="w-4 h-4 text-cyan-400" />
