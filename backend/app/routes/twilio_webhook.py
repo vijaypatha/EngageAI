@@ -53,17 +53,18 @@ async def receive_sms(
     """
     try:
         logger.info("=== Twilio Webhook: Incoming SMS received ===")
+        logger.info("✅ Start: parsing form")
         form = await request.form()
         from_number = normalize_phone(form.get("From", ""))
         to_number = normalize_phone(form.get("To", ""))
         body = form.get("Body", "").strip()
-
         logger.info(f"Webhook payload: From={from_number}, To={to_number}, Body='{body}'")
 
         if not all([from_number, to_number, body]):
             logger.error("Missing required SMS webhook parameters")
             return PlainTextResponse("Missing parameters", status_code=400)
 
+        logger.info("✅ Start: looking up customer")
         # Find customer and business
         customer = db.query(Customer).filter(Customer.phone == from_number).first()
         if not customer:
@@ -71,6 +72,7 @@ async def receive_sms(
             return PlainTextResponse("Customer not found", status_code=404)
         logger.info(f"Matched customer: ID={customer.id}, phone={customer.phone}, opted_in={customer.opted_in}")
 
+        logger.info("✅ Start: looking up business")
         business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
         if not business:
             logger.error(f"No business found for customer {customer.id}")
@@ -102,35 +104,51 @@ async def receive_sms(
                 logger.info(f"Consent status updated for customer {customer.id}: {status}")
                 return PlainTextResponse(message, status_code=200)
 
+        logger.info("✅ Start: checking consent")
         # Check consent status before proceeding
-        has_consent = await consent_service.check_consent(customer.id, business.id)
+        has_consent = await consent_service.check_consent(customer.phone, business.id)
         logger.info(f"Consent check for customer {customer.id}: {has_consent}")
         if not has_consent:
             logger.warning(f"Ignoring message from opted-out customer {customer.id}")
             return PlainTextResponse("Opted-out user. No response generated.", status_code=200)
 
+        logger.info("✅ Start: generating AI response")
         # Generate AI response
-        logger.info("Proceeding to AI response generation...")
-        ai_response = await ai_service.generate_sms_response(
-            message=body,
-            business_id=business.id,
-            customer_id=customer.id
-        )
-        logger.info(f"AI Response generated: {ai_response}")
+        try:
+            ai_response = await ai_service.generate_sms_response(
+                message=body,
+                business_id=business.id,
+                customer_id=customer.id
+            )
+            logger.info(f"AI Response generated: {ai_response}")
+        except Exception as e:
+            logger.error(f"❌ AI generation failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="AI generation failed")
 
+        logger.info("✅ Start: saving to engagements")
         # Save engagement
-        logger.info("Saving engagement to database...")
-        engagement = Engagement(
-            customer_id=customer.id,
-            business_id=business.id,
-            response=body,
-            ai_response=ai_response,
-            status="pending_review",
-            sent_at=datetime.now(timezone.utc)
-        )
-        db.add(engagement)
-        db.commit()
-        logger.info(f"Engagement saved with ID={engagement.id} for customer {customer.id}")
+        try:
+            engagement = Engagement(
+                customer_id=customer.id,
+                business_id=business.id,
+                response=body,
+                ai_response=ai_response,
+                status="pending_review",
+                sent_at=datetime.now(timezone.utc)
+            )
+            logger.info(
+                f"Prepared engagement: customer_id={engagement.customer_id}, "
+                f"business_id={engagement.business_id}, response='{engagement.response}', "
+                f"ai_response='{engagement.ai_response}', status='{engagement.status}', "
+                f"sent_at={engagement.sent_at}"
+            )
+            db.add(engagement)
+            db.commit()
+            logger.info(f"Engagement saved with ID={engagement.id} for customer {customer.id}")
+        except Exception as e:
+            logger.error(f"❌ DB commit failed: {e}", exc_info=True)
+            db.rollback()
+            raise HTTPException(status_code=500, detail="DB insert failed")
 
         return PlainTextResponse("Received", status_code=200)
 
