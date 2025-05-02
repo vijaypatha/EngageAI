@@ -103,7 +103,7 @@ async def receive_sms(
                 return PlainTextResponse(message, status_code=200)
 
         # Check consent status before proceeding
-        has_consent = await consent_service.check_consent(customer.id)
+        has_consent = await consent_service.check_consent(customer.id, business.id)
         logger.info(f"Consent check for customer {customer.id}: {has_consent}")
         if not has_consent:
             logger.warning(f"Ignoring message from opted-out customer {customer.id}")
