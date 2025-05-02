@@ -108,7 +108,7 @@ app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(review.router, prefix="/review", tags=["review"])
 app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
-app.include_router(twilio_webhook.router, prefix="/twilio-webhook", tags=["twilio-webhook"])
+app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
 
 @app.get("/", response_model=Dict[str, str])
 async def read_root() -> Dict[str, str]:
