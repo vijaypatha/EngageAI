@@ -1,9 +1,10 @@
-// frontend/src/app/profile/[business_name]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
+import { SMSStyleCard } from "@/components/SMSStyleCard";
+import { Button } from "@/components/ui/button";
 
 interface BusinessProfile {
   business_name: string;
@@ -12,14 +13,28 @@ interface BusinessProfile {
   primary_services: string;
   representative_name: string;
   twilio_number?: string;
+  business_id?: number;
 }
 
 export default function ProfilePage() {
   const { business_name } = useParams();
+  const router = useRouter(); 
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedProfile, setEditedProfile] = useState<BusinessProfile | null>(null);
   const [businessId, setBusinessId] = useState<number | null>(null);
+
+  const [smsStyles, setSmsStyles] = useState<any[]>([]);
+
+  const fetchStyles = async () => {
+    if (!businessId) return;
+    try {
+      const res = await apiClient.get(`/sms-style/scenarios/${businessId}`);
+      setSmsStyles(res.data?.scenarios || []);;
+    } catch (err) {
+      console.error("Failed to fetch SMS styles", err);
+    }
+  };
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -51,6 +66,10 @@ export default function ProfilePage() {
 
     fetchProfile();
   }, [business_name]);
+
+  useEffect(() => {
+    if (businessId) fetchStyles();
+  }, [businessId]);
 
   const handleSave = async () => {
     try {
@@ -140,6 +159,43 @@ export default function ProfilePage() {
             </p>
           </div>
         </div>
+
+        <div className="mt-12 bg-[#1A1D2D] rounded-xl border border-[#2A2F45] p-8 shadow-xl">
+          <h2 className="text-2xl font-bold text-white mb-6">Your SMS Style</h2>
+          <p className="text-sm text-gray-400 mb-4">
+          Updates to your style will be reflected in future AI-generated messages.
+          </p>
+          {smsStyles.length === 0 ? (
+            <p className="text-gray-400">No styles found.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-6">
+              {smsStyles.map((style) => (
+                businessId && <SMSStyleCard key={style.id} style={style} onUpdate={fetchStyles} business_id={businessId} />
+              ))}
+            </div>
+          )}
+        </div>
+        
+        <div className="flex justify-center mt-10">
+          <button
+            onClick={async () => {
+              try {
+                await apiClient.post('/auth/logout');
+                localStorage.clear();
+                router.push('/auth/login');
+              } catch (err) {
+                console.error('Logout failed:', err);
+              }
+            }}
+            className="px-6 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-500 transition duration-200 shadow-md"
+          >
+            Log Out
+          </button>
+        </div>
+
+
+
+
       </div>
     </div>
   );

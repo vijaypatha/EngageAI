@@ -68,7 +68,7 @@ export default function InstantNudgePage() {
   useEffect(() => {
     if (!businessId) return;
     // Load existing scheduled messages into UI blocks on refresh
-    apiClient.get(`/nudge/instant-status/slug/${business_name}`)
+    apiClient.get(`/instant-nudge/instant-status/slug/${business_name}`)
       .then(res => {
         console.log("📩 Restoring scheduled messages:", res.data);
         const restoredBlocks: NudgeBlock[] = res.data
@@ -94,7 +94,7 @@ export default function InstantNudgePage() {
     // Polling the status of instant nudges
     console.log("🔄 Polling instant status...");
     try {
-      const res = await apiClient.get(`/nudge/instant-status/slug/${business_name}`);
+      const res = await apiClient.get(`/instant-nudge/instant-status/slug/${business_name}`);
       const statusMap = new Map<number, string>();
       res.data.forEach((m: any) => {
         statusMap.set(m.id, m.status);
@@ -164,7 +164,7 @@ export default function InstantNudgePage() {
     console.log("🧪 Schedule:", block.schedule, "Datetime:", block.datetime);
     console.log("📤 Sending payload:", payload);
     try {
-      const res = await apiClient.post("/nudge/instant-multi", { messages: payload });
+      const res = await apiClient.post("/instant-nudge/instant-multi", { messages: payload });
       const scheduledId = res.data.scheduled_sms_ids?.[0]; // assuming one per block
       const copy = [...nudgeBlocks];
       copy[i] = {
@@ -174,7 +174,7 @@ export default function InstantNudgePage() {
         sent: !block.schedule
       };
       await new Promise(resolve => setTimeout(resolve, 3000)); // ⏱️ wait 3s for backend to store scheduled message
-      const statusRes = await apiClient.get(`/nudge/instant-status/slug/${business_name}`);
+      const statusRes = await apiClient.get(`/instant-nudge/instant-status/slug/${business_name}`);
       if (block.schedule && block.datetime) {
         const scheduledDate = new Date(block.datetime).getTime();
         const now = Date.now();

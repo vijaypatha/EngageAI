@@ -9,7 +9,7 @@ from sqlalchemy import and_, func, desc, cast, Integer, JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from app.celery_tasks import schedule_sms_task
 from app.services import MessageService
-from app.services.stats_service import calculate_stats, calculate_reply_stats
+from app.services.stats_service import get_stats_for_business as get_stats_for_business, calculate_reply_stats
 import logging
 import uuid
 import pytz
@@ -59,6 +59,7 @@ def get_engagement_plan(customer_id: int, db: Session = Depends(get_db)):
     )
 
     consent_status = latest_consent.status if latest_consent else "pending"
+    opted_in = latest_consent.status == "opted_in" if latest_consent else False
 
     # Get roadmap messages that haven't been scheduled yet
     roadmap_messages = db.query(RoadmapMessage).filter(
@@ -86,177 +87,15 @@ def get_engagement_plan(customer_id: int, db: Session = Depends(get_db)):
 
     return {
         "engagements": roadmap_data + scheduled_data,
-        "latest_consent_status": consent_status
+        "latest_consent_status": consent_status,
+        "opted_in": opted_in
     }
 
-@router.put("/{roadmap_id}/approve")
-def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
-    msg = db.query(RoadmapMessage).filter(RoadmapMessage.id == roadmap_id).first()
-    if not msg:
-        raise HTTPException(status_code=404, detail="Roadmap message not found")
-
-    if not msg.send_datetime_utc:
-        raise HTTPException(status_code=400, detail="Missing send time for roadmap message")
-
-    if msg.status == "scheduled":
-        return {"status": "already scheduled"}
-
-    customer = db.query(Customer).filter(Customer.id == msg.customer_id).first()
-    if not customer or not customer.opted_in:
-        raise HTTPException(status_code=403, detail="Customer has not opted in to receive SMS")
-
-    # Get or create conversation
-    conversation = db.query(Conversation).filter(
-        Conversation.customer_id == customer.id,
-        Conversation.business_id == msg.business_id,
-        Conversation.status == 'active'
-    ).first()
-    
-    if not conversation:
-        conversation = Conversation(
-            id=uuid.uuid4(),
-            customer_id=customer.id,
-            business_id=msg.business_id,
-            started_at=datetime.now(pytz.UTC),
-            last_message_at=datetime.now(pytz.UTC),
-            status='active'
-        )
-        db.add(conversation)
-        db.flush()
-
-    # Check for existing scheduled message using correct JSONB syntax
-    existing_message = db.query(Message).filter(
-        Message.message_metadata['roadmap_id'].cast(Integer) == msg.id,
-        Message.message_type == 'scheduled'
-    ).first()
-
-    if not existing_message:
-        message = Message(
-            conversation_id=conversation.id,
-            customer_id=msg.customer_id,
-            business_id=msg.business_id,
-            content=msg.smsContent,
-            message_type='scheduled',
-            status="scheduled",
-            scheduled_time=msg.send_datetime_utc,
-            message_metadata={
-                'source': 'roadmap',
-                'roadmap_id': msg.id
-            }
-        )
-        db.add(message)
-        db.flush()
-        
-        # Update the original roadmap message status
-        msg.status = "scheduled"
-        msg.message_id = message.id
-        
-        # Commit both changes together
-        db.commit()
-
-        print(f"📤 Scheduling message via Celery: Message id={message.id}, ETA={msg.send_datetime_utc}")
-        schedule_sms_task.apply_async(args=[message.id], eta=msg.send_datetime_utc)
-
-        return {
-            "status": "scheduled",
-            "message_id": message.id,
-            "message": {
-                "id": message.id,
-                "customer_name": customer.customer_name,
-                "smsContent": message.content,
-                "send_datetime_utc": message.scheduled_time.isoformat() if message.scheduled_time else None,
-                "status": message.status,
-                "source": message.message_metadata.get('source', 'scheduled')
-            }
-        }
-
-    # If already scheduled, ensure statuses are in sync
-    msg.status = "scheduled"
-    db.commit()
-    return {"status": "already scheduled"}
-
-@router.put("/{roadmap_id}/schedule")
-def schedule_message_alias(roadmap_id: int, db: Session = Depends(get_db)):
-    """Alias for /approve to support consistent frontend naming."""
-    return schedule_message(roadmap_id, db)
-
-@router.post("/approve-all/{customer_id}")
-def approve_all(customer_id: int, db: Session = Depends(get_db)):
-    now_utc = datetime.now(timezone.utc)
-    messages = db.query(RoadmapMessage).filter(
-        and_(
-            RoadmapMessage.customer_id == customer_id,
-            RoadmapMessage.send_datetime_utc != None,
-            RoadmapMessage.send_datetime_utc >= now_utc,
-            RoadmapMessage.status == "pending_review"
-        )
-    ).all()
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
-    if not customer or not customer.opted_in:
-        return {"scheduled": 0, "skipped": len(messages), "reason": "Customer has not opted in"}
-
-    # Get or create conversation
-    conversation = db.query(Conversation).filter(
-        Conversation.customer_id == customer.id,
-        Conversation.business_id == customer.business_id,
-        Conversation.status == 'active'
-    ).first()
-    
-    if not conversation:
-        conversation = Conversation(
-            id=uuid.uuid4(),
-            customer_id=customer.id,
-            business_id=customer.business_id,
-            started_at=datetime.now(pytz.UTC),
-            last_message_at=datetime.now(pytz.UTC),
-            status='active'
-        )
-        db.add(conversation)
-        db.flush()
-
-    new_scheduled_count = 0
-
-    for msg in messages:
-        # Check for existing scheduled message
-        exists = db.query(Message).filter(
-            Message.message_metadata['roadmap_id'].cast(Integer) == msg.id,
-            Message.message_type == 'scheduled'
-        ).first()
-
-        if not exists:
-            message = Message(
-                conversation_id=conversation.id,
-                customer_id=msg.customer_id,
-                business_id=msg.business_id,
-                content=msg.smsContent,
-                message_type='scheduled',
-                status="scheduled",
-                scheduled_time=msg.send_datetime_utc,
-                message_metadata={
-                    'source': 'roadmap',
-                    'roadmap_id': msg.id
-                }
-            )
-            db.add(message)
-            db.flush()
-
-            msg.status = "scheduled"
-            msg.message_id = message.id
-            new_scheduled_count += 1
-
-            schedule_sms_task.apply_async(args=[message.id], eta=msg.send_datetime_utc)
-
-    db.commit()
-    return {
-        "scheduled": new_scheduled_count,
-        "skipped": len(messages) - new_scheduled_count,
-        "reason": "Already scheduled" if len(messages) - new_scheduled_count > 0 else None
-    }
 
 @router.get("/stats/{business_id}")
 def get_stats(business_id: int, db: Session = Depends(get_db)):
     """API endpoint for getting message counts by status"""
-    return calculate_stats(business_id, db)
+    return get_stats_for_business(business_id, db)
 
 @router.get("/reply-stats/{business_id}")
 def get_reply_stats(business_id: int, db: Session = Depends(get_db)):
@@ -298,9 +137,10 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
             .order_by(desc(ConsentLog.replied_at))
             .first()
         )
-        
+
         consent_status = latest_consent.status if latest_consent else "pending"
         consent_updated = latest_consent.replied_at if latest_consent else None
+        opted_in = latest_consent.status == "opted_in" if latest_consent else False
 
         # Get roadmap messages
         roadmap = db.query(RoadmapMessage).filter(
@@ -328,104 +168,13 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
             result.append({
                 "customer_id": customer.id,
                 "customer_name": customer.customer_name,
-                "opted_in": customer.opted_in,
+                "opted_in": opted_in,
                 "latest_consent_status": consent_status,
                 "latest_consent_updated": consent_updated.isoformat() if consent_updated else None,
                 "messages": sorted(messages, key=lambda x: x["send_datetime_utc"] or "")
             })
 
     return result
-
-@router.put("/update-time/{id}")
-def update_message_time(
-    id: int,
-    source: str = Query(...),
-    payload: dict = Body(...),
-    db: Session = Depends(get_db)
-):
-    """Update scheduled time for a message"""
-    try:
-        new_time = datetime.fromisoformat(payload["new_time"])
-    except (KeyError, ValueError):
-        raise HTTPException(status_code=400, detail="Invalid time format")
-
-    if source == "roadmap":
-        message = db.query(RoadmapMessage).filter(RoadmapMessage.id == id).first()
-        if not message:
-            raise HTTPException(status_code=404, detail="Roadmap message not found")
-        
-        message.send_datetime_utc = new_time
-        
-        # Update corresponding scheduled message if it exists
-        scheduled = db.query(Message).filter(
-            Message.message_metadata['roadmap_id'].cast(Integer) == id,
-            Message.message_type == 'scheduled'
-        ).first()
-        
-        if scheduled:
-            scheduled.scheduled_time = new_time
-            
-    else:  # source == "scheduled"
-        message = db.query(Message).filter(
-            Message.id == id,
-            Message.message_type == 'scheduled'
-        ).first()
-        if not message:
-            raise HTTPException(status_code=404, detail="Message not found")
-        
-        message.scheduled_time = new_time
-        
-        # Update corresponding roadmap message if it exists
-        if message.message_metadata and 'roadmap_id' in message.message_metadata:
-            roadmap = db.query(RoadmapMessage).filter(
-                RoadmapMessage.id == message.message_metadata['roadmap_id']
-            ).first()
-            if roadmap:
-                roadmap.send_datetime_utc = new_time
-
-    db.commit()
-    return {"status": "success", "new_time": new_time.isoformat()}
-
-@router.delete("/{id}")
-def delete_message(id: int, source: str = Query(...), db: Session = Depends(get_db)):
-    """Delete a message"""
-    if source == "roadmap":
-        message = db.query(RoadmapMessage).filter(RoadmapMessage.id == id).first()
-        if not message:
-            raise HTTPException(status_code=404, detail="Roadmap message not found")
-        
-        # Delete corresponding scheduled message if it exists
-        scheduled = db.query(Message).filter(
-            Message.message_metadata['roadmap_id'].cast(Integer) == id,
-            Message.message_type == 'scheduled'
-        ).first()
-        
-        if scheduled:
-            db.delete(scheduled)
-            
-        db.delete(message)
-        db.commit()
-        return {"success": True, "deleted_from": "roadmap", "id": id}
-        
-    else:  # source == "scheduled"
-        message = db.query(Message).filter(
-            Message.id == id,
-            Message.message_type == 'scheduled'
-        ).first()
-        if not message:
-            raise HTTPException(status_code=404, detail="Message not found")
-        
-        # Delete corresponding roadmap message if it exists
-        if message.message_metadata and 'roadmap_id' in message.message_metadata:
-            roadmap = db.query(RoadmapMessage).filter(
-                RoadmapMessage.id == message.message_metadata['roadmap_id']
-            ).first()
-            if roadmap:
-                db.delete(roadmap)
-        
-        db.delete(message)
-        db.commit()
-        return {"success": True, "deleted_from": "scheduled", "id": id}
 
 @router.put("/update-time-debug/{id}")
 def debug_update_message_time(
@@ -494,13 +243,7 @@ def get_full_customer_history(
 
         # Validate consent status consistency
         consent_status = latest_consent.status if latest_consent else "pending"
-        if latest_consent:
-            if latest_consent.status == "opted_in" and not customer.opted_in:
-                customer.opted_in = True
-                db.commit()
-            elif latest_consent.status == "opted_out" and customer.opted_in:
-                customer.opted_in = False
-                db.commit()
+        opted_in = latest_consent.status == "opted_in" if latest_consent else False
 
         # Get all messages
         messages = db.query(Message).filter(
@@ -515,26 +258,12 @@ def get_full_customer_history(
 
         # Format messages
         message_history = []
-        
-        # Add scheduled/sent messages
-        for msg in messages:
-            message_history.append({
-                "type": "outbound",
-                "content": msg.content,
-                "status": msg.status,
-                "scheduled_time": msg.scheduled_time.isoformat() if msg.scheduled_time else None,
-                "sent_time": msg.sent_at.isoformat() if msg.sent_at else None,
-                "source": msg.message_metadata.get('source', 'scheduled') if msg.message_metadata else 'scheduled',
-                "customer_id": msg.customer_id,
-                "id": msg.id,
-                "is_hidden": msg.is_hidden if hasattr(msg, 'is_hidden') else False
-            })
 
-        # Add customer replies and AI responses
+        # 1. Add customer replies (inbound, left)
         for eng in engagements:
             if eng.response:
                 message_history.append({
-                    "type": "inbound",
+                    "type": "customer",
                     "content": eng.response,
                     "sent_time": eng.sent_at.isoformat() if eng.sent_at else None,
                     "source": "customer_reply",
@@ -543,9 +272,27 @@ def get_full_customer_history(
                     "id": eng.id,
                     "is_hidden": False
                 })
-            if eng.ai_response:
+
+        # 2. Add business-sent messages (outbound, right)
+        for msg in messages:
+            if msg.status == "sent":
                 message_history.append({
-                    "type": "outbound",
+                    "type": "sent",
+                    "content": msg.content,
+                    "status": msg.status,
+                    "scheduled_time": msg.scheduled_time.isoformat() if msg.scheduled_time else None,
+                    "sent_time": msg.sent_at.isoformat() if msg.sent_at else None,
+                    "source": msg.message_metadata.get('source', 'scheduled') if msg.message_metadata else 'scheduled',
+                    "customer_id": msg.customer_id,
+                    "id": msg.id,
+                    "is_hidden": msg.is_hidden if hasattr(msg, 'is_hidden') else False
+                })
+
+        # 3. Add AI drafts (outbound, right, not sent yet)
+        for eng in engagements:
+            if eng.ai_response and eng.status != "sent":
+                message_history.append({
+                    "type": "ai_draft",
                     "content": eng.ai_response,
                     "status": eng.status,
                     "sent_time": eng.sent_at.isoformat() if eng.sent_at else None,
@@ -565,7 +312,7 @@ def get_full_customer_history(
             "customer_id": customer.id,
             "customer_name": customer.customer_name,
             "phone": customer.phone,
-            "opted_in": customer.opted_in,
+            "opted_in": opted_in,
             "consent_status": consent_status,
             "consent_updated": latest_consent.replied_at.isoformat() if latest_consent else None,
             "message_count": len(message_history),
@@ -585,16 +332,6 @@ def get_customer_id_from_message(message_id: int, db: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="Message not found")
     return {"customer_id": message.customer_id}
 
-@router.put("/engagement/update-draft/{engagement_id}")
-def update_engagement_draft(engagement_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
-    """Update AI response draft for an engagement"""
-    engagement = db.query(Engagement).filter(Engagement.id == engagement_id).first()
-    if not engagement:
-        raise HTTPException(status_code=404, detail="Engagement not found")
-    
-    engagement.ai_response = payload.get("draft")
-    db.commit()
-    return {"status": "updated"}
 
 @router.put("/hide-sent/{message_id}")
 def hide_sent_message(message_id: int, hide: bool = Query(True), db: Session = Depends(get_db)):

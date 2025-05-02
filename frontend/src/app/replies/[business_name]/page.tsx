@@ -54,7 +54,7 @@ export default function RepliesPage() {
     try {
       const content = editedReplies[id]?.trim() || replies.find((r) => r.id === id)?.ai_response || "";
       console.log("📤 Sending reply for engagement_id:", id, "Content:", content);
-      await apiClient.put(`/engagement/reply/${id}/send`, { content });
+      await apiClient.put(`/engagement-workflow/reply/${id}/send`, { content });
       console.log("✅ Reply sent, will remove from UI shortly:", id);
       
       setSentIds((prev) => [...prev, id]); // Step 2: Add sentIds
@@ -75,7 +75,7 @@ export default function RepliesPage() {
         {Array.isArray(replies)
           ? replies.length === 0
             ? "No customers waiting on your reply right now."
-            : `${replies.length} customer${replies.length > 1 ? "s" : ""} replied. Let’s help you respond.`
+            : `${replies.length} customer${replies.length > 1 ? "s" : ""} replied. Let's help you respond.`
           : "⚠️ Unable to load replies."}
       </p>
 
@@ -138,7 +138,7 @@ export default function RepliesPage() {
                       const edited = editedReplies[reply.id]?.trim();
                       if (edited && edited !== reply.ai_response) {
                         try {
-                          await apiClient.put(`/engagement/reply/${reply.id}/edit`, {
+                          await apiClient.put(`/engagement-workflow/reply/${reply.id}/edit`, {
                             ai_response: edited,
                           });
                           setReplies((prev) =>

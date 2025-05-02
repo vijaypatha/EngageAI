@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.pool import QueuePool
 import logging
+from sqlalchemy.ext.declarative import declarative_base
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -22,15 +23,22 @@ logging.basicConfig(level=logging.INFO)
 # ✅ Load .env from backend root
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+# Get database URL from environment variable, with a default for Render PostgreSQL
+SQLALCHEMY_DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://engageai_db_user:THtPfaorNWqMDB5grrU6VRwuijSzErZe@dpg-cvqo321r0fns73a3722g-a.oregon-postgres.render.com/engageai_db"
+)
 
+# Create engine with SSL mode require for Render
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    poolclass=QueuePool,
     pool_size=5,
     max_overflow=10,
     pool_timeout=30,
-    pool_recycle=1800
+    pool_recycle=1800,
+    connect_args={
+        "sslmode": "require"
+    }
 )
 
 # Add event listener for connection issues

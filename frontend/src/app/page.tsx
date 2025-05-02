@@ -12,23 +12,33 @@ export default function LandingPage() {
 
   return (
     <main
-      className={`min-h-screen w-full flex flex-col items-center justify-start transition-opacity duration-1000 ${
+      className={`min-h-screen w-full flex flex-col justify-start transition-opacity duration-1000 ${
         mounted ? "opacity-100" : "opacity-0"
       } bg-gradient-to-b from-black via-gray-900 to-gray-800`}
     >
-      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-24 space-y-24">
+      <div className="w-full px-4 sm:px-6 lg:px-12 py-20 space-y-16">
         {/* Hero Section */}
         <div className="text-center">
           <h1 className="text-5xl md:text-6xl font-extrabold mb-6 tracking-tight">
             Welcome to <span className="text-gradient">AI Nudge</span> 👋
           </h1>
 
-          <p className="text-xl text-gray-300 mb-10 max-w-2xl mx-auto leading-relaxed">
-            AI Nudge is a trusted communication platform that helps service-based businesses follow up with clients through thoughtful SMS conversations. Whether it's a check-in after a session, a gentle reminder, or a thank-you message — we help real businesses stay human at scale.
+          <p className="text-xl text-gray-300 mb-8 max-w-xl mx-auto leading-relaxed">
+            Keep your clients close with timely, personal SMS nudges — in your style, on autopilot.
+          </p>
+
+          <h3 className="text-3xl md:text-4xl font-extrabold mb-6 mt-20 tracking-tight">
+            <span className="text-gradient">How it works</span> 
+          </h3>
+
+
+          <p className="text-lg text-gray-300 mb-10 max-w-xl mx-auto leading-relaxed">
+            🎯 Set goals → 🤝 Add contacts → 🤖 Create Nudge Plans <br />
+            ✅ Review and Schedule → 🎉 Keep your clients close
           </p>
 
           <Link href="/onboarding" passHref>
-            <div className="inline-block btn-primary text-lg">
+            <div className="inline-block btn-primary mt-17 text-lg">
               🚀 Try It Free — No Login Needed
             </div>
           </Link>
@@ -46,7 +56,7 @@ export default function LandingPage() {
         {/* Testimonials Section */}
         <div className="text-center">
           <h2 className="text-4xl font-bold mb-6">
-            Small Businesses & Professionals <span className="text-red-500">❤️</span> AI Nudge
+            Small Businesses <span className="text-red-500">❤️</span> AI Nudge
           </h2>
           <p className="text-xl text-gray-300 mb-12 max-w-2xl mx-auto">
             From therapists to financial advisors, our users trust AI Nudge to keep client relationships strong and personal.
@@ -92,7 +102,7 @@ export default function LandingPage() {
         <footer className="text-sm text-center space-y-6 border-t border-white/10 pt-12">
           <div className="space-y-2">
             <p className="font-semibold text-white text-base">AI Nudge</p>
-            <p className="text-gray-400">Based in St. George, UT</p>
+            <p className="text-gray-400">Made with ❤️ in St. George, UT</p>
             <a href="mailto:support@ainudge.app" className="text-blue-400 hover:text-blue-300 underline">
               support@ainudge.app
             </a>

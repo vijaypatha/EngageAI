@@ -6,6 +6,7 @@ import { apiClient } from "@/lib/api";
 import { format } from "date-fns";
 // @ts-ignore
 import { zonedTimeToUtc, utcToZonedTime } from "date-fns-tz";
+import { getCurrentBusiness } from "@/lib/utils";
 
 interface RoadmapMessage {
   id: number;
@@ -23,8 +24,10 @@ export default function ContactEngagementPage() {
   const [optedIn, setOptedIn] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
+  const [editedDate, setEditedDate] = useState<string>("");
   const [editedTime, setEditedTime] = useState<string>("");
   const [customerTimezone, setCustomerTimezone] = useState("America/Denver");
+  const [businessId, setBusinessId] = useState<number | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -35,10 +38,20 @@ export default function ContactEngagementPage() {
             new Date(a.send_datetime_utc || "").getTime() - new Date(b.send_datetime_utc || "").getTime()
           ));
         }
+        
+        // Fetch customer details and set businessId from customer data
         const custRes = await apiClient.get(`/customers/${id}`);
         setCustomerName(custRes.data.customer_name);
         setOptedIn(res.data.latest_consent_status);
         setCustomerTimezone(custRes.data.timezone || "America/Denver");
+        
+        // Extract business ID from customer data
+        if (custRes.data.business_id) {
+          setBusinessId(custRes.data.business_id);
+        } else {
+          // Fallback to localStorage if customer data doesn't have business_id
+          setBusinessId(getCurrentBusiness());
+        }
       } catch (err) {
         console.error("Failed to fetch engagement plan", err);
       } finally {
@@ -50,10 +63,16 @@ export default function ContactEngagementPage() {
   }, [id]);
 
   const regeneratePlan = async () => {
+    if (!businessId) {
+      console.error("Business ID not available");
+      return;
+    }
+    
     setLoading(true);
     try {
-      await apiClient.post(`/ai_sms/roadmap`, {
+      await apiClient.post(`/ai/roadmap`, {
         customer_id: id,
+        business_id: businessId,
         force_regenerate: true,
       });
 
@@ -69,18 +88,25 @@ export default function ContactEngagementPage() {
   const handleEditClick = (msg: RoadmapMessage) => {
     setEditingMessageId(msg.id);
     setEditedContent(msg.smsContent);
-    setEditedTime(msg.send_datetime_utc || "");
+
+    // Pre-fill date
+    const utcDate = new Date(msg.send_datetime_utc || "");
+    setEditedDate(utcDate.toISOString().split("T")[0]);  // Format as YYYY-MM-DD
+
+    // Convert UTC to local timezone (e.g., America/Denver)
+    const localDate = utcToZonedTime(utcDate, customerTimezone);
+    setEditedTime(format(localDate, "HH:mm"));  // Format as HH:mm (local time)
   };
 
   const handleSaveEdit = async (msgId: number) => {
     try {
-      const localDate = new Date(editedTime);
-      const utcDate = zonedTimeToUtc(localDate, "America/Denver").toISOString();
+      const localDate = new Date(`${editedDate}T${editedTime}:00`);
+      const utcDate = zonedTimeToUtc(localDate, customerTimezone).toISOString();
 
       const msg = messages.find((m) => m.id === msgId);
       const source = msg?.status === "scheduled" ? "scheduled" : "roadmap";
 
-      await apiClient.put(`/review/update-time/${msgId}?source=${source}`, {
+      await apiClient.put(`/roadmap-workflow/update-time/${msgId}?source=${source}`, {
         smsContent: editedContent,
         send_datetime_utc: utcDate,
       });
@@ -102,7 +128,7 @@ export default function ContactEngagementPage() {
 
   const handleApprove = async (msgId: number) => {
     try {
-      const res = await apiClient.put(`/review/${msgId}/schedule`);
+      const res = await apiClient.put(`/roadmap-workflow/${msgId}/schedule`);
       const newId = res.data.scheduled_sms_id;
 
       setMessages(prev =>
@@ -121,7 +147,7 @@ export default function ContactEngagementPage() {
       if (!msg) return;
       
       const source = msg.status === "scheduled" ? "scheduled" : "roadmap";
-      const res = await apiClient.delete(`/review/${msgId}?source=${source}`);
+      const res = await apiClient.delete(`/roadmap-workflow/${msgId}?source=${source}`);
       console.log(`🗑️ Deleted message ID=${res.data.id} from ${res.data.deleted_from}`);
       setMessages((prev) => prev.filter((msg) => msg.id !== msgId));
     } catch (err) {
@@ -146,8 +172,8 @@ export default function ContactEngagementPage() {
         <span className="ml-3 text-sm font-medium">
           {optedIn === "opted_in" ? (
             <span className="text-green-400">✅ Opted In</span>
-          ) : optedIn === "declined" ? (
-            <span className="text-red-400">❌ Declined</span>
+          ) : optedIn === "opted_out" ? (
+            <span className="text-red-400">❌ Opted Out</span>
           ) : (
             <span className="text-yellow-300">⏳ Waiting</span>
           )}
@@ -221,7 +247,13 @@ export default function ContactEngagementPage() {
                             rows={3}
                           />
                           <input
-                            type="datetime-local"
+                            type="date"
+                            value={editedDate}
+                            onChange={(e) => setEditedDate(e.target.value)}
+                            className="w-full p-2 text-sm text-white bg-zinc-800 border border-neutral rounded mb-2"
+                          />
+                          <input
+                            type="time"
                             value={editedTime}
                             onChange={(e) => setEditedTime(e.target.value)}
                             className="w-full p-2 text-sm text-white bg-zinc-800 border border-neutral rounded mb-4"

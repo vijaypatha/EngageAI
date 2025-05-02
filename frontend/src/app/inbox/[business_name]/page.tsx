@@ -90,7 +90,7 @@ export default function InboxPage() {
   }, [businessId]);
 
   const fetchScheduledSms = async (customerId: number) => {
-    const res = await apiClient.get(`/message-status/sent/${customerId}`);
+    const res = await apiClient.get(`/message-workflow/sent/${customerId}`);
     setScheduledSms(res.data || []);
   };
 
@@ -146,12 +146,12 @@ export default function InboxPage() {
         const res = await apiClient.get(`/conversations/customer/${activeCustomerId}`);
         const conversationEntries = (res.data.messages || []).map((msg: any, index: number) => ({
           id: msg.id || `temp-${index}`,
-          type: msg.from_business ? "sent" : "customer",
-          content: msg.text,
-          timestamp: msg.timestamp,
+          type: msg.type,
+          content: msg.text || msg.content,
+          timestamp: msg.timestamp || msg.sent_time,
           customer_id: activeCustomerId,
           is_hidden: msg.is_hidden
-        })) as TimelineEntry[];
+        }));
 
         const scheduled: TimelineEntry[] = scheduledSms
           .filter(sms => sms.status === "sent" && sms.customer_id === activeCustomerId)
@@ -190,8 +190,8 @@ export default function InboxPage() {
         const draftMsg = messages.find((msg) => msg.id === selectedDraftId);
         if (!draftMsg) throw new Error("Draft not found");
 
-        await apiClient.put(`/review/engagement/update-draft/${draftMsg.id}`, { content: newMessage.trim() });
-        await apiClient.put(`/engagement/reply/${draftMsg.id}/send`, { content: newMessage.trim() });
+        await apiClient.put(`/engagement-workflow/${draftMsg.id}/edit-ai-draft`, { ai_response: newMessage.trim() });
+        await apiClient.put(`/engagement-workflow/reply/${draftMsg.id}/send`, { content: newMessage.trim() });
 
         setMessages((prev) =>
           prev.map((msg) =>
@@ -201,8 +201,8 @@ export default function InboxPage() {
           )
         );
       } else if (activeCustomerId) {
-        const response = await apiClient.post(`/engagement/manual-reply/${activeCustomerId}`, {
-          content: newMessage.trim(),
+        const response = await apiClient.post(`/engagement-workflow/manual-reply/${activeCustomerId}`, {
+          message: newMessage.trim(),
         });
 
         setMessages(prev => [...prev, {
@@ -362,7 +362,8 @@ export default function InboxPage() {
           {timelineEntries
             .filter(entry => !entry.is_hidden) // Filter out hidden messages
             .map((entry) => (
-            <div key={`${entry.type}-${entry.id}`} 
+            <div
+              key={`${entry.type}-${entry.id}`}
               className={clsx(
                 "flex flex-col",
                 entry.type === "customer" ? "items-start" : "items-end"
@@ -374,18 +375,16 @@ export default function InboxPage() {
                   {new Date(entry.timestamp).toLocaleString()}
                 </div>
               )}
-              <div className={clsx(
-                "max-w-[85%] md:max-w-md px-4 py-2.5 rounded-2xl",
-                entry.type === "customer" && "bg-gradient-to-r from-emerald-500 to-blue-500 text-white",
-                entry.type === "sent" && "bg-[#242842] text-white",
-                entry.type === "scheduled" && "bg-gradient-to-r from-blue-500 to-indigo-500 text-white",
-                entry.type === "ai_draft" && "bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white"
-              )}>
+              <div
+                className={clsx(
+                  "max-w-[85%] md:max-w-md px-4 py-2.5 rounded-2xl",
+                  entry.type === "customer" && "bg-gradient-to-r from-emerald-500 to-blue-500 text-white",
+                  entry.type === "sent" && "bg-[#242842] text-white",
+                  entry.type === "ai_draft" && "bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white"
+                )}
+              >
                 {entry.type === "ai_draft" && (
                   <div className="text-xs font-medium mb-1">💡 Draft Reply</div>
-                )}
-                {entry.type === "scheduled" && (
-                  <div className="text-xs font-medium mb-1">🕒 Scheduled</div>
                 )}
                 <div className="whitespace-pre-wrap break-words">{entry.content}</div>
                 {entry.type === "ai_draft" && (

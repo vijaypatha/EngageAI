@@ -3,7 +3,7 @@ import os
 import json
 from datetime import datetime, timedelta
 import logging
-from app.services.style_analyzer import get_style_guide
+from app.services.style_service import get_style_guide
 
 logger = logging.getLogger(__name__)
 

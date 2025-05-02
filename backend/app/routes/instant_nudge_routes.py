@@ -22,7 +22,7 @@ class InstantNudgeRequest(BaseModel):
     customer_ids: List[int]
 
 # Endpoint to generate an AI-personalized message based on a topic
-@router.post("/instant-nudge/generate-message")
+@router.post("/generate-message")
 async def generate_instant_nudge_message(
     payload: InstantNudgeRequest,
     db: Session = Depends(get_db)
@@ -53,7 +53,7 @@ async def send_instant_nudge_batch(payload: InstantNudgeBatch):
         raise HTTPException(status_code=500, detail="Failed to send instant nudges")
 
 # Endpoint to get the status of instant nudges by slug
-@router.get("/nudge/instant-status/slug/{slug}")
+@router.get("/instant-status/slug/{slug}")
 def get_instant_nudge_status(slug: str, db: Session = Depends(get_db)):
     business = db.query(BusinessProfile).filter(BusinessProfile.slug == slug).first()
     if not business:

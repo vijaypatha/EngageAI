@@ -20,7 +20,7 @@ export function useBusiness(business_name: string) {
   useEffect(() => {
     async function fetchBusiness() {
       try {
-        const response = await apiClient.get(`/businesses/by-name/${business_name}`)
+        const response = await apiClient.get(`/business-profile/business-id/slug/${business_name}`)
         setBusiness(response.data)
         setBusinessId(response.data.id)
         setLoading(false)

@@ -73,8 +73,10 @@ def get_sent_sms(customer_id: int, db: Session = Depends(get_db)):
     ).all()
 
     if not messages:
-        raise HTTPException(status_code=404, detail="No sent messages found")
+        logger.info(f"No sent messages found for customer_id: {customer_id}")
+        return [] # Return an empty list
 
+    # If messages were found, format and return them
     return [format_message_response(msg, customer) for msg in messages]
 
 def format_message_response(message: Message, customer: Customer):

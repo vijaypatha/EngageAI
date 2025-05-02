@@ -1,8 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+# File: engagement_workflow_routes.py
+# Link: /Users/vijaypatha/Developer/FastAPI/EngageAI/backend/app/routes/engagement_workflow_routes.py
+#
+# BUSINESS OWNER PERSPECTIVE:
+# This file handles the workflow for managing customer engagements, including
+# sending SMS messages, tracking responses, and updating engagement status.
+
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Engagement, Customer, BusinessProfile
-from app.services.twilio_sms_service import send_sms_via_twilio  
+from app.services.twilio_service import send_sms_via_twilio  
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -68,7 +75,7 @@ class ManualReplyPayload(BaseModel):
     message: str
 
 @router.post("/manual-reply/{customer_id}")
-def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: Session = Depends(get_db)):
+async def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: Session = Depends(get_db)):
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -78,7 +85,7 @@ def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: Session
         raise HTTPException(status_code=404, detail="Business not found")
 
     try:
-        send_sms_via_twilio(to=customer.phone, message=payload.message, business=business)
+        await send_sms_via_twilio(to=customer.phone, message=payload.message, business=business)
     except Exception as e:
         print(f"❌ Twilio send failed for manual reply: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to send SMS: {str(e)}")
@@ -92,3 +99,30 @@ def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: Session
     db.add(new_engagement)
     db.commit()
     return {"message": "Manual reply sent and saved successfully."}
+
+
+@router.put("/{id}/edit-ai-draft", summary="Update the AI response draft for an engagement")
+def update_ai_draft(
+    id: int,
+    payload: dict = Body(..., example={"draft": "Your draft message here"}),
+    db: Session = Depends(get_db)
+):
+    """
+    Update the AI response draft for a specific engagement.
+
+    - **id**: The engagement ID.
+    - **payload**: JSON with either 'draft' or 'ai_response' as the new draft text.
+
+    Returns: {"status": "updated"}
+    """
+    engagement = db.query(Engagement).filter(Engagement.id == id).first()
+    if not engagement:
+        raise HTTPException(status_code=404, detail="Engagement not found")
+
+    new_draft = payload.get("draft") or payload.get("ai_response")
+    if not new_draft:
+        raise HTTPException(status_code=400, detail="Missing draft or ai_response in payload")
+
+    engagement.ai_response = new_draft
+    db.commit()
+    return {"status": "updated"}

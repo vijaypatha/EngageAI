@@ -1,15 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 from pydantic import BaseModel
 from app.database import get_db
-from app.models import Engagement, Customer, Message, BusinessProfile, Conversation
+from app.models import Engagement, Customer, Message, BusinessProfile, Conversation as ConversationModel
 from app.celery_tasks import schedule_sms_task
 import uuid
 import pytz
+from app.schemas import Conversation, ConversationCreate, ConversationUpdate
+from typing import List
+from ..auth import get_current_user
 
 
-router = APIRouter(prefix="/conversations", tags=["Conversations"])
+router = APIRouter(tags=["Conversations"])
 
 # -------------------------------
 # GET inbox summary: all customers with conversations
@@ -70,27 +73,24 @@ def get_conversation(customer_id: int, db: Session = Depends(get_db)):
     for msg in engagements:
         if msg.response:
             conversation.append({
-                "sender": "customer",
+                "type": "customer",
                 "text": msg.response,
                 "timestamp": msg.sent_at.astimezone(utc) if msg.sent_at else None,
-                "source": "customer_response",
-                "direction": "incoming"
+                "source": "customer_reply",
             })
         if msg.ai_response and msg.status != "sent":
             conversation.append({
-                "sender": "ai",
+                "type": "ai_draft",
                 "text": msg.ai_response,
                 "timestamp": None,
                 "source": "ai_draft",
-                "direction": "outgoing"
             })
         if msg.ai_response and msg.status == "sent":
             conversation.append({
-                "sender": "owner",
+                "type": "sent",
                 "text": msg.ai_response,
                 "timestamp": msg.sent_at.astimezone(utc) if msg.sent_at else None,
                 "source": "manual_reply",
-                "direction": "outgoing"
             })
 
     for msg in messages:
@@ -146,14 +146,14 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
     now = datetime.now(pytz.UTC)
 
     # Get or create conversation
-    conversation = db.query(Conversation).filter(
-        Conversation.customer_id == customer.id,
-        Conversation.business_id == customer.business_id,
-        Conversation.status == 'active'
+    conversation = db.query(ConversationModel).filter(
+        ConversationModel.customer_id == customer.id,
+        ConversationModel.business_id == customer.business_id,
+        ConversationModel.status == 'active'
     ).first()
     
     if not conversation:
-        conversation = Conversation(
+        conversation = ConversationModel(
             id=uuid.uuid4(),
             customer_id=customer.id,
             business_id=customer.business_id,
@@ -195,3 +195,58 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
     schedule_sms_task.delay(message.id)
 
     return {"status": "success", "message": "Reply sent and scheduled", "message_id": message.id}
+
+@router.post("/", response_model=Conversation)
+def create_conversation(
+    conversation: ConversationCreate,
+    db: Session = Depends(get_db),
+    current_user: Conversation = Depends(get_current_user)
+):
+    db_conversation = ConversationModel(**conversation.model_dump())
+    db.add(db_conversation)
+    db.commit()
+    db.refresh(db_conversation)
+    return Conversation.from_orm(db_conversation)
+
+@router.get("/", response_model=List[Conversation])
+def get_conversations(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    conversations = db.query(ConversationModel).offset(skip).limit(limit).all()
+    return [Conversation.from_orm(conversation) for conversation in conversations]
+
+@router.get("/{conversation_id}", response_model=Conversation)
+def get_conversation(conversation_id: int, db: Session = Depends(get_db)):
+    conversation = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return Conversation.from_orm(conversation)
+
+@router.put("/{conversation_id}", response_model=Conversation)
+def update_conversation(
+    conversation_id: int,
+    conversation: ConversationUpdate,
+    db: Session = Depends(get_db)
+):
+    db_conversation = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+    if not db_conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    for field, value in conversation.model_dump(exclude_unset=True).items():
+        setattr(db_conversation, field, value)
+    
+    db.commit()
+    db.refresh(db_conversation)
+    return Conversation.from_orm(db_conversation)
+
+@router.delete("/{conversation_id}")
+def delete_conversation(conversation_id: int, db: Session = Depends(get_db)):
+    conversation = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    db.delete(conversation)
+    db.commit()
+    return {"message": "Conversation deleted successfully"}

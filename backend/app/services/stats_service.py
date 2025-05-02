@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 from app.models import Customer, RoadmapMessage, Message, Engagement, ConsentLog
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from loguru import logger
 
 def get_stats_for_business(business_id: int, db: Session):
@@ -12,18 +12,35 @@ def get_stats_for_business(business_id: int, db: Session):
     communitySize = db.query(Customer).filter(Customer.business_id == business_id).count()
     logger.info(f"👥 Community size: {communitySize}")
 
-    # Opt-in statuses
-    optInStatuses = db.query(
-        Customer.opted_in, func.count(Customer.id)
-    ).filter(Customer.business_id == business_id).group_by(Customer.opted_in).all()
-
+    # Replace the simple opt-in status counting with a more accurate approach
     optedIn = optedOut = optInPending = 0
-    for status, count in optInStatuses:
-        if status == True:
-            optedIn = count
-        elif status == False:
-            optedOut = count
-
+    
+    # Get all customers for this business
+    customers = db.query(Customer).filter(Customer.business_id == business_id).all()
+    
+    for customer in customers:
+        # Get latest consent status from ConsentLog
+        latest_consent = (
+            db.query(ConsentLog)
+            .filter(
+                ConsentLog.phone_number == customer.phone,
+                ConsentLog.business_id == business_id
+                )
+            .order_by(desc(ConsentLog.replied_at))
+            .first()
+        )
+        
+        if latest_consent:
+            if latest_consent.status == "opted_in":
+                optedIn += 1
+            elif latest_consent.status == "opted_out":
+                optedOut += 1
+            elif latest_consent.status in ["pending", "waiting"]:
+                optInPending += 1
+        else:
+            # No consent log means pending
+            optInPending += 1
+    
     logger.info(f"✅ Opted In: {optedIn}, ⏳ Waiting: {optInPending}, ❌ Opted Out: {optedOut}")
 
     # Without Plan = customers with no messages at all

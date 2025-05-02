@@ -10,6 +10,14 @@
   --spacing-xl: 2rem;
 }
 
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
 @layer base {
   body {
     @apply bg-[#0C0F1F] text-white antialiased;
@@ -89,3 +97,4 @@
 ::-webkit-scrollbar-thumb:hover {
   @apply from-emerald-500 to-blue-600;
 }
+

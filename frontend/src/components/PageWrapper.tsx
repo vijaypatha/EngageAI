@@ -20,7 +20,7 @@ export function PageWrapper({ children }: { children: React.ReactNode }) {
         isDashboardPage && "pb-28 md:pb-8 px-4 md:px-8 pt-6 md:pt-8", // Increased bottom padding for mobile nav + consistent horizontal padding
         !isDashboardPage && "flex flex-col"
       )}>
-        <div className="w-full max-w-7xl mx-auto">
+        <div className={cn("w-full", isDashboardPage && "max-w-7xl mx-auto")}>
           {children}
         </div>
       </div>

@@ -14,10 +14,10 @@ import traceback
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import BusinessProfile, BusinessOwnerStyle, Message, Engagement, Customer, Conversation
-from app.services.twilio_sms_service import send_sms_via_twilio
+from app.services.twilio_service import send_sms_via_twilio
 from app.utils import parse_sms_timing
 from app.celery_tasks import schedule_sms_task
-from app.services.style_analyzer import get_style_guide
+from app.services.style_service import get_style_guide
 
 
 # Helper: Call OpenAI to generate short SMS message
@@ -44,7 +44,7 @@ async def generate_instant_nudge(topic: str, business_id: int, db: Session) -> d
         raise Exception("Business not found")
     
     # Get comprehensive style guide
-    style_guide = get_style_guide(business_id, db)
+    style_guide = await get_style_guide(business_id, db)
     
     # Format style guide for prompt
     style_elements = {

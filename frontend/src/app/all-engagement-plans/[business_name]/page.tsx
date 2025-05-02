@@ -64,6 +64,7 @@ export default function AllEngagementPlansPage() {
   const [businessId, setBusinessId] = useState<number | null>(null);
   const [editingPlan, setEditingPlan] = useState<number | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
+  const [editedDate, setEditedDate] = useState<string>("");
   const [editedTime, setEditedTime] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +134,7 @@ export default function AllEngagementPlansPage() {
 
   const handleDelete = async (plan: EngagementPlan) => {
     try {
-      await apiClient.delete(`/review/${plan.id}?source=${plan.source}`);
+      await apiClient.delete(`/roadmap-workflow/${plan.id}?source=${plan.source}`);
       setPlans(prev => prev.filter(p => p.id !== plan.id));
     } catch (err) {
       console.error("❌ Failed to delete message:", err);
@@ -144,15 +145,22 @@ export default function AllEngagementPlansPage() {
   const handleEdit = (plan: EngagementPlan) => {
     setEditingPlan(plan.id);
     setEditedContent(plan.smsContent);
-    setEditedTime(plan.send_datetime_utc);
+
+    // Pre-fill date
+    const utcDate = new Date(plan.send_datetime_utc || "");
+    setEditedDate(utcDate.toISOString().split("T")[0]);  // Format as YYYY-MM-DD
+
+    // Convert UTC to local timezone (e.g., America/Denver)
+    const localDate = utcToZonedTime(utcDate, plan.customer_timezone || "America/Denver");
+    setEditedTime(format(localDate, "HH:mm"));  // Format as HH:mm (local time)
   };
 
   const handleSaveEdit = async (plan: EngagementPlan) => {
     try {
-      const localDate = new Date(editedTime);
-      const utcDate = zonedTimeToUtc(localDate, "America/Denver").toISOString();
+      const localDate = new Date(`${editedDate}T${editedTime}:00`);
+      const utcDate = zonedTimeToUtc(localDate, plan.customer_timezone || "America/Denver").toISOString();
 
-      await apiClient.put(`/review/update-time/${plan.id}?source=${plan.source}`, {
+      await apiClient.put(`/roadmap-workflow/update-time/${plan.id}?source=${plan.source}`, {
         smsContent: editedContent,
         send_datetime_utc: utcDate,
       });
@@ -173,7 +181,7 @@ export default function AllEngagementPlansPage() {
 
   const handleSchedule = async (plan: EngagementPlan) => {
     try {
-      const res = await apiClient.put(`/review/${plan.id}/schedule`);
+      const res = await apiClient.put(`/roadmap-workflow/${plan.id}/schedule`);
       const newId = res.data.scheduled_sms_id;
 
       setPlans(prev =>
@@ -296,7 +304,13 @@ export default function AllEngagementPlansPage() {
                                 rows={3}
                               />
                               <input
-                                type="datetime-local"
+                                type="date"
+                                value={editedDate}
+                                onChange={(e) => setEditedDate(e.target.value)}
+                                className="w-full p-2 text-sm text-white bg-zinc-800 border border-neutral rounded mb-2"
+                              />
+                              <input
+                                type="time"
                                 value={editedTime}
                                 onChange={(e) => setEditedTime(e.target.value)}
                                 className="w-full p-2 text-sm text-white bg-zinc-800 border border-neutral rounded mb-4"
