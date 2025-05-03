@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 from pydantic import BaseModel
 from app.database import get_db
-from app.models import Engagement, Customer, Message, BusinessProfile, Conversation as ConversationModel
-from app.celery_tasks import schedule_sms_task
+from app.models import Engagement, Customer, Message, BusinessProfile, Conversation as ConversationModel # Removed unused Celery import
+from app.celery_tasks import process_scheduled_message_task # <-- Import the correct task
+import uuid
 import uuid
 import pytz
 from app.schemas import Conversation, ConversationCreate, ConversationUpdate
@@ -195,8 +196,8 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
 
     # Commit and trigger Celery task
     db.commit()
-    schedule_sms_task.delay(message.id)
-
+    # Trigger the task to process the message immediately
+    process_scheduled_message_task.delay(message.id)
     return {"status": "success", "message": "Reply sent and scheduled", "message_id": message.id}
 
 @router.post("/", response_model=Conversation)

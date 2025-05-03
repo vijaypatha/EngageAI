@@ -6,7 +6,7 @@ from sqlalchemy import and_, func, desc, cast, Integer
 from datetime import datetime, timezone
 from app.database import get_db
 from app.models import RoadmapMessage, Message, Customer, Conversation
-from app.celery_tasks import schedule_sms_task
+from app.celery_tasks import process_scheduled_message_task
 import logging
 import uuid
 import pytz
@@ -83,14 +83,16 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
 
         # 🔹 Step 8: TRY scheduling with Celery first
         try:
-            print(f"📤 Scheduling message via Celery: Message id={message.id}, ETA={msg.send_datetime_utc}")
-            schedule_sms_task.apply_async(
-                args=[customer.phone, message.content, message.business_id],
+            logger.info(f"📤 Scheduling task 'process_scheduled_message_task' via Celery: Message id={message.id}, ETA={msg.send_datetime_utc}")
+            # Call the correct task with message ID and eta
+            process_scheduled_message_task.apply_async(
+                args=[message.id], # Pass the ID of the Message record
                 eta=msg.send_datetime_utc
             )
         except Exception as e:
             logger.error(f"❌ Failed to schedule SMS task for message {message.id}: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to schedule message. Please retry.")
+            # Optionally rollback or update message status here if scheduling fails critically
+            raise HTTPException(status_code=500, detail="Failed to add message to scheduling queue. Please retry.")
 
         # 🔹 Step 9: ONLY IF Celery succeeds, update status and commit
         msg.status = "scheduled"
@@ -183,13 +185,16 @@ def approve_all(customer_id: int, db: Session = Depends(get_db)):
 
             # 🔹 Step 5: Try to schedule message with Celery
             try:
-                schedule_sms_task.apply_async(
-                    args=[customer.phone, message.content, message.business_id],
+                logger.info(f"📤 Scheduling task 'process_scheduled_message_task' via Celery: Message id={message.id}, ETA={msg.send_datetime_utc}")
+                # Call the correct task with message ID and eta
+                process_scheduled_message_task.apply_async(
+                    args=[message.id], # Pass the ID of the Message record
                     eta=msg.send_datetime_utc
                 )
             except Exception as e:
                 logger.error(f"❌ Failed to schedule SMS task for message {message.id}: {str(e)}")
-                continue  # Skip updating status if scheduling fails
+                # If adding to queue fails, maybe don't update the status or log specifically
+                continue # Skip updating status for this message if scheduling fails
 
             # 🔹 Step 6: If successful, update message and roadmap status
             msg.status = "scheduled"

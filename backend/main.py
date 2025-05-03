@@ -12,7 +12,6 @@ from fastapi.routing import APIRoute
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.celery_app import ping
-from app.celery_tasks import process_scheduled_sms, schedule_sms_task
 from app.config import settings
 from app.database import Base, engine
 from app.models import (

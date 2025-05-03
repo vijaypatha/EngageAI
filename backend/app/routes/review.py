@@ -7,7 +7,7 @@ from app.models import RoadmapMessage, Message, Customer, Engagement, ConsentLog
 from datetime import datetime, timezone
 from sqlalchemy import and_, func, desc, cast, Integer, JSON
 from sqlalchemy.dialects.postgresql import JSONB
-from app.celery_tasks import schedule_sms_task
+from app.celery_tasks import process_scheduled_message_task
 from app.services import MessageService
 from app.services.stats_service import get_stats_for_business as get_stats_for_business, calculate_reply_stats
 import logging
@@ -217,7 +217,7 @@ def get_customer_replies(
 def debug_send_sms_now(message_id: int):
     """Debug endpoint to trigger immediate send of a scheduled message"""
     print(f"🚨 Manually triggering SMS for Message id={message_id}")
-    schedule_sms_task.apply_async(args=[message_id])
+    process_scheduled_message_task.apply_async(args=[message_id])
     return {"status": "triggered"}
 
 @router.get("/full-customer-history")
