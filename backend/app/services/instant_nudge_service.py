@@ -193,7 +193,7 @@ async def handle_instant_nudge_batch(messages: List[dict]):
                 db.add(message)
                 db.flush()
 
-                send_sms_via_twilio(customer.phone, personalized, business)
+                await send_sms_via_twilio(customer.phone, personalized, business)
 
                 engagement = Engagement(
                     customer_id=customer_id,

@@ -164,7 +164,7 @@ export default function InstantNudgePage() {
     console.log("🧪 Schedule:", block.schedule, "Datetime:", block.datetime);
     console.log("📤 Sending payload:", payload);
     try {
-      const res = await apiClient.post("/instant-nudge/instant-multi", { messages: payload });
+      const res = await apiClient.post("/instant-nudge/nudge/instant-multi", { messages: payload });
       const scheduledId = res.data.scheduled_sms_ids?.[0]; // assuming one per block
       const copy = [...nudgeBlocks];
       copy[i] = {

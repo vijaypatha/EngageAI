@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react"; // useRef is included
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { Clock, Send, MessageSquare, Check, AlertCircle } from "lucide-react";
@@ -12,16 +12,17 @@ interface Message {
   customer_id: number;
   customer_name: string;
   phone: string;
-  content: string;
-  type: "outbound" | "inbound";
-  status: string;
+  content: string; // May represent latest message content in the summary view
+  type: "outbound" | "inbound"; // May represent latest message type
+  status: string; // May represent latest message status
   scheduled_time?: string;
-  sent_time?: string;
+  sent_time?: string; // May represent latest message time
   source: string;
   is_hidden?: boolean;
   latest_consent_status: string;
   opted_in: boolean;
   response?: string;
+  messages?: Message[]; // Nested messages if the API provides them this way
 }
 
 type TimelineEntry = {
@@ -35,6 +36,7 @@ type TimelineEntry = {
 
 export default function InboxPage() {
   const { business_name } = useParams();
+  // 'messages' state likely holds customer summary objects from /review/full-customer-history
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeCustomerId, setActiveCustomerId] = useState<number | null>(null);
   const [newMessage, setNewMessage] = useState("");
@@ -48,43 +50,58 @@ export default function InboxPage() {
   const [lastSeenMap, setLastSeenMap] = useState<Record<number, string>>({});
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
 
-  // --- Scroll to bottom logic START (Approach 3: Ref on Container) ---
-  // Ref for the scrollable message container itself
+  // Ref for scrolling (Approach 3: Ref on Container)
   const chatContainerRef = useRef<null | HTMLDivElement>(null);
 
   useEffect(() => {
-    // Directly manipulate scrollTop when timeline/customer changes
+    // Scroll effect - kept from previous attempt, maybe revisit if still problematic
     if (chatContainerRef.current) {
-      // Set the scroll position to the maximum height
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
-  }, [timelineEntries, activeCustomerId]); // Dependencies trigger the effect
-  // --- Scroll to bottom logic END (Approach 3) ---
+  }, [timelineEntries, activeCustomerId]);
 
 
   useEffect(() => {
     const fetchBusinessAndMessages = async () => {
       if (!business_name) return;
       try {
+        console.log("Fetching business ID for slug:", business_name);
         const bizRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
         const id = bizRes.data.business_id;
+        console.log("Business ID fetched:", id);
         setBusinessId(id);
 
+        console.log("Fetching full customer history for business ID:", id);
         const res = await apiClient.get(`/review/full-customer-history?business_id=${id}`);
         const messageData = res.data || [];
+        console.log(`Workspaceed ${messageData.length} customer history entries.`);
+        console.log("Sample entry:", messageData[0]); // Log first entry to see structure
 
+        // Basic mapping - ensure core fields exist
         const mappedData = messageData.map((msg: any) => ({
           ...msg,
+          customer_id: msg.customer_id, // Ensure these exist
+          customer_name: msg.customer_name || "Unknown Customer", // Provide fallback name
           latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
         }));
 
         setMessages(mappedData);
+
         if (mappedData.length > 0) {
-          setActiveCustomerId(mappedData[0].customer_id);
-          fetchScheduledSms(mappedData[0].customer_id);
+           // Check if the first customer is valid before setting active
+           if (mappedData[0].customer_id) {
+             console.log("Setting active customer:", mappedData[0].customer_id);
+             setActiveCustomerId(mappedData[0].customer_id);
+             fetchScheduledSms(mappedData[0].customer_id);
+           } else {
+             console.warn("First customer entry has no ID, cannot set active customer.");
+             setActiveCustomerId(null);
+             setTimelineEntries([]);
+           }
         } else {
-           setActiveCustomerId(null); // Ensure no customer is active if none found
-           setTimelineEntries([]); // Clear timeline if no messages
+           console.log("No customer history entries found, clearing active customer.");
+           setActiveCustomerId(null);
+           setTimelineEntries([]);
         }
       } catch (error) {
          console.error("Failed to fetch initial business and messages:", error);
@@ -92,17 +109,20 @@ export default function InboxPage() {
       }
     };
     fetchBusinessAndMessages();
-  }, [business_name]); // Dependency: business_name from URL
+  }, [business_name]);
 
   useEffect(() => {
     if (!businessId) return;
     const interval = setInterval(async () => {
       try {
+        // console.log("Polling for history updates for business ID:", businessId);
         const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
         const messageData = res.data || [];
 
         const mappedData = messageData.map((msg: any) => ({
           ...msg,
+          customer_id: msg.customer_id,
+          customer_name: msg.customer_name || "Unknown Customer",
           latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
         }));
 
@@ -110,100 +130,107 @@ export default function InboxPage() {
       } catch (error) {
          console.error("Failed to fetch messages during polling:", error);
       }
-    }, 4000); // Consider increasing interval or using WebSockets later
-    return () => clearInterval(interval); // Cleanup interval on component unmount
-  }, [businessId]); // Dependency: businessId
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [businessId]);
 
   const fetchScheduledSms = async (customerId: number) => {
     try {
+      console.log("Fetching scheduled SMS for customer:", customerId);
       const res = await apiClient.get(`/message-workflow/sent/${customerId}`);
       setScheduledSms(res.data || []);
+      console.log("Scheduled SMS fetched:", res.data);
     } catch (error) {
        console.error(`Failed to fetch scheduled SMS for customer ${customerId}:`, error);
-       setScheduledSms([]); // Reset on error
+       setScheduledSms([]);
     }
   };
 
+  // filteredMessages now relies on the top-level 'messages' state structure
   const filteredMessages = useMemo(
-    () => messages.filter(msg => msg.customer_id === activeCustomerId),
-    [messages, activeCustomerId]
+     () => messages.filter(customerSummary => customerSummary.customer_id === activeCustomerId),
+     [messages, activeCustomerId]
   );
 
   // Reverted useEffect hook for building timeline
-  useEffect(() => {
+   useEffect(() => {
     const base: TimelineEntry[] = [];
 
-    const customer = messages.find(m => m.customer_id === activeCustomerId);
-    if (customer && Array.isArray((customer as any).messages)) {
-      for (const msg of (customer as any).messages) {
+    // Find the data object for the active customer from the main 'messages' state
+    const customerData = messages.find(m => m.customer_id === activeCustomerId);
+
+    // Check if customerData exists AND if it has a nested 'messages' array
+    // This structure MUST match what the /review/full-customer-history returns
+    if (customerData && Array.isArray(customerData.messages)) {
+       console.log(`Building base timeline from nested messages for customer ${activeCustomerId}`);
+      for (const msg of customerData.messages) { // Iterate nested messages
         if (msg.is_hidden) continue;
 
         if (msg.type === "inbound") {
           base.push({
-            id: msg.id,
-            type: "customer",
-            content: msg.content,
-            timestamp: msg.sent_time || null,
-            customer_id: msg.customer_id,
-            is_hidden: msg.is_hidden
+            id: msg.id, type: "customer", content: msg.content,
+            timestamp: msg.sent_time || null, customer_id: msg.customer_id, is_hidden: msg.is_hidden
           });
         } else if (msg.type === "outbound") {
           if (msg.status === "pending_review") {
             base.push({
-              id: msg.id,
-              type: "ai_draft",
-              content: msg.content,
-              timestamp: null,
-              customer_id: msg.customer_id,
-              is_hidden: msg.is_hidden
+              id: msg.id, type: "ai_draft", content: msg.content,
+              timestamp: null, customer_id: msg.customer_id, is_hidden: msg.is_hidden
             });
           } else if (msg.status === "sent") {
             base.push({
-              id: msg.id,
-              type: "sent",
-              content: msg.content,
-              timestamp: msg.sent_time || msg.scheduled_time || null,
-              customer_id: msg.customer_id,
-              is_hidden: msg.is_hidden
+              id: msg.id, type: "sent", content: msg.content,
+              timestamp: msg.sent_time || msg.scheduled_time || null, customer_id: msg.customer_id, is_hidden: msg.is_hidden
             });
           }
-          // Add other statuses like 'delivered', 'failed' if needed
         }
       }
-    } else if (customer) {
-        console.warn("Timeline Effect: Found customer data, but customer.messages is not an array or missing.", customer);
+    } else if(customerData) {
+        // Handle cases where customerData exists but doesn't have a nested 'messages' array
+        // Maybe the top-level 'messages' state *is* the flat list? Adapt if necessary.
+        console.warn("Timeline build: Customer data found, but 'messages' property is missing or not an array.", customerData);
+        // If 'messages' state IS the flat list of all messages for the business, the logic needs a full rewrite here.
+        // Assuming for now the nested structure was intended by the API.
     }
+
 
     const fetchConversationHistory = async () => {
       if (!activeCustomerId) {
+          console.log("No active customer, setting timeline to base entries.");
           setTimelineEntries(base.sort((a, b) => {
-              if (!a.timestamp) return 1;
-              if (!b.timestamp) return -1;
-              return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-          }));
+            if (!a.timestamp && !b.timestamp) return 0;
+            if (!a.timestamp) return 1; // Place entries without timestamp last
+            if (!b.timestamp) return -1;
+            try {
+               const dateA = new Date(a.timestamp);
+               const dateB = new Date(b.timestamp);
+               if (isNaN(dateA.getTime())) return 1; // Invalid dates last
+               if (isNaN(dateB.getTime())) return -1;
+               return dateA.getTime() - dateB.getTime();
+            } catch (e) { return 0; } // Fallback on error
+        }));
           return;
       };
       try {
+        console.log("Fetching additional history from /conversations/customer/", activeCustomerId);
         const res = await apiClient.get(`/conversations/customer/${activeCustomerId}`);
         const conversationEntries = (res.data.messages || []).map((msg: any, index: number) => ({
           id: msg.id || `conv-${index}`,
-          type: msg.type === "customer" ? "customer" : (msg.type === "ai_draft" ? "ai_draft" : "sent"), // Adjust based on actual API response structure
+          type: msg.type === "customer" ? "customer" : (msg.type === "ai_draft" ? "ai_draft" : "sent"),
           content: msg.text || msg.content,
           timestamp: msg.timestamp || msg.sent_time || msg.created_at || null,
           customer_id: activeCustomerId,
           is_hidden: msg.is_hidden || false
         }));
+        console.log(`Workspaceed ${conversationEntries.length} additional conversation entries.`);
 
         const scheduled: TimelineEntry[] = scheduledSms
           .filter(sms => sms.status === "sent" && sms.customer_id === activeCustomerId)
           .map(sms => ({
-            id: `sch-${sms.id}`,
-            type: "sent",
-            content: sms.message,
-            timestamp: sms.send_time || null,
-            customer_id: sms.customer_id,
-            is_hidden: sms.is_hidden || false
+            id: `sch-${sms.id}`, type: "sent", content: sms.message,
+            timestamp: sms.send_time || null, customer_id: sms.customer_id, is_hidden: sms.is_hidden || false
           })) as TimelineEntry[];
+        console.log(`Adding ${scheduled.length} sent scheduled SMS entries.`);
 
         const allEntries = [...base, ...conversationEntries, ...scheduled];
         const uniqueEntries = Array.from(new Map(allEntries.map(entry => [`${entry.type}-${entry.id}`, entry])).values());
@@ -211,23 +238,40 @@ export default function InboxPage() {
            if (!a.timestamp && !b.timestamp) return 0;
            if (!a.timestamp) return 1;
            if (!b.timestamp) return -1;
-           return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+           try { // Add try-catch for date parsing
+              const dateA = new Date(a.timestamp);
+              const dateB = new Date(b.timestamp);
+              if (isNaN(dateA.getTime())) return 1; // Invalid date sort last
+              if (isNaN(dateB.getTime())) return -1; // Invalid date sort last
+              return dateA.getTime() - dateB.getTime();
+           } catch (e) {
+              console.error("Date sorting error:", e, a, b);
+              return 0;
+           }
         });
 
+        console.log(`Total unique timeline entries: ${sortedEntries.length}`);
         setTimelineEntries(sortedEntries);
       } catch (err) {
         console.error("Failed to fetch conversation history:", err);
         setTimelineEntries(base.sort((a, b) => {
-            if (!a.timestamp) return 1;
-            if (!b.timestamp) return -1;
-            return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-        }));
+          if (!a.timestamp && !b.timestamp) return 0;
+          if (!a.timestamp) return 1; // Place entries without timestamp last
+          if (!b.timestamp) return -1;
+          try {
+             const dateA = new Date(a.timestamp);
+             const dateB = new Date(b.timestamp);
+             if (isNaN(dateA.getTime())) return 1; // Invalid dates last
+             if (isNaN(dateB.getTime())) return -1;
+             return dateA.getTime() - dateB.getTime();
+          } catch (e) { return 0; } // Fallback on error
+      }));
       }
     };
 
     fetchConversationHistory();
 
-  }, [messages, activeCustomerId, scheduledSms]); // Dependencies
+  }, [messages, activeCustomerId, scheduledSms]);
 
 
   const handleSendMessage = async () => {
@@ -281,6 +325,8 @@ export default function InboxPage() {
           const messageData = res.data || [];
           const mappedData = messageData.map((msg: any) => ({
             ...msg,
+             customer_id: msg.customer_id,
+             customer_name: msg.customer_name || "Unknown Customer",
             latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
           }));
           setMessages(mappedData);
@@ -342,29 +388,32 @@ export default function InboxPage() {
     }
   };
 
+  // Revised: More robust function to get customer summaries for the sidebar
   const getLatestMessagesByCustomer = () => {
-    const grouped = new Map<number, Message>();
-    messages.forEach((customerGroup) => { // Assuming 'messages' is array of customer groups
-      if (!customerGroup || !customerGroup.customer_id) return;
-      // Find the latest message within this customer's group
-      let latestMessageInGroup: Message | null = null;
-      if (Array.isArray((customerGroup as any).messages)) {
-          for(const msg of (customerGroup as any).messages) {
-             if(!msg.sent_time) continue; // Skip messages without sent_time
-             const msgSentTime = new Date(msg.sent_time);
-             if (msgSentTime.toString() === 'Invalid Date') continue; // Skip invalid dates
+    // This function should ideally return unique customer entries from the 'messages' state.
+    // Assuming 'messages' state holds the array of customer summary objects
+    // returned by `/review/full-customer-history`.
 
-             if (!latestMessageInGroup || !latestMessageInGroup.sent_time || msgSentTime > new Date(latestMessageInGroup.sent_time)) {
-                latestMessageInGroup = msg;
-             }
-          }
+    const customerMap = new Map<number, Message>();
+    messages.forEach((customerData) => {
+      // Basic validation of the customer data object
+      if (customerData && customerData.customer_id && typeof customerData.customer_name === 'string') {
+         // Use a Map to ensure we only list each customer once in the sidebar
+         if (!customerMap.has(customerData.customer_id)) {
+             customerMap.set(customerData.customer_id, customerData);
+         } else {
+             // If customer already exists, potentially update if this entry is more recent?
+             // Requires a timestamp field at this top level, e.g., customerData.last_message_time
+             // For now, just keep the first one encountered.
+         }
+      } else {
+         console.warn("Skipping invalid customer summary entry in messages state:", customerData);
       }
-       // Use the latest message found (or the customer group itself if no messages)
-       // This needs refinement based on actual data structure. For now, uses customerGroup as fallback.
-       const messageToShow = latestMessageInGroup || customerGroup;
-      grouped.set(customerGroup.customer_id, messageToShow);
     });
-    return Array.from(grouped.values());
+
+    const customerList = Array.from(customerMap.values());
+    console.log(`Sidebar customer list size: ${customerList.length}`); // Log size
+    return customerList;
   };
 
 
@@ -406,9 +455,9 @@ export default function InboxPage() {
 
         {/* Contact List */}
         <div className="flex-1 overflow-y-auto">
-          {getLatestMessagesByCustomer().map((msg) => ( // msg here is the representative message
+          {getLatestMessagesByCustomer().map((msg) => ( // msg is a customer summary object
             <div
-              key={msg.customer_id}
+              key={msg.customer_id} // Use unique customer ID
               onClick={() => {
                 setActiveCustomerId(msg.customer_id);
                 setSelectedDraftId(null);
@@ -426,17 +475,21 @@ export default function InboxPage() {
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
-                  {msg.customer_name[0]?.toUpperCase()}
+                   {/* Safer Access */}
+                  {msg.customer_name?.[0]?.toUpperCase() || '?'}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <span className="font-medium text-white truncate">
-                      {msg.customer_name}
+                      {/* Safer Access */}
+                      {msg.customer_name || 'Unknown'}
                     </span>
-                    {/* Unread indicator logic needed here */}
+                    {/* Unread indicator logic would go here, comparing last message timestamp to lastSeenMap */}
                   </div>
                   <p className="text-sm text-gray-400 truncate">
-                    {msg.content?.slice(0, 40)} {/* Shows content of latest message */}
+                    {/* Use content field from the customer summary object if API provides it */}
+                    {/* Otherwise, this might need fetching the actual latest message */}
+                    {msg.content?.slice(0, 40) || 'No recent messages'}
                   </p>
                 </div>
               </div>
@@ -452,7 +505,6 @@ export default function InboxPage() {
           <div className="bg-[#1A1D2D] border-b border-[#2A2F45] p-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
-                 {/* Use active customer name if available */}
                  {messages.find(m => m.customer_id === activeCustomerId)?.customer_name[0]?.toUpperCase() || '?'}
               </div>
               <div className="flex-1">
@@ -460,7 +512,7 @@ export default function InboxPage() {
                    {messages.find(m => m.customer_id === activeCustomerId)?.customer_name || "Loading..."}
                 </h1>
                 <div className="flex items-center gap-2">
-                   {(() => { // IIFE to get current customer info for status badge
+                   {(() => {
                       const currentCustomer = messages.find(m => m.customer_id === activeCustomerId);
                       const optedIn = currentCustomer?.opted_in || currentCustomer?.latest_consent_status === "opted_in";
                       return (
@@ -480,7 +532,7 @@ export default function InboxPage() {
 
         {/* Messages Area - Scrollable Container */}
         <div
-          ref={chatContainerRef} // Ref attached to the scrollable container
+          ref={chatContainerRef} // Ref attached
           className="flex-1 overflow-y-auto p-4 space-y-4"
         >
           {timelineEntries
@@ -496,7 +548,13 @@ export default function InboxPage() {
               {entry.timestamp && (
                 <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
                   <Clock className="w-3 h-3" />
-                  {new Date(entry.timestamp).toLocaleString()}
+                   {(() => { // Safer date formatting
+                      try {
+                         return new Date(entry.timestamp).toLocaleString();
+                      } catch {
+                         return 'Invalid Date';
+                      }
+                   })()}
                 </div>
               )}
               <div
@@ -532,7 +590,6 @@ export default function InboxPage() {
                           setTimelineEntries((prev) =>
                             prev.filter((e) => !(e.id === entry.id && e.type === "ai_draft"))
                           );
-                           // Consider re-fetching history after delete if needed
                         } catch (err) {
                           console.error("❌ Failed to delete draft", err);
                           alert("Failed to delete draft.");
