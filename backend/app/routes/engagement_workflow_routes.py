@@ -5,6 +5,8 @@
 # This file handles the workflow for managing customer engagements, including
 # sending SMS messages, tracking responses, and updating engagement status.
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -15,6 +17,8 @@ from datetime import datetime
 from pydantic import BaseModel
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -48,13 +52,22 @@ def send_reply(
     payload: SendDraftInput,
     db: Session = Depends(get_db)
 ):
+    logger.info(f"[SEND_REPLY] Querying engagement by ID {id}")
     engagement = db.query(Engagement).filter(Engagement.id == id).first()
     if not engagement:
+        logger.warning(f"[SEND_REPLY] ❌ No engagement with ID {id}")
+        count_all = db.query(Engagement).count()
+        logger.info(f"[SEND_REPLY] Total engagements in DB: {count_all}")
         raise HTTPException(status_code=404, detail="Engagement not found")
+    logger.info(f"[SEND_REPLY] ✅ Engagement found: status={engagement.status}, customer_id={engagement.customer_id}")
+    logger.info(f"[SEND_REPLY] 📦 Payload received: {payload}")
 
-    if engagement.status != "pending_review" or engagement.sent_at is not None:
+    logger.info(f"[DEBUG] Engagement {id} — status: '{engagement.status}', sent_at: {engagement.sent_at}")
+
+    if engagement.status.strip().lower() != "pending_review" or engagement.sent_at is not None:
+        logger.warning(f"[BLOCKED] Draft not valid for sending — status: '{engagement.status}', sent_at: {engagement.sent_at}")
         raise HTTPException(
-            status_code=400,
+            status_code=409,
             detail="Draft not valid for sending (already sent or corrupted)."
         )
 
@@ -69,8 +82,10 @@ def send_reply(
         raise HTTPException(status_code=404, detail="Customer not found or missing phone")
 
     business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found for this customer")
+    if not business or not business.messaging_service_sid:
+        logger.error(f"[SEND_REPLY] ❌ Business missing or messaging_service_sid not configured for business_id={customer.business_id}")
+        raise HTTPException(status_code=500, detail="Business profile missing or not configured")
+    logger.info(f"[SEND_REPLY] 📦 Loaded business messaging_service_sid: {business.messaging_service_sid}")
 
     if not all([
         settings.TWILIO_ACCOUNT_SID,
@@ -81,7 +96,7 @@ def send_reply(
 
     twilio_client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
     try:
-        print(f"📤 Sending updated AI draft to {customer.phone}")
+        logger.info(f"[SEND_REPLY] 📤 Sending updated AI draft to {customer.phone}")
         engagement.sent_at = None  # Clear leftover timestamp from broken draft creation
         message = twilio_client.messages.create(
             body=message_content,

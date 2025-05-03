@@ -192,7 +192,15 @@ export default function InboxPage() {
         if (!draftMsg) throw new Error("Draft not found");
 
         await apiClient.put(`/engagement-workflow/${selectedDraftId}/edit-ai-draft`, { ai_response: newMessage.trim() });
-        await apiClient.put(`/engagement-workflow/reply/${selectedDraftId}/send`, { updated_content: newMessage.trim() });
+        console.log("🌍 API BASE", process.env.NEXT_PUBLIC_API_BASE);
+        console.log("📤 Sending AI reply", {
+          selectedDraftId,
+          endpoint: `/engagement-workflow/reply/${selectedDraftId}/send`,
+          payload: { updated_content: newMessage.trim() },
+        });
+        await apiClient.put(`/engagement-workflow/reply/${selectedDraftId}/send`, {
+          updated_content: newMessage.trim(),
+        });
 
         // Optimistically remove the draft with the sent id and status "pending_review"
         setMessages((prev) =>
@@ -267,8 +275,18 @@ export default function InboxPage() {
         );
       }
     } catch (err) {
-      console.error("❌ Failed to send message", err);
-      setSendError("Failed to send message.");
+      const status = (err as any)?.response?.status;
+      const detail = (err as any)?.response?.data?.detail || (err as any).message || err;
+
+      console.error("❌ API error", detail);
+
+      if (status === 409) {
+        setSendError("This draft is no longer valid. It may have already been sent or expired.");
+      } else if (status === 404) {
+        setSendError("Draft not found. Please refresh and try again.");
+      } else {
+        setSendError("Failed to send message.");
+      }
     } finally {
       setIsSending(false);
     }
@@ -516,7 +534,13 @@ export default function InboxPage() {
                 focus:ring-1 focus:ring-emerald-500/50 transition-all"
             />
             <button
-              onClick={handleSendMessage}
+              onClick={() => {
+                console.log("🚀 Clicked send button");
+                console.log("🧪 newMessage:", newMessage);
+                console.log("🧪 isSending:", isSending);
+                console.log("🧪 button disabled:", isSending || !newMessage.trim());
+                handleSendMessage();
+              }}
               disabled={isSending || !newMessage.trim()}
               className={clsx(
                 "p-3 rounded-lg transition-all duration-200",

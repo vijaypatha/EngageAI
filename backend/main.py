@@ -162,7 +162,9 @@ async def general_exception_handler(
         content={"detail": "Internal server error"},
     )
 
+
 # 🛣️ Log active routes for debugging
+logger.info(f"🟢 TWILIO_DEFAULT_MESSAGING_SERVICE_SID: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
 for route in app.routes:
     if isinstance(route, APIRoute):
         logger.info(f"🔵  Active route: {route.path} [{','.join(route.methods)}]")

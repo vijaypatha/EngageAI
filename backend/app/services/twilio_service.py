@@ -281,11 +281,15 @@ class TwilioService:
         """
         logger.info(f"Starting send_sms to={to} for business_id={business.id if business else 'unknown'}")
         try:
-            if not business.messaging_service_sid:
-                logger.error(f"❌ send_sms failed: No messaging service SID configured for business_id={business.id}")
+            logger.info(f"🔍 business.messaging_service_sid = {business.messaging_service_sid}")
+            if not all([
+                settings.TWILIO_ACCOUNT_SID,
+                settings.TWILIO_AUTH_TOKEN
+            ]) or not business.messaging_service_sid:
+                logger.error(f"❌ send_sms failed: Missing Twilio credentials or messaging service SID for business_id={business.id}")
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No messaging service configured for this business"
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="SMS provider is not configured"
                 )
 
             twilio_msg = self.client.messages.create(
