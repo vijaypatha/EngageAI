@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react"; // useRef is included
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import { Clock, Send, MessageSquare, Check, AlertCircle } from "lucide-react";
@@ -48,50 +48,80 @@ export default function InboxPage() {
   const [lastSeenMap, setLastSeenMap] = useState<Record<number, string>>({});
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
 
+  // --- Scroll to bottom logic START (Approach 3: Ref on Container) ---
+  // Ref for the scrollable message container itself
+  const chatContainerRef = useRef<null | HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Directly manipulate scrollTop when timeline/customer changes
+    if (chatContainerRef.current) {
+      // Set the scroll position to the maximum height
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [timelineEntries, activeCustomerId]); // Dependencies trigger the effect
+  // --- Scroll to bottom logic END (Approach 3) ---
+
+
   useEffect(() => {
     const fetchBusinessAndMessages = async () => {
       if (!business_name) return;
-      const bizRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
-      const id = bizRes.data.business_id;
-      setBusinessId(id);
+      try {
+        const bizRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
+        const id = bizRes.data.business_id;
+        setBusinessId(id);
 
-      const res = await apiClient.get(`/review/full-customer-history?business_id=${id}`);
-      const messageData = res.data || [];
-      
-      const mappedData = messageData.map((msg: any) => ({
-        ...msg,
-        latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
-      }));
-      
-      setMessages(mappedData);
-      if (mappedData.length > 0) {
-        setActiveCustomerId(mappedData[0].customer_id);
-        fetchScheduledSms(mappedData[0].customer_id);
+        const res = await apiClient.get(`/review/full-customer-history?business_id=${id}`);
+        const messageData = res.data || [];
+
+        const mappedData = messageData.map((msg: any) => ({
+          ...msg,
+          latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
+        }));
+
+        setMessages(mappedData);
+        if (mappedData.length > 0) {
+          setActiveCustomerId(mappedData[0].customer_id);
+          fetchScheduledSms(mappedData[0].customer_id);
+        } else {
+           setActiveCustomerId(null); // Ensure no customer is active if none found
+           setTimelineEntries([]); // Clear timeline if no messages
+        }
+      } catch (error) {
+         console.error("Failed to fetch initial business and messages:", error);
+         // Handle error appropriately, maybe show a message to the user
       }
     };
     fetchBusinessAndMessages();
-  }, [business_name]);
+  }, [business_name]); // Dependency: business_name from URL
 
   useEffect(() => {
     if (!businessId) return;
     const interval = setInterval(async () => {
-      const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
-      const messageData = res.data || [];
-      
-      // Map the data to include opted_in status
-      const mappedData = messageData.map((msg: any) => ({
-        ...msg,
-        latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
-      }));
-      
-      setMessages(mappedData);
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [businessId]);
+      try {
+        const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
+        const messageData = res.data || [];
+
+        const mappedData = messageData.map((msg: any) => ({
+          ...msg,
+          latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
+        }));
+
+        setMessages(mappedData);
+      } catch (error) {
+         console.error("Failed to fetch messages during polling:", error);
+      }
+    }, 4000); // Consider increasing interval or using WebSockets later
+    return () => clearInterval(interval); // Cleanup interval on component unmount
+  }, [businessId]); // Dependency: businessId
 
   const fetchScheduledSms = async (customerId: number) => {
-    const res = await apiClient.get(`/message-workflow/sent/${customerId}`);
-    setScheduledSms(res.data || []);
+    try {
+      const res = await apiClient.get(`/message-workflow/sent/${customerId}`);
+      setScheduledSms(res.data || []);
+    } catch (error) {
+       console.error(`Failed to fetch scheduled SMS for customer ${customerId}:`, error);
+       setScheduledSms([]); // Reset on error
+    }
   };
 
   const filteredMessages = useMemo(
@@ -99,6 +129,7 @@ export default function InboxPage() {
     [messages, activeCustomerId]
   );
 
+  // Reverted useEffect hook for building timeline
   useEffect(() => {
     const base: TimelineEntry[] = [];
 
@@ -136,114 +167,116 @@ export default function InboxPage() {
               is_hidden: msg.is_hidden
             });
           }
+          // Add other statuses like 'delivered', 'failed' if needed
         }
       }
+    } else if (customer) {
+        console.warn("Timeline Effect: Found customer data, but customer.messages is not an array or missing.", customer);
     }
 
     const fetchConversationHistory = async () => {
-      if (!activeCustomerId) return;
+      if (!activeCustomerId) {
+          setTimelineEntries(base.sort((a, b) => {
+              if (!a.timestamp) return 1;
+              if (!b.timestamp) return -1;
+              return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+          }));
+          return;
+      };
       try {
         const res = await apiClient.get(`/conversations/customer/${activeCustomerId}`);
         const conversationEntries = (res.data.messages || []).map((msg: any, index: number) => ({
-          id: msg.id || `temp-${index}`,
-          type: msg.type,
+          id: msg.id || `conv-${index}`,
+          type: msg.type === "customer" ? "customer" : (msg.type === "ai_draft" ? "ai_draft" : "sent"), // Adjust based on actual API response structure
           content: msg.text || msg.content,
-          timestamp: msg.timestamp || msg.sent_time,
+          timestamp: msg.timestamp || msg.sent_time || msg.created_at || null,
           customer_id: activeCustomerId,
-          is_hidden: msg.is_hidden
+          is_hidden: msg.is_hidden || false
         }));
 
         const scheduled: TimelineEntry[] = scheduledSms
           .filter(sms => sms.status === "sent" && sms.customer_id === activeCustomerId)
           .map(sms => ({
-            id: `sms-${sms.id}`,
+            id: `sch-${sms.id}`,
             type: "sent",
             content: sms.message,
             timestamp: sms.send_time || null,
             customer_id: sms.customer_id,
-            is_hidden: sms.is_hidden
+            is_hidden: sms.is_hidden || false
           })) as TimelineEntry[];
 
         const allEntries = [...base, ...conversationEntries, ...scheduled];
-        const sortedEntries = allEntries.sort((a, b) => {
-          if (!a.timestamp) return 1;
-          if (!b.timestamp) return -1;
-          return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+        const uniqueEntries = Array.from(new Map(allEntries.map(entry => [`${entry.type}-${entry.id}`, entry])).values());
+        const sortedEntries = uniqueEntries.sort((a, b) => {
+           if (!a.timestamp && !b.timestamp) return 0;
+           if (!a.timestamp) return 1;
+           if (!b.timestamp) return -1;
+           return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
         });
 
         setTimelineEntries(sortedEntries);
       } catch (err) {
         console.error("Failed to fetch conversation history:", err);
+        setTimelineEntries(base.sort((a, b) => {
+            if (!a.timestamp) return 1;
+            if (!b.timestamp) return -1;
+            return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+        }));
       }
     };
 
     fetchConversationHistory();
-  }, [messages, activeCustomerId, scheduledSms]);
+
+  }, [messages, activeCustomerId, scheduledSms]); // Dependencies
+
 
   const handleSendMessage = async () => {
-    console.log('handleSendMessage', { selectedDraftId, pendingReplyCustomerId, newMessage });
-    if (!newMessage.trim()) return;
+    console.log('handleSendMessage triggered', { selectedDraftId, pendingReplyCustomerId, newMessage, activeCustomerId });
+    const messageToSend = newMessage.trim();
+    if (!messageToSend) return;
+
+    if (isSending) {
+      console.log("Send already in progress, aborting.");
+      return;
+    }
+
     setIsSending(true);
     setSendError(null);
 
+    const isSendingDraft = selectedDraftId && pendingReplyCustomerId;
+    const isSendingManual = !isSendingDraft && activeCustomerId;
+
+    const currentDraftId = selectedDraftId;
+    const currentPendingCustomerId = pendingReplyCustomerId;
+    const currentActiveCustomerId = activeCustomerId;
+
     try {
-      if (selectedDraftId && pendingReplyCustomerId) {
-        const draftMsg = messages.find((msg) => msg.id === selectedDraftId);
-        if (!draftMsg) throw new Error("Draft not found");
-
-        await apiClient.put(`/engagement-workflow/${selectedDraftId}/edit-ai-draft`, { ai_response: newMessage.trim() });
-        console.log("🌍 API BASE", process.env.NEXT_PUBLIC_API_BASE);
-        console.log("📤 Sending AI reply", {
-          selectedDraftId,
-          endpoint: `/engagement-workflow/reply/${selectedDraftId}/send`,
-          payload: { updated_content: newMessage.trim() },
+      if (isSendingDraft) {
+        console.log(`Attempting to send draft ID: ${currentDraftId} for customer ID: ${currentPendingCustomerId}`);
+        await apiClient.put(`/engagement-workflow/reply/${currentDraftId}/send`, {
+          updated_content: messageToSend,
         });
-        await apiClient.put(`/engagement-workflow/reply/${selectedDraftId}/send`, {
-          updated_content: newMessage.trim(),
-        });
-
-        // Optimistically remove the draft with the sent id and status "pending_review"
-        setMessages((prev) =>
-          prev.filter(
-            (msg) =>
-              !(
-                msg.id === selectedDraftId &&
-                msg.status === "pending_review"
-              )
-          )
-        );
-        setTimelineEntries((prev) =>
-          prev.filter(
-            (entry) =>
-              !(
-                entry.type === "ai_draft" &&
-                Number(entry.id) === selectedDraftId // 👈 Ensure match works with string/number
-              )
-          )
-        );
-
-        // After sending, re-fetch messages from backend to update UI and remove sent drafts
-        if (businessId) {
-          const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
-          const messageData = res.data || [];
-          const mappedData = messageData.map((msg: any) => ({
-            ...msg,
-            latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
-          }));
-          setMessages(mappedData);
-        }
-
+        console.log(`✅ Draft ${currentDraftId} sent successfully via API.`);
         setNewMessage("");
         setSelectedDraftId(null);
         setPendingReplyCustomerId(null);
-        setLastSeenMap(prev => ({ ...prev, [activeCustomerId!]: new Date().toISOString() }));
-      } else if (activeCustomerId) {
-        const response = await apiClient.post(`/engagement-workflow/manual-reply/${activeCustomerId}`, {
-          message: newMessage.trim(),
-        });
 
-        // After sending, re-fetch messages from backend to update UI and remove sent drafts
-        if (businessId) {
+      } else if (isSendingManual) {
+        console.log(`Attempting to send manual reply to customer ID: ${currentActiveCustomerId}`);
+        await apiClient.post(`/engagement-workflow/manual-reply/${currentActiveCustomerId}`, {
+          message: messageToSend,
+        });
+        console.log(`✅ Manual message sent successfully to customer ${currentActiveCustomerId} via API.`);
+        setNewMessage("");
+
+      } else {
+        console.error("Send triggered without a valid target (no draft selected and no active customer).");
+        throw new Error("Cannot send message: No recipient context.");
+      }
+
+      if (businessId) {
+        console.log(`🔄 Re-fetching history for business ${businessId} after message send.`);
+        try {
           const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
           const messageData = res.data || [];
           const mappedData = messageData.map((msg: any) => ({
@@ -251,62 +284,93 @@ export default function InboxPage() {
             latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
           }));
           setMessages(mappedData);
+          console.log(`✅ History updated for business ${businessId}. Messages count: ${mappedData.length}`);
+        } catch (fetchError) {
+           console.error("❌ Failed to re-fetch customer history after sending:", fetchError);
+           setSendError("Message sent, but failed to refresh conversation history.");
         }
-
-        setMessages(prev => [...prev, {
-          id: response.data.id,
-          customer_id: activeCustomerId!,
-          customer_name: filteredMessages[0]?.customer_name || "Unknown",
-          phone: filteredMessages[0]?.phone || "",
-          content: newMessage.trim(),
-          type: "outbound",
-          status: "sent",
-          sent_time: new Date().toISOString(),
-          latest_consent_status: "",
-          is_hidden: false,
-          source: "manual",
-          opted_in: false
-        }]);
-        // Remove all ai_draft entries for this customer
-        setTimelineEntries((prev) =>
-          prev.filter((entry) =>
-            !(entry.type === "ai_draft" && entry.customer_id === activeCustomerId)
-          )
-        );
       }
-    } catch (err) {
-      const status = (err as any)?.response?.status;
-      const detail = (err as any)?.response?.data?.detail || (err as any).message || err;
 
-      console.error("❌ API error", detail);
+      const customerIdToUpdate = isSendingDraft ? currentPendingCustomerId : currentActiveCustomerId;
+      if (customerIdToUpdate) {
+          setLastSeenMap(prev => ({ ...prev, [customerIdToUpdate]: new Date().toISOString() }));
+      }
+
+    } catch (err) {
+      console.error("❌ Error during send process:", err);
+      const response = (err as any)?.response;
+      const status = response?.status;
+      const detail = response?.data?.detail || (err as any).message || "An unknown error occurred.";
+      console.error(`❌ API Error Details: Status ${status}, Detail: ${detail}`);
 
       if (status === 409) {
-        setSendError("This draft is no longer valid. It may have already been sent or expired.");
+        setSendError("This draft is no longer valid. It may have already been sent or expired. Refreshing data...");
+         if (businessId) {
+            console.log(`🔄 Triggering refresh due to ${status} error.`);
+             try {
+                 const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
+                 setMessages(res.data || []);
+             } catch (refreshError) {
+                 console.error("Failed to refresh after 409 error:", refreshError);
+             }
+         }
+         setSelectedDraftId(null);
+         setPendingReplyCustomerId(null);
+         setNewMessage("");
+
       } else if (status === 404) {
-        setSendError("Draft not found. Please refresh and try again.");
+        setSendError("Draft or customer not found. Please refresh and try again.");
+         if (businessId) {
+            console.log(`🔄 Triggering refresh due to ${status} error.`);
+             try {
+                 const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
+                 setMessages(res.data || []);
+             } catch (refreshError) {
+                 console.error("Failed to refresh after 404 error:", refreshError);
+             }
+         }
+         setSelectedDraftId(null);
+         setPendingReplyCustomerId(null);
+         setNewMessage("");
+
       } else {
-        setSendError("Failed to send message.");
+        setSendError(`Failed to send message: ${detail}`);
       }
     } finally {
       setIsSending(false);
+      console.log("handleSendMessage finished.");
     }
   };
 
   const getLatestMessagesByCustomer = () => {
     const grouped = new Map<number, Message>();
-    messages.forEach((msg) => {
-      if (!msg.customer_id) return;
-      const existing = grouped.get(msg.customer_id);
-      if (!existing || (msg.sent_time && existing.sent_time && new Date(msg.sent_time) > new Date(existing.sent_time))) {
-        grouped.set(msg.customer_id, msg);
+    messages.forEach((customerGroup) => { // Assuming 'messages' is array of customer groups
+      if (!customerGroup || !customerGroup.customer_id) return;
+      // Find the latest message within this customer's group
+      let latestMessageInGroup: Message | null = null;
+      if (Array.isArray((customerGroup as any).messages)) {
+          for(const msg of (customerGroup as any).messages) {
+             if(!msg.sent_time) continue; // Skip messages without sent_time
+             const msgSentTime = new Date(msg.sent_time);
+             if (msgSentTime.toString() === 'Invalid Date') continue; // Skip invalid dates
+
+             if (!latestMessageInGroup || !latestMessageInGroup.sent_time || msgSentTime > new Date(latestMessageInGroup.sent_time)) {
+                latestMessageInGroup = msg;
+             }
+          }
       }
+       // Use the latest message found (or the customer group itself if no messages)
+       // This needs refinement based on actual data structure. For now, uses customerGroup as fallback.
+       const messageToShow = latestMessageInGroup || customerGroup;
+      grouped.set(customerGroup.customer_id, messageToShow);
     });
     return Array.from(grouped.values());
   };
 
+
   return (
     <div className="h-screen flex md:flex-row flex-col bg-[#0B0E1C]">
-      {/* Mobile Header - Only shows on mobile */}
+      {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-4 bg-[#1A1D2D] border-b border-[#2A2F45]">
         <h1 className="text-xl font-semibold text-white">Inbox</h1>
         <button
@@ -325,15 +389,14 @@ export default function InboxPage() {
         showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         "flex flex-col h-full md:h-screen"
       )}>
-        {/* Sidebar Header - Only visible on desktop */}
+        {/* Desktop Header */}
         <div className="hidden md:block p-4 border-b border-[#2A2F45]">
           <h2 className="text-xl font-semibold text-white">Inbox</h2>
         </div>
-
-        {/* Mobile Close Button */}
+        {/* Mobile Header inside drawer */}
         <div className="md:hidden flex justify-between items-center p-4 border-b border-[#2A2F45]">
           <h2 className="text-xl font-semibold text-white">Contacts</h2>
-          <button 
+          <button
             onClick={() => setShowMobileDrawer(false)}
             className="p-2 hover:bg-[#242842] rounded-lg"
           >
@@ -343,9 +406,9 @@ export default function InboxPage() {
 
         {/* Contact List */}
         <div className="flex-1 overflow-y-auto">
-          {getLatestMessagesByCustomer().map((msg) => (
+          {getLatestMessagesByCustomer().map((msg) => ( // msg here is the representative message
             <div
-              key={`${msg.customer_id}-${msg.id}`}
+              key={msg.customer_id}
               onClick={() => {
                 setActiveCustomerId(msg.customer_id);
                 setSelectedDraftId(null);
@@ -362,8 +425,7 @@ export default function InboxPage() {
               )}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 
-                  flex items-center justify-center text-white font-medium">
+                <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
                   {msg.customer_name[0]?.toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -371,12 +433,10 @@ export default function InboxPage() {
                     <span className="font-medium text-white truncate">
                       {msg.customer_name}
                     </span>
-                    {msg.sent_time && !lastSeenMap[msg.customer_id] && (
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                    )}
+                    {/* Unread indicator logic needed here */}
                   </div>
                   <p className="text-sm text-gray-400 truncate">
-                    {msg.content?.slice(0, 40)}
+                    {msg.content?.slice(0, 40)} {/* Shows content of latest message */}
                   </p>
                 </div>
               </div>
@@ -391,35 +451,40 @@ export default function InboxPage() {
         {activeCustomerId && (
           <div className="bg-[#1A1D2D] border-b border-[#2A2F45] p-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 
-                flex items-center justify-center text-white font-medium">
-                {filteredMessages[0]?.customer_name[0]?.toUpperCase()}
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
+                 {/* Use active customer name if available */}
+                 {messages.find(m => m.customer_id === activeCustomerId)?.customer_name[0]?.toUpperCase() || '?'}
               </div>
               <div className="flex-1">
                 <h1 className="text-lg font-semibold text-white">
-                  {filteredMessages[0]?.customer_name || "..."}
+                   {messages.find(m => m.customer_id === activeCustomerId)?.customer_name || "Loading..."}
                 </h1>
                 <div className="flex items-center gap-2">
-                  <span className={clsx(
-                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
-                    (filteredMessages[0]?.opted_in || filteredMessages[0]?.latest_consent_status === "opted_in")
-                      ? "bg-emerald-400/10 text-emerald-400"
-                      : "bg-red-400/10 text-red-400"
-                  )}>
-                    {(filteredMessages[0]?.opted_in || filteredMessages[0]?.latest_consent_status === "opted_in")
-                      ? <><Check className="w-3 h-3" /> Opted In</> 
-                      : <><AlertCircle className="w-3 h-3" /> Not Opted In</>}
-                  </span>
+                   {(() => { // IIFE to get current customer info for status badge
+                      const currentCustomer = messages.find(m => m.customer_id === activeCustomerId);
+                      const optedIn = currentCustomer?.opted_in || currentCustomer?.latest_consent_status === "opted_in";
+                      return (
+                         <span className={clsx(
+                           "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
+                           optedIn ? "bg-emerald-400/10 text-emerald-400" : "bg-red-400/10 text-red-400"
+                         )}>
+                           {optedIn ? <><Check className="w-3 h-3" /> Opted In</> : <><AlertCircle className="w-3 h-3" /> Not Opted In</>}
+                         </span>
+                      );
+                   })()}
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Messages Area - Scrollable Container */}
+        <div
+          ref={chatContainerRef} // Ref attached to the scrollable container
+          className="flex-1 overflow-y-auto p-4 space-y-4"
+        >
           {timelineEntries
-            .filter(entry => !entry.is_hidden) // Filter out hidden messages
+            .filter(entry => !entry.is_hidden)
             .map((entry) => (
             <div
               key={`${entry.type}-${entry.id}`}
@@ -450,16 +515,13 @@ export default function InboxPage() {
                   <>
                     <button
                       onClick={() => {
-                        // Always convert entry.id to a valid number or null
                         const idNum = Number(entry.id);
-                        console.log('Edit & Send clicked', { entryId: entry.id, idNum, type: typeof entry.id });
-                        setSelectedDraftId(Number.isNaN(idNum) ? null : idNum); // Track the draft ID
-                        setPendingReplyCustomerId(entry.customer_id); // Track customer to reply to
+                        setSelectedDraftId(Number.isNaN(idNum) ? null : idNum);
+                        setPendingReplyCustomerId(entry.customer_id);
                         setActiveCustomerId(entry.customer_id);
                         setNewMessage(entry.content);
                       }}
-                      className="mt-2 text-xs font-medium text-white/90 hover:text-white 
-                        flex items-center gap-1 transition-colors"
+                      className="mt-2 text-xs font-medium text-white/90 hover:text-white flex items-center gap-1 transition-colors"
                     >
                       ✏️ Edit & Send
                     </button>
@@ -470,13 +532,13 @@ export default function InboxPage() {
                           setTimelineEntries((prev) =>
                             prev.filter((e) => !(e.id === entry.id && e.type === "ai_draft"))
                           );
+                           // Consider re-fetching history after delete if needed
                         } catch (err) {
                           console.error("❌ Failed to delete draft", err);
                           alert("Failed to delete draft.");
                         }
                       }}
-                      className="mt-1 text-xs font-medium text-white/90 hover:text-white 
-                        flex items-center gap-1 transition-colors"
+                      className="mt-1 text-xs font-medium text-white/90 hover:text-white flex items-center gap-1 transition-colors"
                     >
                       🗑️ Delete Draft
                     </button>
@@ -485,20 +547,19 @@ export default function InboxPage() {
               </div>
             </div>
           ))}
+          {/* Removed the empty div target */}
         </div>
 
         {/* Message Input Area */}
         <div className="bg-[#1A1D2D] border-t border-[#2A2F45] p-4">
           {/* Opt-in Warning */}
           {activeCustomerId && (() => {
-            const customerMsgs = messages.filter(m => m.customer_id === activeCustomerId);
-            const latestMsg = customerMsgs[0];
-            const optedIn = latestMsg?.opted_in || latestMsg?.latest_consent_status === "opted_in";
+            const currentCustomer = messages.find(m => m.customer_id === activeCustomerId);
+            const optedIn = currentCustomer?.opted_in || currentCustomer?.latest_consent_status === "opted_in";
 
             if (!optedIn) {
               return (
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between 
-                  bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-4 py-3 mb-4 gap-3">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-4 py-3 mb-4 gap-3">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0" />
                     <span className="text-sm">Messaging is blocked (not opted in)</span>
@@ -506,14 +567,14 @@ export default function InboxPage() {
                   <button
                     onClick={async () => {
                       try {
-                        await apiClient.post(`/resend-optin/${activeCustomerId}`);
+                        await apiClient.post(`/consent/resend-optin/${activeCustomerId}`);
                         alert("Opt-in request sent again.");
                       } catch (err) {
+                        console.error("Failed to resend opt-in:", err);
                         alert("Failed to resend opt-in request.");
                       }
                     }}
-                    className="w-full md:w-auto bg-[#242842] hover:bg-[#2A2F45] text-white text-sm 
-                      px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
+                    className="w-full md:w-auto bg-[#242842] hover:bg-[#2A2F45] text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
                   >
                     💌 Request Opt-In
                   </button>
@@ -529,16 +590,11 @@ export default function InboxPage() {
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               placeholder="Type your message..."
-              className="flex-1 bg-[#242842] border border-[#2A2F45] px-4 py-3 rounded-lg 
-                text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500/50 
-                focus:ring-1 focus:ring-emerald-500/50 transition-all"
+              className="flex-1 bg-[#242842] border border-[#2A2F45] px-4 py-3 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all"
             />
             <button
               onClick={() => {
                 console.log("🚀 Clicked send button");
-                console.log("🧪 newMessage:", newMessage);
-                console.log("🧪 isSending:", isSending);
-                console.log("🧪 button disabled:", isSending || !newMessage.trim());
                 handleSendMessage();
               }}
               disabled={isSending || !newMessage.trim()}
@@ -552,7 +608,7 @@ export default function InboxPage() {
               <Send className="w-5 h-5 text-white" />
             </button>
           </div>
-          
+
           {/* Error Message */}
           {sendError && (
             <div className="text-xs text-red-400 mt-2 flex items-center gap-1">

@@ -82,15 +82,29 @@ def send_reply(
         raise HTTPException(status_code=404, detail="Customer not found or missing phone")
 
     business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
-    if not business or not business.messaging_service_sid:
-        logger.error(f"[SEND_REPLY] ❌ Business missing or messaging_service_sid not configured for business_id={customer.business_id}")
-        raise HTTPException(status_code=500, detail="Business profile missing or not configured")
-    logger.info(f"[SEND_REPLY] 📦 Loaded business messaging_service_sid: {business.messaging_service_sid}")
+    if not business:
+        logger.error(f"[SEND_REPLY] ❌ Business profile not found for business_id={customer.business_id}")
+        raise HTTPException(status_code=500, detail="Business profile missing")
+
+    messaging_service_sid = business.messaging_service_sid
+    if not messaging_service_sid:
+        logger.warning("[SEND_REPLY] No messaging_service_sid in business profile, using fallback from settings")
+        messaging_service_sid = settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID
+
+    if not messaging_service_sid:
+        logger.error("[SEND_REPLY] ❌ No valid messaging_service_sid found in business profile or fallback settings")
+        raise HTTPException(status_code=500, detail="SMS provider is not configured")
+
+    logger.info(f"[ENV CHECK] Business SID: {business.messaging_service_sid}")
+    logger.info(f"[ENV CHECK] Fallback SID from settings: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
+
+    logger.info(f"[DEBUG] TWILIO_ACCOUNT_SID: {settings.TWILIO_ACCOUNT_SID}")
+    logger.info(f"[DEBUG] TWILIO_AUTH_TOKEN present: {bool(settings.TWILIO_AUTH_TOKEN)}")
+    logger.info(f"[DEBUG] Default SID: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
 
     if not all([
         settings.TWILIO_ACCOUNT_SID,
-        settings.TWILIO_AUTH_TOKEN,
-        settings.TWILIO_FROM_NUMBER
+        settings.TWILIO_AUTH_TOKEN
     ]):
         raise HTTPException(status_code=500, detail="SMS provider is not configured")
 
@@ -100,7 +114,7 @@ def send_reply(
         engagement.sent_at = None  # Clear leftover timestamp from broken draft creation
         message = twilio_client.messages.create(
             body=message_content,
-            from_=settings.TWILIO_FROM_NUMBER,
+            messaging_service_sid=messaging_service_sid,
             to=customer.phone
         )
 
