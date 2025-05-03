@@ -193,17 +193,36 @@ export default function InboxPage() {
         await apiClient.put(`/engagement-workflow/${draftMsg.id}/edit-ai-draft`, { ai_response: newMessage.trim() });
         await apiClient.put(`/engagement-workflow/reply/${draftMsg.id}/send`, { content: newMessage.trim() });
 
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === draftMsg.id
-              ? { ...msg, content: newMessage.trim(), sent_time: new Date().toISOString(), status: "sent" }
-              : msg
-          )
-        );
+        // After sending, re-fetch messages from backend to update UI and remove sent drafts
+        if (businessId) {
+          const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
+          const messageData = res.data || [];
+          const mappedData = messageData.map((msg: any) => ({
+            ...msg,
+            latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
+          }));
+          setMessages(mappedData);
+        }
+
+        setNewMessage("");
+        setSelectedDraftId(null);
+        setPendingReplyCustomerId(null);
+        setLastSeenMap(prev => ({ ...prev, [activeCustomerId!]: new Date().toISOString() }));
       } else if (activeCustomerId) {
         const response = await apiClient.post(`/engagement-workflow/manual-reply/${activeCustomerId}`, {
           message: newMessage.trim(),
         });
+
+        // After sending, re-fetch messages from backend to update UI and remove sent drafts
+        if (businessId) {
+          const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
+          const messageData = res.data || [];
+          const mappedData = messageData.map((msg: any) => ({
+            ...msg,
+            latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
+          }));
+          setMessages(mappedData);
+        }
 
         setMessages(prev => [...prev, {
           id: response.data.id,
@@ -219,12 +238,13 @@ export default function InboxPage() {
           source: "manual",
           opted_in: false
         }]);
+        // Remove all ai_draft entries for this customer
+        setTimelineEntries((prev) =>
+          prev.filter((entry) =>
+            !(entry.type === "ai_draft" && entry.customer_id === activeCustomerId)
+          )
+        );
       }
-
-      setNewMessage("");
-      setSelectedDraftId(null);
-      setPendingReplyCustomerId(null);
-      setLastSeenMap(prev => ({ ...prev, [activeCustomerId!]: new Date().toISOString() }));
     } catch (err) {
       console.error("❌ Failed to send message", err);
       setSendError("Failed to send message.");
@@ -388,18 +408,37 @@ export default function InboxPage() {
                 )}
                 <div className="whitespace-pre-wrap break-words">{entry.content}</div>
                 {entry.type === "ai_draft" && (
-                  <button
-                    onClick={() => {
-                      setPendingReplyCustomerId(entry.customer_id);
-                      setActiveCustomerId(entry.customer_id);
-                      setNewMessage(entry.content);
-                      setSelectedDraftId(typeof entry.id === 'string' ? parseInt(entry.id) : entry.id);
-                    }}
-                    className="mt-2 text-xs font-medium text-white/90 hover:text-white 
-                      flex items-center gap-1 transition-colors"
-                  >
-                    ✏️ Edit & Send
-                  </button>
+                  <>
+                    <button
+                      onClick={() => {
+                        setPendingReplyCustomerId(entry.customer_id);
+                        setActiveCustomerId(entry.customer_id);
+                        setNewMessage(entry.content);
+                        setSelectedDraftId(typeof entry.id === 'string' ? parseInt(entry.id) : entry.id);
+                      }}
+                      className="mt-2 text-xs font-medium text-white/90 hover:text-white 
+                        flex items-center gap-1 transition-colors"
+                    >
+                      ✏️ Edit & Send
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await apiClient.delete(`/engagement-workflow/${entry.id}`);
+                          setTimelineEntries((prev) =>
+                            prev.filter((e) => !(e.id === entry.id && e.type === "ai_draft"))
+                          );
+                        } catch (err) {
+                          console.error("❌ Failed to delete draft", err);
+                          alert("Failed to delete draft.");
+                        }
+                      }}
+                      className="mt-1 text-xs font-medium text-white/90 hover:text-white 
+                        flex items-center gap-1 transition-colors"
+                    >
+                      🗑️ Delete Draft
+                    </button>
+                  </>
                 )}
               </div>
             </div>

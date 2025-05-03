@@ -126,3 +126,23 @@ def update_ai_draft(
     engagement.ai_response = new_draft
     db.commit()
     return {"status": "updated"}
+
+
+# Delete engagement draft route
+from fastapi import status
+
+@router.delete("/{engagement_id}", summary="Delete an engagement draft")
+def delete_engagement_draft(engagement_id: int, db: Session = Depends(get_db)):
+    """
+    Delete an engagement draft by ID. Only allowed if the engagement is still in 'pending_review' state.
+    """
+    engagement = db.query(Engagement).filter(Engagement.id == engagement_id).first()
+    if not engagement:
+        raise HTTPException(status_code=404, detail="Engagement not found")
+
+    if engagement.status != "pending_review":
+        raise HTTPException(status_code=400, detail="Only drafts can be deleted")
+
+    db.delete(engagement)
+    db.commit()
+    return {"message": "Engagement draft deleted successfully."}
