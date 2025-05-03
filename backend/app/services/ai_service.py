@@ -243,6 +243,50 @@ Each object must have:
                 detail=f"An internal server error occurred while generating the roadmap drafts."
             )
 
+    async def generate_sms_response(self, message: str, customer_id: int, business_id: int) -> str:
+        """
+        Generates a one-off AI reply to an inbound SMS message using business tone and customer context.
+        """
+        customer = self.db.query(Customer).filter(Customer.id == customer_id).first()
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        business = self.db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
+        if not business:
+            raise HTTPException(status_code=404, detail="Business not found")
+
+        # Style
+        from app.services.style_service import StyleService
+        style_service = StyleService()
+        class StyleWrapper:
+            def __init__(self, style_dict): self.style_analysis = style_dict or {}
+        style = StyleWrapper(await style_service.get_style_guide(business.id, self.db))
+        style_guide = style.style_analysis if style and style.style_analysis else {}
+
+        prompt = f"""
+You are a friendly assistant for {business.business_name}, a {business.industry} business.
+
+The business owner is {business.representative_name} and prefers this tone and style:
+{json.dumps(style_guide, indent=2)}
+
+The customer is {customer.customer_name}, who previously shared:
+{customer.interaction_history or "No interaction history."}
+
+They just sent this message:
+"{message}"
+
+Please draft a friendly, natural-sounding SMS reply that fits the business tone and maintains the relationship. Keep it under 160 characters. Do not include promotions unless relevant.
+Always sign off with the business owner's name like: "- {business.representative_name}".
+"""
+
+        response = self.client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "system", "content": prompt}],
+        )
+
+        content = response.choices[0].message.content.strip()
+        logger.info(f"🧠 One-off AI reply generated: {content}")
+        return content
 
     # --- analyze_customer_response method (keep as is or update similarly if needed) ---
     async def analyze_customer_response(self, customer_id: int, message: str) -> dict:
