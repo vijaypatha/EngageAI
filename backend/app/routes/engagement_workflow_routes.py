@@ -9,9 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Engagement, Customer, BusinessProfile
+from app.config import settings
 from app.services.twilio_service import send_sms_via_twilio  
 from datetime import datetime
 from pydantic import BaseModel
+from twilio.rest import Client
+from twilio.base.exceptions import TwilioRestException
 
 router = APIRouter()
 
@@ -34,42 +37,83 @@ def update_ai_response(id: int, payload: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "AI response updated successfully."}
 
+from pydantic import BaseModel
+
+class SendDraftInput(BaseModel):
+    updated_content: str
+
 @router.put("/reply/{id}/send")
-def send_reply(id: int, db: Session = Depends(get_db)):
-    # 1. Fetch the engagement
+def send_reply(
+    id: int,
+    payload: SendDraftInput,
+    db: Session = Depends(get_db)
+):
     engagement = db.query(Engagement).filter(Engagement.id == id).first()
     if not engagement:
         raise HTTPException(status_code=404, detail="Engagement not found")
 
-    # 2. Validate engagement status
-    if engagement.status != "pending_review":
-        raise HTTPException(status_code=400, detail="Already processed")
+    if engagement.status != "pending_review" or engagement.sent_at is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Draft not valid for sending (already sent or corrupted)."
+        )
 
-    # 3. Fetch customer details
+    message_content = payload.updated_content.strip()
+    if not message_content:
+        raise HTTPException(status_code=400, detail="Updated message content is empty")
+
+    engagement.ai_response = message_content
+
     customer = db.query(Customer).filter(Customer.id == engagement.customer_id).first()
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
+    if not customer or not customer.phone:
+        raise HTTPException(status_code=404, detail="Customer not found or missing phone")
 
-    if not customer.phone:
-        raise HTTPException(status_code=400, detail="Customer phone number is missing")
-
-    # 3.5 Fetch business details
     business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
     if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+        raise HTTPException(status_code=404, detail="Business not found for this customer")
 
-    # 4. Send SMS using Twilio
+    if not all([
+        settings.TWILIO_ACCOUNT_SID,
+        settings.TWILIO_AUTH_TOKEN,
+        settings.TWILIO_FROM_NUMBER
+    ]):
+        raise HTTPException(status_code=500, detail="SMS provider is not configured")
+
+    twilio_client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
     try:
-        send_sms_via_twilio(to=customer.phone, message=engagement.ai_response, business=business)
-    except Exception as e:
-        print(f"❌ Twilio send failed: {e}")  # <== This line will log the exact cause
-        raise HTTPException(status_code=500, detail=f"Failed to send SMS: {str(e)}")
+        print(f"📤 Sending updated AI draft to {customer.phone}")
+        engagement.sent_at = None  # Clear leftover timestamp from broken draft creation
+        message = twilio_client.messages.create(
+            body=message_content,
+            from_=settings.TWILIO_FROM_NUMBER,
+            to=customer.phone
+        )
 
-    # 5. Mark as sent
-    engagement.status = "sent"
-    engagement.sent_at = datetime.utcnow()
-    db.commit()
-    return {"message": "Reply sent successfully"}
+        if message.status in ['failed', 'undelivered']:
+            raise TwilioRestException(
+                status=500,
+                uri=message.uri,
+                msg=f"Twilio reported message status: {message.status}. Error: {message.error_message}"
+            )
+
+        engagement.status = "sent"
+        engagement.sent_at = datetime.utcnow()
+        db.commit()
+        db.refresh(engagement)
+
+        return {
+            "message": "Draft reply sent successfully",
+            "engagement_id": engagement.id,
+            "status": engagement.status,
+            "sms_sid": message.sid
+        }
+
+    except TwilioRestException as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Twilio error: {e.msg}")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 class ManualReplyPayload(BaseModel):
     message: str

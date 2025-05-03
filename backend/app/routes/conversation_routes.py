@@ -73,6 +73,7 @@ def get_conversation(customer_id: int, db: Session = Depends(get_db)):
     for msg in engagements:
         if msg.response:
             conversation.append({
+                "id": msg.id,
                 "type": "customer",
                 "text": msg.response,
                 "timestamp": msg.sent_at.astimezone(utc) if msg.sent_at else None,
@@ -80,6 +81,7 @@ def get_conversation(customer_id: int, db: Session = Depends(get_db)):
             })
         if msg.ai_response and msg.status != "sent":
             conversation.append({
+                "id": msg.id,
                 "type": "ai_draft",
                 "text": msg.ai_response,
                 "timestamp": None,
@@ -87,6 +89,7 @@ def get_conversation(customer_id: int, db: Session = Depends(get_db)):
             })
         if msg.ai_response and msg.status == "sent":
             conversation.append({
+                "id": msg.id,
                 "type": "sent",
                 "text": msg.ai_response,
                 "timestamp": msg.sent_at.astimezone(utc) if msg.sent_at else None,

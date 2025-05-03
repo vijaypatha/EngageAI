@@ -181,6 +181,7 @@ export default function InboxPage() {
   }, [messages, activeCustomerId, scheduledSms]);
 
   const handleSendMessage = async () => {
+    console.log('handleSendMessage', { selectedDraftId, pendingReplyCustomerId, newMessage });
     if (!newMessage.trim()) return;
     setIsSending(true);
     setSendError(null);
@@ -190,8 +191,28 @@ export default function InboxPage() {
         const draftMsg = messages.find((msg) => msg.id === selectedDraftId);
         if (!draftMsg) throw new Error("Draft not found");
 
-        await apiClient.put(`/engagement-workflow/${draftMsg.id}/edit-ai-draft`, { ai_response: newMessage.trim() });
-        await apiClient.put(`/engagement-workflow/reply/${draftMsg.id}/send`, { content: newMessage.trim() });
+        await apiClient.put(`/engagement-workflow/${selectedDraftId}/edit-ai-draft`, { ai_response: newMessage.trim() });
+        await apiClient.put(`/engagement-workflow/reply/${selectedDraftId}/send`, { updated_content: newMessage.trim() });
+
+        // Optimistically remove the draft with the sent id and status "pending_review"
+        setMessages((prev) =>
+          prev.filter(
+            (msg) =>
+              !(
+                msg.id === selectedDraftId &&
+                msg.status === "pending_review"
+              )
+          )
+        );
+        setTimelineEntries((prev) =>
+          prev.filter(
+            (entry) =>
+              !(
+                entry.type === "ai_draft" &&
+                Number(entry.id) === selectedDraftId // 👈 Ensure match works with string/number
+              )
+          )
+        );
 
         // After sending, re-fetch messages from backend to update UI and remove sent drafts
         if (businessId) {
@@ -411,10 +432,13 @@ export default function InboxPage() {
                   <>
                     <button
                       onClick={() => {
-                        setPendingReplyCustomerId(entry.customer_id);
+                        // Always convert entry.id to a valid number or null
+                        const idNum = Number(entry.id);
+                        console.log('Edit & Send clicked', { entryId: entry.id, idNum, type: typeof entry.id });
+                        setSelectedDraftId(Number.isNaN(idNum) ? null : idNum); // Track the draft ID
+                        setPendingReplyCustomerId(entry.customer_id); // Track customer to reply to
                         setActiveCustomerId(entry.customer_id);
                         setNewMessage(entry.content);
-                        setSelectedDraftId(typeof entry.id === 'string' ? parseInt(entry.id) : entry.id);
                       }}
                       className="mt-2 text-xs font-medium text-white/90 hover:text-white 
                         flex items-center gap-1 transition-colors"

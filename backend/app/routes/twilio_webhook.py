@@ -134,7 +134,7 @@ async def receive_sms(
                 response=body,
                 ai_response=ai_response,
                 status="pending_review",
-                sent_at=datetime.now(timezone.utc)
+                sent_at=None  # AI-generated drafts should not have sent_at timestamp
             )
             logger.info(
                 f"Prepared engagement: customer_id={engagement.customer_id}, "
