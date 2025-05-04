@@ -125,33 +125,47 @@ async def generate_business_scenarios(business: BusinessProfile, db: Session) ->
     client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     prompt = f"""
-    Create 3 SMS training scenarios for a {business.industry} business.
+    You are helping train an AI to understand the unique communication style of a business owner.
+    Generate 3 distinct **SMS communication prompts** for the business owner to respond to.
+    Frame each prompt as a direct question asking the owner how they would reply via SMS in that specific situation.
+
     Business Details:
     - Name: {business.business_name}
+    - Industry: {business.industry}
     - Goals: {business.business_goal}
     - Services: {business.primary_services}
 
-    For each scenario:
-    1. Create a realistic situation this business might face in an SMS communication context.
-    2. Classify the context_type using a relevant category (e.g., inquiry, follow_up, appreciation, sales, support, notification, appointment_reminder, confirmation, feedback_request, etc.). Choose the most appropriate category for the scenario.
+    For each of the 3 prompts:
+    1. Describe a concise, realistic scenario where the business owner needs to send or reply to an SMS.
+    2. Phrase the scenario as a question directly asking the owner what SMS they would write. Include the customer's message if the scenario involves a reply.
+    3. **Do NOT write the owner's potential SMS response.** Only generate the prompt/question for the owner.
+    4. Classify the `context_type` for the situation (e.g., inquiry, follow_up, appreciation, sales, support, notification, appointment_reminder, confirmation, feedback_request). Choose the most fitting category.
 
-    IMPORTANT: Return your response in this exact JSON format. It must be a single JSON object with a key "scenarios" containing a list of scenario objects. Ensure the JSON is perfectly formatted, containing only the JSON object without surrounding text or markdown.
+    IMPORTANT: Return ONLY a valid JSON object with a key "scenarios" containing a list of 3 scenario objects. Ensure perfect JSON format without surrounding text or markdown.
+    Example JSON Structure (incorporating the direct question format):
     {{
         "scenarios": [
             {{
-                "scenario": "specific situation description relevant to SMS",
-                "context_type": "chosen_category"
+                "scenario": "You receive this SMS from a potential customer: 'Hi, do you offer appointments on Saturdays?' How would you reply?",
+                "context_type": "inquiry"
             }},
-            // repeat for all 3 scenarios
+            {{
+                "scenario": "You need to send a short text reminding a client about their session tomorrow morning. What message would you send?",
+                "context_type": "appointment_reminder"
+            }},
+            {{
+                "scenario": "A regular client texts: 'Thanks so much for your help today!' What would you text back?",
+                "context_type": "appreciation"
+            }}
+            // ... generate 3 unique prompts relevant to the business ...
         ]
     }}
 
-    Requirements for scenarios:
-    - Be concise and suitable for SMS length.
-    - Highly specific to the business's industry and services.
-    - Cover different stages of customer interaction (pre-sale, post-sale, support, etc.).
-    - Include business-specific terminology where natural.
-    - Align with their stated business goals.
+    Requirements for the generated "scenario" prompts:
+    - Each prompt MUST ask the business owner how they would respond via SMS.
+    - Be specific to the business's industry ({business.industry}) and services ({business.primary_services}).
+    - Align with their stated business goals ({business.business_goal}).
+    - Cover different potential interaction types (receiving inquiries, sending reminders, responding to feedback, etc.).
     """
 
     try:

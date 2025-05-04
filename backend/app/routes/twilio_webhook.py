@@ -1,18 +1,24 @@
 # Handles incoming SMS messages from customers and manages automated responses
 # Business owners receive customer messages and can track engagement through this webhook
+# backend/app/routes/twilio_webhook.py
+
+# Handles incoming SMS messages from customers and manages automated responses
+# Business owners receive customer messages and can track engagement through this webhook
 from datetime import datetime, timezone
 import logging
 from typing import Dict, Optional
-import traceback
+import traceback # Import traceback
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import BusinessProfile, Customer, Engagement
-from app.services.ai_service import AIService
-from app.services.consent_service import ConsentService
+# Import models needed here
+from app.models import BusinessProfile, Customer, Engagement, ConsentLog 
+# Import services needed here
+from app.services.ai_service import AIService 
+from app.services.consent_service import ConsentService 
 from app.config import settings
 
 # Configure logging
@@ -24,14 +30,21 @@ router = APIRouter()
 def normalize_phone(number: str) -> str:
     """
     Normalize phone number to E.164 format (+1XXXXXXXXXX).
-    
-    Args:
-        number: Phone number to normalize
-        
-    Returns:
-        Normalized phone number in E.164 format
     """
-    return "+" + number.strip().replace(" ", "").lstrip("+")
+    if not number: # Handle empty string case
+        return ""
+    # Basic cleaning, ensure '+' prefix
+    cleaned = "".join(filter(str.isdigit, number))
+    if len(cleaned) == 10:
+        return f"+1{cleaned}"
+    if len(cleaned) == 11 and cleaned.startswith('1'):
+        return f"+{cleaned}"
+    if number.startswith('+') and len(cleaned) > 10: # Assume already E.164-like if starts with +
+         return "+" + "".join(filter(str.isdigit, number[1:])) # Ensure only digits after +
+    # Fallback or raise error if format is unexpected
+    logger.warning(f"Could not normalize phone number reliably: {number}")
+    return "+" + cleaned # Best effort
+
 
 @router.post("/inbound", response_class=PlainTextResponse)
 async def receive_sms(
@@ -40,119 +53,136 @@ async def receive_sms(
 ) -> PlainTextResponse:
     """
     Handle incoming SMS messages from Twilio webhook.
-    
-    Args:
-        request: FastAPI request object containing form data
-        db: Database session
-        
-    Returns:
-        PlainTextResponse with appropriate status message
-        
-    Raises:
-        HTTPException: For various error conditions
+    Processes consent keywords first, then handles regular messages.
     """
+    message_sid = "N/A" # Default SID for logging if parsing fails
+    from_number_raw = "N/A"
+    logger.info("=== Twilio Webhook: START /inbound processing ===") # START marker
     try:
-        logger.info("=== Twilio Webhook: Incoming SMS received ===")
-        logger.info("✅ Start: parsing form")
         form = await request.form()
-        from_number = normalize_phone(form.get("From", ""))
-        to_number = normalize_phone(form.get("To", ""))
-        body = form.get("Body", "").strip()
-        logger.info(f"Webhook payload: From={from_number}, To={to_number}, Body='{body}'")
+        from_number_raw = form.get("From", "")
+        from_number = normalize_phone(from_number_raw) # Customer's number
+        to_number = normalize_phone(form.get("To", ""))     # Your Twilio number
+        body_raw = form.get("Body", "")
+        body = body_raw.strip().lower() # Use lower case body for processing
+        message_sid = form.get("MessageSid", "") # Get the Message SID
+        
+        logger.info(f"Webhook Raw Payload: From={from_number_raw}, To={form.get('To')}, Body='{body_raw}', SID={message_sid}")
+        logger.info(f"Webhook Normalized Data: From={from_number}, To={to_number}, Body='{body}', SID={message_sid}")
 
         if not all([from_number, to_number, body]):
-            logger.error("Missing required SMS webhook parameters")
-            return PlainTextResponse("Missing parameters", status_code=400)
+            logger.error(f"Webhook missing required parameters. SID: {message_sid}")
+            # Still return 200 to Twilio to prevent retries for bad requests
+            return PlainTextResponse("Missing parameters", status_code=200) 
 
-        logger.info("✅ Start: looking up customer")
-        # Find customer and business
+        # --- Consent Processing Logic ---
+        
+        # Check for existing pending consent log for this customer phone number
+        # We do this early for logging purposes
+        pending_log = db.query(ConsentLog).filter(
+            ConsentLog.phone_number == from_number,
+            ConsentLog.status == "pending" # Specifically look for 'pending'
+        ).order_by(ConsentLog.sent_at.desc()).first()
+
+        if pending_log:
+            logger.info(f"Found PENDING consent log (ID: {pending_log.id}) for {from_number}. Will attempt to process response '{body}'.")
+        else:
+            # This log is important if 'Yes' arrives but isn't processed
+            logger.warning(f"NO PENDING consent log found for {from_number}. ConsentService.process_sms_response will not update status based on this message ('{body}').")
+            
+        # Instantiate ConsentService
+        consent_service = ConsentService(db)
+        
+        # Attempt to process the incoming message as a potential consent response ('yes', 'no', 'stop', etc.)
+        logger.info(f"Attempting to process '{body}' as consent response via ConsentService for {from_number} (SID: {message_sid})")
+        consent_response_from_service = await consent_service.process_sms_response(
+            phone_number=from_number, 
+            response=body # Pass the lowercased body
+        )
+
+        if consent_response_from_service:
+            # If process_sms_response handled it (e.g., was 'yes'/'no'/'stop') AND found/updated a pending log
+            logger.info(f"Consent response processed by ConsentService for {from_number} (SID: {message_sid}). Returning service response to Twilio.")
+            # The service returns a PlainTextResponse object (e.g., "Opt-in confirmed.") to send back to Twilio
+            return consent_response_from_service 
+        else:
+            # If it wasn't a standard consent keyword OR if no pending log was found by the service
+             logger.info(f"Message '{body}' from {from_number} (SID: {message_sid}) not processed as a standard consent keyword/update by ConsentService.")
+             # Proceed to handle as a regular message ONLY IF customer is already opted in
+
+        # --- Regular Message Handling (Only if not handled as consent) ---
+        
+        logger.info(f"Proceeding to handle message from {from_number} (SID: {message_sid}) as regular inbound.")
+        
+        # Find customer by THEIR phone number
         customer = db.query(Customer).filter(Customer.phone == from_number).first()
         if not customer:
-            logger.warning(f"No customer found for phone number {from_number}")
-            return PlainTextResponse("Customer not found", status_code=404)
-        logger.info(f"Matched customer: ID={customer.id}, phone={customer.phone}, opted_in={customer.opted_in}")
+            logger.warning(f"No customer record found for {from_number} (SID: {message_sid}). Cannot process regular message.")
+            # Acknowledge receipt to Twilio but take no further action
+            return PlainTextResponse("Customer not found", status_code=200) 
+        logger.info(f"Found customer (ID: {customer.id}) associated with {from_number}.")
 
-        logger.info("✅ Start: looking up business")
+        # Check if customer is actually opted-in before processing regular messages
+        # Use the direct check on the Customer model now, assuming process_sms_response updated it if needed
+        if not customer.opted_in:
+             logger.warning(f"Ignoring message '{body}' from non-opted-in customer {customer.id} (SID: {message_sid}).")
+             # Acknowledge receipt to Twilio but take no further action
+             return PlainTextResponse("Customer not opted-in", status_code=200) 
+        
+        logger.info(f"Customer {customer.id} is opted-in. Processing message: '{body}' (SID: {message_sid})")
+        
+        # Find associated business
         business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
         if not business:
-            logger.error(f"No business found for customer {customer.id}")
-            return PlainTextResponse("Business not found", status_code=404)
-        logger.info(f"Matched business: ID={business.id}, name={business.business_name}")
+            logger.error(f"Business profile not found for customer {customer.id} (Business ID: {customer.business_id}) (SID: {message_sid}).")
+            # This is an internal data integrity issue
+            return PlainTextResponse("Internal Error: Business profile missing", status_code=500) 
+        logger.info(f"Found business (ID: {business.id}, Name: {business.business_name}) for customer {customer.id}.")
 
-        # Initialize services
-        consent_service = ConsentService(db)
+
+        # --- Generate AI response and save Engagement (Your existing logic for regular messages) ---
+        logger.info(f"Generating AI response for customer {customer.id}, business {business.id} (SID: {message_sid})")
         ai_service = AIService(db)
-
-        # Handle consent keywords
-        consent_words: Dict[str, list[str]] = {
-            "opted_in": ["yes", "start", "unstop", "subscribe", "opt in", "opt-in"],
-            "opted_out": ["no", "stop", "unsubscribe", "opt out", "opt-out"]
-        }
-        for status, keywords in consent_words.items():
-            if any(keyword in body.lower() for keyword in keywords):
-                logger.info(f"Consent keyword detected: {status}")
-                await consent_service.update_consent_status(
-                    customer_id=customer.id,
-                    status=status,
-                    method="sms"
-                )
-                message = (
-                    "You've successfully opted in to messages."
-                    if status == "opted_in"
-                    else "You've been unsubscribed from messages."
-                )
-                logger.info(f"Consent status updated for customer {customer.id}: {status}")
-                return PlainTextResponse(message, status_code=200)
-
-        logger.info("✅ Start: checking consent")
-        # Check consent status before proceeding
-        has_consent = await consent_service.check_consent(customer.phone, business.id)
-        logger.info(f"Consent check for customer {customer.id}: {has_consent}")
-        if not has_consent:
-            logger.warning(f"Ignoring message from opted-out customer {customer.id}")
-            return PlainTextResponse("Opted-out user. No response generated.", status_code=200)
-
-        logger.info("✅ Start: generating AI response")
-        # Generate AI response
         try:
-            ai_response = await ai_service.generate_sms_response(
-                message=body,
+            # Ensure body here is the ORIGINAL case if AI needs it, or use lowercased 'body' if preferred
+            ai_response = await ai_service.generate_sms_response( 
+                message=body_raw.strip(), # Use original case body for AI?
                 business_id=business.id,
                 customer_id=customer.id
             )
-            logger.info(f"AI Response generated: {ai_response}")
+            logger.info(f"AI Response generated for SID {message_sid}: {ai_response}")
         except Exception as e:
-            logger.error(f"❌ AI generation failed: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="AI generation failed")
+            logger.error(f"AI generation failed for SID {message_sid}: {e}", exc_info=True)
+            # Decide how to handle AI failure - just acknowledge receipt?
+            return PlainTextResponse("Received (AI generation failed)", status_code=200)
 
-        logger.info("✅ Start: saving to engagements")
-        # Save engagement
+        logger.info(f"Saving engagement for customer {customer.id}, business {business.id} (SID: {message_sid})")
         try:
             engagement = Engagement(
                 customer_id=customer.id,
                 business_id=business.id,
-                response=body,
-                ai_response=ai_response,
-                status="pending_review",
-                sent_at=None  # AI-generated drafts should not have sent_at timestamp
-            )
-            logger.info(
-                f"Prepared engagement: customer_id={engagement.customer_id}, "
-                f"business_id={engagement.business_id}, response='{engagement.response}', "
-                f"ai_response='{engagement.ai_response}', status='{engagement.status}', "
-                f"sent_at={engagement.sent_at}"
+                response=body_raw.strip(), # Store original case message from customer
+                ai_response=ai_response, # Store generated AI response
+                status="pending_review", # Mark for review
+                sent_at=None 
             )
             db.add(engagement)
             db.commit()
-            logger.info(f"Engagement saved with ID={engagement.id} for customer {customer.id}")
+            logger.info(f"Engagement saved (ID: {engagement.id}) for customer {customer.id} (SID: {message_sid})")
         except Exception as e:
-            logger.error(f"❌ DB commit failed: {e}", exc_info=True)
+            logger.error(f"DB commit failed saving engagement for SID {message_sid}: {e}", exc_info=True)
             db.rollback()
-            raise HTTPException(status_code=500, detail="DB insert failed")
+            # Decide how to handle DB failure - just acknowledge receipt?
+            return PlainTextResponse("Received (DB save failed)", status_code=200)
 
+        # Acknowledge receipt to Twilio after successful processing
         return PlainTextResponse("Received", status_code=200)
 
     except Exception as e:
-        logger.error(f"Exception in webhook: {str(e)}", exc_info=True)
+        # Catch-all for any unexpected errors during the process
+        logger.error(f"Unhandled exception in webhook processing for SID {message_sid} from {from_number_raw}: {str(e)}", exc_info=True)
         logger.error(traceback.format_exc())
-        return PlainTextResponse("Internal Error", status_code=500)
+        # Return 500; Twilio might retry based on its settings
+        return PlainTextResponse("Internal Server Error during webhook processing", status_code=500)
+    finally:
+        logger.info(f"=== Twilio Webhook: END /inbound processing for SID {message_sid} ===") # END marker
