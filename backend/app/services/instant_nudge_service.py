@@ -2,277 +2,298 @@
 # Provides AI-powered SMS generation and handling logic for the Instant Nudge feature.
 # Includes generation of personalized messages and logic to send or schedule them.
 
-from typing import List, Dict
-from datetime import datetime, timezone # Added timezone import
-import openai
-import os
-import pytz
+# --- Standard Imports ---
+import logging
 import json
 import uuid
 import traceback
+import os
+from datetime import datetime, timezone, timedelta # Added timedelta
+from typing import List, Dict, Optional, Any # Added Optional, Any
 
+# --- Pydantic and SQLAlchemy Imports ---
 from sqlalchemy.orm import Session
-from app.database import SessionLocal
-from app.models import BusinessProfile, BusinessOwnerStyle, Message, Engagement, Customer, Conversation
-from app.services.twilio_service import send_sms_via_twilio
-# Removed unused utils import: from app.utils import parse_sms_timing
-# Correctly import the NEW celery task along with potentially others
-from app.celery_tasks import process_scheduled_message_task # Removed schedule_sms_task import as it's not used here
-from app.services.style_service import get_style_guide
+import pytz # Make sure pytz is imported
+import openai
 
+# --- App Specific Imports ---
+from app.database import SessionLocal # Keep SessionLocal if used, or just Session type hint
+from app.models import BusinessProfile, Message, Engagement, Customer, Conversation # Ensure all are imported
+# Correctly import the NEW celery task that processes messages by ID
+# Make sure this task exists and handles sending based on Message ID
+from app.celery_tasks import process_scheduled_message_task # Assuming this task exists
+from app.services.style_service import get_style_guide # Assuming async
+from app.services.twilio_service import TwilioService # Import the service class
 
-# Helper: Call OpenAI to generate short SMS message
-# (Keep this function as is)
-async def call_openai_completion(prompt: str) -> str:
-    # ... implementation ...
-    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        max_tokens=120,
-        messages=[
-            {"role": "system", "content": "You write short, helpful SMS messages."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    return response.choices[0].message.content.strip()
+logger = logging.getLogger(__name__)
 
-
-# Generate a single AI message with customer name placeholder
-# (Keep this function as is)
-async def generate_instant_nudge(topic: str, business_id: int, db: Session) -> dict:
+# --- generate_instant_nudge Function (Keep As Is) ---
+async def generate_instant_nudge(topic: str, business_id: int, db: Session) -> Dict[str, Any]:
     """Generate a message that perfectly matches the business owner's style"""
-    # ... implementation ...
     # Get business profile
     business = db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
     if not business:
-        raise Exception("Business not found")
+        # Use ValueError or custom exception for service layer errors
+        raise ValueError(f"Business not found for ID: {business_id}")
 
     # Get comprehensive style guide
-    # Ensure get_style_guide is async if called with await
-    style_guide_data = await get_style_guide(business_id, db) # Assuming get_style_guide is async
+    style_guide_data = await get_style_guide(business_id, db) # Assuming async
 
     # Format style guide for prompt
     style_elements = {
         'phrases': '\n'.join(style_guide_data.get('key_phrases', [])),
-        'patterns': '\n'.join(style_guide_data.get('message_patterns', {}).get('patterns', [])), # Adjusted based on potential structure
+         # Ensure message_patterns exists and is a dict before accessing subkeys
+        'patterns': '\n'.join(style_guide_data.get('message_patterns', {}).get('patterns', [])),
         'personality': '\n'.join(style_guide_data.get('personality_traits', [])),
-        'special': json.dumps(style_guide_data.get('special_elements', {}), indent=2)
+        'special': json.dumps(style_guide_data.get('special_elements', {}), indent=2),
+         # Add style notes if they exist in your guide structure
+        'style_notes': json.dumps(style_guide_data.get('style_notes', {}), indent=2)
     }
 
     prompt = f"""
-    You are {business.representative_name} from {business.business_name}.
-    Write a message about: '{topic}'
+    You are {business.representative_name or 'the owner'} from {business.business_name}.
+    Write a short, friendly SMS message (under 160 chars) about: '{topic}'
+    Use the placeholder {{customer_name}} where the customer's name should go.
 
     YOUR UNIQUE VOICE:
-
     Common Phrases You Use:
     {style_elements['phrases']}
-
     How You Structure Messages:
     {style_elements['patterns']}
-
     Your Personality Traits:
     {style_elements['personality']}
-
     Your Special Elements:
     {style_elements['special']}
+    Your Style Notes:
+    {style_elements['style_notes']}
 
     CRITICAL RULES:
-    1. Write EXACTLY as if you are this person
-    2. Use their exact communication patterns
-    3. Include their type of phrases and references
-    4. Match their personality perfectly
-    5. Keep message under 160 characters
+    1. Write EXACTLY as if you are this person, matching their unique style.
+    2. Use their exact communication patterns and phrases naturally.
+    3. Keep message under 160 characters.
+    4. MUST include the placeholder {{customer_name}}.
+    5. End appropriately (e.g., with representative name if available).
 
     Write your message:
     """
 
-    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are an expert at matching exact communication styles."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7
-    )
-
-    message_content = response.choices[0].message.content.strip() # Renamed variable
-
-    return {"message": message_content}
-
-
-# Handle sending or scheduling multiple instant nudges
-async def handle_instant_nudge_batch(messages: List[dict]):
-    db: Session = SessionLocal()
-    message_ids = []
-    sent_customers = []
-    scheduled_customers = []
-
-    print(f"📦 Processing {len(messages)} instant nudge message blocks")
-
-    # Use a single try...finally block for database session management
     try:
-        for block in messages:
-            customer_ids = block["customer_ids"]
-            base_msg = block["message"]
-            scheduled_time_str = block.get("send_datetime_utc") # Renamed for clarity
+        client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o", # Or your preferred model
+            messages=[
+                {"role": "system", "content": "You are an expert at matching exact communication styles for SMS."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=100 # Keep it concise
+        )
+        message_content = response.choices[0].message.content.strip()
 
-            print(f"➡️ Block for {len(customer_ids)} customers | Scheduled: {bool(scheduled_time_str)}")
+        # Basic check for placeholder
+        if "{customer_name}" not in message_content:
+             logger.warning("Generated message missing {customer_name} placeholder. Adding it.")
+             # Attempt a simple fix or add instructions to regenerate
+             message_content = f"Hi {{customer_name}}, {message_content}" # Example fix
 
-            for customer_id in customer_ids:
-                # Wrap per-customer logic in try/except to prevent one failure from stopping others
+        return {"message": message_content}
+
+    except Exception as e:
+        logger.error(f"OpenAI API call failed during nudge generation: {e}", exc_info=True)
+        raise Exception(f"AI message generation failed: {e}") from e
+
+# --- REFACTORED: handle_instant_nudge_batch Function ---
+async def handle_instant_nudge_batch(
+    db: Session, # Pass Session directly
+    business_id: int,
+    customer_ids: List[int],
+    message_content: str, # The pre-generated message template
+    send_datetime_iso: Optional[str] = None # Optional ISO string for scheduling
+) -> Dict[str, Any]:
+    """
+    Handles sending or scheduling an Instant Nudge message to a list of customers.
+    """
+    if not customer_ids:
+        logger.warning("handle_instant_nudge_batch called with empty customer_ids list.")
+        return {"processed_message_ids": [], "sent_count": 0, "scheduled_count": 0, "failed_count": 0}
+
+    processed_message_ids = []
+    sent_count = 0
+    scheduled_count = 0
+    failed_count = 0
+
+    # --- Pre-fetch Business Info ---
+    # Fetch once outside the loop for efficiency
+    business = db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
+    if not business:
+        # If the business doesn't exist, we can't proceed for any customer
+        raise ValueError(f"Business not found for ID: {business_id}")
+
+    # --- Determine if Scheduling or Sending Immediately ---
+    is_scheduling = False
+    scheduled_time_utc: Optional[datetime] = None
+    now_utc = datetime.now(timezone.utc)
+
+    if send_datetime_iso:
+        try:
+            # Attempt to parse the ISO string
+            parsed_dt = datetime.fromisoformat(send_datetime_iso.replace('Z', '+00:00')) # Handle 'Z' if present
+            # Ensure it's timezone-aware UTC
+            if parsed_dt.tzinfo is None:
+                 # Assume UTC if no timezone provided in string - adjust if frontend sends local time
+                 scheduled_time_utc = pytz.UTC.localize(parsed_dt)
+                 logger.warning(f"Received schedule time without timezone, assuming UTC: {send_datetime_iso} -> {scheduled_time_utc}")
+            else:
+                 scheduled_time_utc = parsed_dt.astimezone(pytz.UTC)
+
+            # Check if the scheduled time is in the future (allow a small buffer)
+            if scheduled_time_utc > (now_utc - timedelta(minutes=1)):
+                is_scheduling = True
+                logger.info(f"Scheduling messages for {scheduled_time_utc} UTC.")
+            else:
+                logger.info(f"Scheduled time {send_datetime_iso} is in the past. Sending immediately.")
+
+        except ValueError as e:
+            logger.error(f"Invalid ISO format for send_datetime_iso: '{send_datetime_iso}'. Error: {e}. Sending immediately.")
+            # Fallback to immediate send if parsing fails
+
+    # --- Initialize Twilio Service (if sending immediately) ---
+    twilio_service = None
+    if not is_scheduling:
+         twilio_service = TwilioService(db) # Initialize only if needed
+
+    # --- Process Each Customer ---
+    for customer_id in customer_ids:
+        # Wrap per-customer logic in try/except to allow batch continuation on single failure
+        message_record_id = None # Track ID for potential rollback/logging
+        try:
+            customer = db.query(Customer).filter(Customer.id == customer_id).first()
+            if not customer:
+                logger.warning(f"Skipping unknown customer_id={customer_id} in batch.")
+                failed_count += 1
+                continue
+            if not customer.opted_in:
+                logger.warning(f"Skipping opted-out customer_id={customer_id} (Name: {customer.customer_name}).")
+                failed_count += 1
+                continue
+
+            # Personalize message
+            personalized_message = message_content.replace("{customer_name}", customer.customer_name)
+            if len(personalized_message) > 1600: # Twilio segment limit check
+                 logger.warning(f"Message for customer {customer_id} might exceed segment limits ({len(personalized_message)} chars).")
+                 # Decide: truncate, skip, or send anyway? Let's send for now.
+
+            # Get or create conversation
+            conversation = db.query(Conversation).filter(
+                Conversation.customer_id == customer.id,
+                Conversation.business_id == business_id, # Use business_id passed in
+                Conversation.status == 'active'
+            ).first()
+
+            if not conversation:
+                conversation = Conversation(
+                    id=uuid.uuid4(),
+                    customer_id=customer.id,
+                    business_id=business_id,
+                    started_at=now_utc, # Use consistent UTC time
+                    last_message_at=now_utc,
+                    status='active'
+                )
+                db.add(conversation)
+                db.flush() # Get conversation.id assigned
+
+            # --- Create Message DB Record ---
+            message_status = "scheduled" if is_scheduling else "pending_send" # Use intermediate status for immediate send
+            message = Message(
+                conversation_id=conversation.id,
+                customer_id=customer_id,
+                business_id=business_id,
+                content=personalized_message,
+                message_type='scheduled', # Consistent type for outbound planned messages
+                status=message_status,
+                scheduled_time=scheduled_time_utc if is_scheduling else now_utc, # Store target time or now
+                sent_at=None, # sent_at is set upon successful delivery confirmation (or attempt for immediate)
+                message_metadata={'source': 'instant_nudge'}
+            )
+            db.add(message)
+            db.flush() # Get message.id
+            message_record_id = message.id # Store for logging/Celery
+
+            # --- Perform Action: Schedule or Send ---
+            if is_scheduling:
+                # Schedule Celery Task
                 try:
-                    customer = db.query(Customer).filter(Customer.id == customer_id).first()
-                    if not customer:
-                        print(f"⚠️ Skipping unknown customer_id={customer_id}")
-                        continue
+                    # Ensure process_scheduled_message_task takes message.id as arg
+                    process_scheduled_message_task.apply_async(args=[message.id], eta=scheduled_time_utc)
+                    # Commit *after* successful queuing
+                    db.commit()
+                    processed_message_ids.append(message.id)
+                    scheduled_count += 1
+                    logger.info(f"✅ Successfully scheduled Message ID {message.id} for customer {customer_id} at {scheduled_time_utc} UTC.")
+                except Exception as celery_err:
+                    db.rollback() # Rollback message creation if Celery fails
+                    failed_count += 1
+                    logger.error(f"❌ Failed to schedule Celery task for Message ID {message_record_id} (Customer {customer_id}): {celery_err}", exc_info=True)
 
-                    # Replace placeholder with customer's name
-                    personalized = base_msg.replace("{customer_name}", customer.customer_name)
+            else:
+                # Send Immediately using Twilio Service
+                try:
+                    # Use the TwilioService instance initialized earlier
+                    sent_sid = await twilio_service.send_sms(
+                         to=customer.phone,
+                         message=personalized_message,
+                         business=business # Pass the fetched business object
+                         )
 
-                    # Get or create conversation
-                    conversation = db.query(Conversation).filter(
-                        Conversation.customer_id == customer.id,
-                        Conversation.business_id == customer.business_id,
-                        Conversation.status == 'active'
-                    ).first()
+                    # Update status and sent_at on successful send attempt
+                    message.status = "sent" # Mark as sent immediately on successful API call
+                    message.sent_at = datetime.now(timezone.utc)
+                    db.add(message) # Re-add to session after modification
 
-                    if not conversation:
-                        conversation = Conversation(
-                            id=uuid.uuid4(),
-                            customer_id=customer.id,
-                            business_id=customer.business_id,
-                            # Use timezone aware datetime
-                            started_at=datetime.now(timezone.utc),
-                            last_message_at=datetime.now(timezone.utc),
-                            status='active'
-                        )
-                        db.add(conversation)
-                        db.flush() # Flush to get conversation ID if needed
+                    # Optionally create Engagement record for immediate sends
+                    engagement = Engagement(
+                         customer_id=customer_id,
+                         message_id=message.id,
+                         ai_response=personalized_message, # Log sent message
+                         status="sent",
+                         sent_at=message.sent_at
+                         )
+                    db.add(engagement)
 
-                    # --- Scheduling Logic ---
-                    if scheduled_time_str:
-                        # Use nested try/except for scheduling specific errors
-                        try:
-                            # --- Timezone conversion ---
-                            customer_timezone = getattr(customer, "timezone") or "UTC"
-                            # Parse ISO string from frontend
-                            scheduled_time_naive = datetime.fromisoformat(scheduled_time_str)
+                    db.commit() # Commit message update and engagement together
+                    processed_message_ids.append(message.id)
+                    sent_count += 1
+                    logger.info(f"✅ Successfully sent immediate SMS for Message ID {message.id} (Customer {customer_id}). SID: {sent_sid}")
 
-                            # Ensure it's timezone-aware before converting, assuming input is local time
-                            if scheduled_time_naive.tzinfo is None:
-                                local_tz = pytz.timezone(customer_timezone)
-                                scheduled_time_aware = local_tz.localize(scheduled_time_naive)
-                            else:
-                                scheduled_time_aware = scheduled_time_naive # Already aware
+                except HTTPException as http_send_err:
+                    # Handle errors raised by twilio_service.send_sms (e.g., config error)
+                    db.rollback()
+                    failed_count += 1
+                    logger.error(f"❌ HTTP error sending immediate SMS for Message ID {message_record_id} (Customer {customer_id}): {http_send_err.status_code} - {http_send_err.detail}")
+                    # Optionally update message status to 'failed' here
+                except Exception as send_err:
+                     # Catch other unexpected send errors
+                     db.rollback()
+                     failed_count += 1
+                     logger.error(f"❌ Failed to send immediate SMS for Message ID {message_record_id} (Customer {customer_id}): {send_err}", exc_info=True)
+                     # Optionally update message status to 'failed'
 
-                            # Convert to UTC for storing and scheduling
-                            scheduled_time_utc = scheduled_time_aware.astimezone(pytz.UTC)
+        except Exception as per_customer_err:
+             # Catch unexpected errors within the customer loop
+             failed_count += 1
+             logger.error(f"❌ Unexpected error processing customer_id={customer_id} in batch: {per_customer_err}", exc_info=True)
+             # Rollback any partial changes for this customer
+             db.rollback()
 
-                            # --- Create Message Record ---
-                            message = Message(
-                                conversation_id=conversation.id,
-                                customer_id=customer_id,
-                                business_id=customer.business_id,
-                                content=personalized,
-                                message_type='scheduled', # Consistent type
-                                status="scheduled",
-                                scheduled_time=scheduled_time_utc,
-                                # Use correct key name 'metadata' if model expects it
-                                message_metadata={
-                                    'source': 'instant_nudge'
-                                }
-                            )
-                            db.add(message)
-                            db.flush()  # Get message.id
-                            message_id_val = message.id # Store the ID
-                            message_ids.append(message_id_val)
-                            # Commit should happen AFTER Celery task is successfully queued,
-                            # otherwise the task might run before commit and not find the message.
-                            # db.commit() # Moved commit lower
+    # --- Return Summary ---
+    logger.info(f"Batch processing summary: Sent={sent_count}, Scheduled={scheduled_count}, Failed/Skipped={failed_count}")
+    return {
+        "processed_message_ids": processed_message_ids, # IDs where processing was attempted and might have succeeded
+        "sent_count": sent_count,
+        "scheduled_count": scheduled_count,
+        "failed_count": failed_count
+    }
 
-                            # --- Schedule Celery Task ---
-                            try:
-                                process_scheduled_message_task.apply_async(args=[message_id_val], eta=scheduled_time_utc)
-                                print(f"✅ Correctly scheduled Celery task 'process_scheduled_message_task' for Message ID {message_id_val} at {scheduled_time_utc} UTC")
-                                # Now commit the message record since Celery task is queued
-                                db.commit()
-                                scheduled_customers.append(customer.customer_name) # Append only on successful scheduling AND commit
-                            except Exception as celery_err:
-                                print(f"❌ Failed to schedule Celery task for Message ID {message_id_val}: {celery_err}")
-                                db.rollback() # Rollback message creation if Celery fails
-                                # Do not add to scheduled_customers list
-
-                        except Exception as schedule_block_err:
-                            print(f"❌ Failed during scheduling block for {customer.customer_name}: {schedule_block_err}")
-                            print(f"Traceback: {traceback.format_exc()}")
-                            db.rollback() # Rollback any partial changes for this customer/block
-
-                    # --- Immediate Send Logic ---
-                    else:
-                        business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
-                        if not business:
-                            print(f"⚠️ Skipping customer {customer_id}: business not found for immediate send.")
-                            continue # Skip this customer
-
-                        # --- Create Message Record ---
-                        message = Message(
-                            conversation_id=conversation.id,
-                            customer_id=customer_id,
-                            business_id=customer.business_id,
-                            content=personalized,
-                            message_type='scheduled', # Consistent type
-                            status="sent", # Set status to sent immediately
-                            scheduled_time=datetime.now(timezone.utc), # Record attempt time
-                            sent_at=datetime.now(timezone.utc), # Record attempt time as sent_at
-                            message_metadata={ # Use correct key name
-                                'source': 'instant_nudge'
-                            }
-                        )
-                        db.add(message)
-                        db.flush() # Get message.id
-
-                        # --- Call Twilio ---
-                        try:
-                            # Ensure await is used!
-                            await send_sms_via_twilio(customer.phone, personalized, business)
-                            print(f"✅ Twilio send successful for customer {customer.customer_name} ({customer.phone})")
-
-                            # --- Create Engagement Record ---
-                            engagement = Engagement(
-                                customer_id=customer_id,
-                                message_id=message.id, # Link to the message record
-                                ai_response=personalized, # Storing the sent message here
-                                status="sent", # Match message status
-                                sent_at=message.sent_at # Use the same timestamp
-                            )
-                            db.add(engagement)
-                            db.commit() # Commit message and engagement together after successful send
-                            message_ids.append(message.id) # Add ID after successful commit
-                            sent_customers.append(customer.customer_name) # Add to list only on success
-
-                        except Exception as send_err:
-                            print(f"❌ Failed to send immediate SMS to {customer.customer_name}: {send_err}")
-                            db.rollback() # Rollback message/engagement creation if send fails
-                            # Update message status to 'failed' if needed, but requires another commit
-                            # message.status = 'failed'
-                            # db.add(message) # Add again if rolled back
-                            # db.commit()
-
-                except Exception as per_customer_err:
-                     print(f"❌ Unexpected error processing customer_id={customer_id}: {per_customer_err}")
-                     print(f"Traceback: {traceback.format_exc()}")
-                     db.rollback() # Rollback any changes for this specific customer
-
-        # Final status logging
-        print(f"✅ Batch processing complete. {len(sent_customers)} sent now, {len(scheduled_customers)} successfully scheduled.")
-        if sent_customers:
-            print("📤 Sent immediately:", ", ".join(sent_customers))
-        if scheduled_customers:
-            print("📅 Scheduled:", ", ".join(scheduled_customers))
-
-        return {"processed_message_ids": message_ids} # Return IDs that were at least attempted
-
-    finally:
-        db.close() # Ensure DB session is closed
+# Note: Ensure Session management (SessionLocal() and db.close()) is handled correctly
+# if this function is called directly without FastAPI's Depends(get_db).
+# If called *only* from routes using Depends(get_db), passing the db session is sufficient.

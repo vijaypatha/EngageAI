@@ -41,6 +41,7 @@ class BusinessProfile(Base):
     roadmap_messages = relationship("RoadmapMessage", back_populates="business")
     scheduled_sms = relationship("ScheduledSMS", back_populates="business")
     consent_logs = relationship("ConsentLog", back_populates="business")
+    tags = relationship("Tag", backref="business", cascade="all, delete-orphan")
 
 class Customer(Base):
     __tablename__ = "customers"
@@ -67,6 +68,8 @@ class Customer(Base):
     roadmap_messages = relationship("RoadmapMessage", back_populates="customer")
     scheduled_sms = relationship("ScheduledSMS", back_populates="customer")
     consent_logs = relationship("ConsentLog", back_populates="customer")
+    tags = relationship("Tag", secondary="customer_tags", backref="customers") # Use backref for simplicity here
+
 
     __table_args__ = (
         UniqueConstraint("phone", "business_id", name="unique_customer_phone_per_business"),
@@ -272,3 +275,27 @@ class ScheduledSMS(Base):
     customer = relationship("Customer", back_populates="scheduled_sms")
     business = relationship("BusinessProfile", back_populates="scheduled_sms")
     roadmap = relationship("RoadmapMessage")
+
+class Tag(Base):
+    __tablename__ = "tags"
+    id = Column(Integer, primary_key=True, index=True)
+    # Link to business, ensure deletion of business cascades here if desired
+    business_id = Column(Integer, ForeignKey("business_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False, index=True) # Stored lowercase, added length
+
+    # Relationship to BusinessProfile defined below in BusinessProfile class using back_populates
+    # (This avoids needing a backref definition here)
+
+    # Ensure tag names are unique within a single business
+    __table_args__ = (
+        UniqueConstraint('business_id', 'name', name='uq_tag_name_per_business'),
+        Index('idx_tag_business_name', 'business_id', 'name'),
+    )
+
+class CustomerTag(Base):
+    __tablename__ = "customer_tags"
+    # Define foreign keys first
+    customer_id = Column(Integer, ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True)
+    tag_id = Column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+
+    # No extra relationships needed here; access happens via the 'secondary' link

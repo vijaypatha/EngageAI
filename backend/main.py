@@ -38,7 +38,8 @@ from app.routes import (
     onboarding_preview_route,
     auth_routes,
     review,
-    instant_nudge_routes
+    instant_nudge_routes,
+    tag_routes
 )
 from app.schemas import (
     BusinessProfileCreate,
@@ -108,6 +109,7 @@ app.include_router(review.router, prefix="/review", tags=["review"])
 app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
 app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
+app.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
 
 @app.get("/", response_model=Dict[str, str])
 async def read_root() -> Dict[str, str]:

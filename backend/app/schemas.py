@@ -4,6 +4,22 @@ import pytz
 from datetime import datetime
 import uuid
 
+# --- Add these Tag schemas ---
+class TagBase(BaseModel):
+    #name: str
+    name: constr(strip_whitespace=True, to_lower=True, min_length=1, max_length=100)
+
+
+class TagCreate(TagBase):
+    pass
+
+class TagRead(TagBase):
+    id: int
+    # business_id: int # Optional: Decide if frontend needs this when reading a tag
+
+    class Config:
+        from_attributes = True
+
 ### ✅ Timezone Schemas
 class TimezoneInfo(BaseModel):
     timezone: str
@@ -88,6 +104,7 @@ class Customer(CustomerBase):
     updated_at: Optional[datetime] = None
     latest_consent_status: Optional[str] = None
     latest_consent_updated: Optional[datetime] = None
+    tags: List[TagRead] = [] # Include associated tags in customer response
 
     class Config:
         from_attributes = True
@@ -469,3 +486,4 @@ class BusinessOwnerStyleResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
