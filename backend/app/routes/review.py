@@ -225,87 +225,96 @@ def get_full_customer_history(
     business_id: int = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Get complete message history for all customers"""
-    # Get latest consent status for each customer
-    customers = db.query(Customer).filter(
-        Customer.business_id == business_id
-    ).all()
-
+    logger.info(f"Fetching full customer history for business_id: {business_id}")
+    customers = db.query(Customer).filter(Customer.business_id == business_id).all()
     result = []
+
     for customer in customers:
-        # Get latest consent
+        logger.debug(f"Processing customer_id: {customer.id}")
         latest_consent = (
             db.query(ConsentLog)
             .filter(ConsentLog.customer_id == customer.id)
             .order_by(desc(ConsentLog.replied_at))
             .first()
         )
-
-        # Validate consent status consistency
         consent_status = latest_consent.status if latest_consent else "pending"
-        opted_in = latest_consent.status == "opted_in" if latest_consent else False
+        opted_in = consent_status == "opted_in"
 
-        # Get all messages
-        messages = db.query(Message).filter(
-            Message.customer_id == customer.id,
-            Message.message_type == 'scheduled'
-        ).order_by(Message.scheduled_time.desc()).all()
-
-        # Get all engagements
-        engagements = db.query(Engagement).filter(
-            Engagement.customer_id == customer.id
-        ).order_by(Engagement.sent_at.desc()).all()
-
-        # Format messages
         message_history = []
+        processed_sent_message_ids_from_messages_table = set()
 
-        # 1. Add customer replies (inbound, left)
-        for eng in engagements:
-            if eng.response:
-                message_history.append({
-                    "type": "customer",
-                    "content": eng.response,
-                    "sent_time": eng.sent_at.isoformat() if eng.sent_at else None,
-                    "source": "customer_reply",
-                    "status": "sent",
-                    "customer_id": eng.customer_id,
-                    "id": eng.id,
-                    "is_hidden": False
-                })
+        # 1. Process the 'messages' table (typically outbound scheduled/direct messages)
+        customer_messages_from_message_table = db.query(Message).filter(
+            Message.customer_id == customer.id
+        ).order_by(Message.created_at.asc()).all()
 
-        # 2. Add business-sent messages (outbound, right)
-        for msg in messages:
-            if msg.status == "sent":
+        for msg_record in customer_messages_from_message_table:
+            if msg_record.is_hidden:
+                continue
+            if msg_record.status == "sent":
+                logger.debug(f"Adding from messages table: msg_id={msg_record.id}, content='{msg_record.content[:30]}...'")
                 message_history.append({
+                    "id": f"msg-{msg_record.id}",
                     "type": "sent",
-                    "content": msg.content,
-                    "status": msg.status,
-                    "scheduled_time": msg.scheduled_time.isoformat() if msg.scheduled_time else None,
-                    "sent_time": msg.sent_at.isoformat() if msg.sent_at else None,
-                    "source": msg.message_metadata.get('source', 'scheduled') if msg.message_metadata else 'scheduled',
-                    "customer_id": msg.customer_id,
-                    "id": msg.id,
-                    "is_hidden": msg.is_hidden if hasattr(msg, 'is_hidden') else False
+                    "content": msg_record.content,
+                    "status": msg_record.status,
+                    "scheduled_time": msg_record.scheduled_time.isoformat() if msg_record.scheduled_time else None,
+                    "sent_time": msg_record.sent_at.isoformat() if msg_record.sent_at else None,
+                    "source": msg_record.message_metadata.get('source', 'scheduled') if msg_record.message_metadata else 'scheduled',
+                    "customer_id": msg_record.customer_id,
+                    "is_hidden": msg_record.is_hidden,
                 })
+                processed_sent_message_ids_from_messages_table.add(msg_record.id)
+            # Add other statuses from Message table if needed (e.g., "scheduled")
 
-        # 3. Add AI drafts (outbound, right, not sent yet)
-        for eng in engagements:
-            if eng.ai_response and eng.status != "sent":
+        # 2. Process 'engagements' table (customer replies, AI drafts, and AI sent replies not covered by messages table)
+        customer_engagements = db.query(Engagement).filter(
+            Engagement.customer_id == customer.id
+        ).order_by(Engagement.created_at.asc()).all()
+
+        for eng_record in customer_engagements:
+            # Add customer's inbound message (their reply)
+            if eng_record.response:
+                logger.debug(f"Adding customer response from engagement: eng_id={eng_record.id}, response='{eng_record.response[:30]}...'")
                 message_history.append({
-                    "type": "ai_draft",
-                    "content": eng.ai_response,
-                    "status": eng.status,
-                    "sent_time": eng.sent_at.isoformat() if eng.sent_at else None,
-                    "source": "ai_response",
-                    "customer_id": eng.customer_id,
-                    "id": eng.id,
-                    "is_hidden": False
+                    "id": f"eng-cust-{eng_record.id}",
+                    "type": "customer",
+                    "content": eng_record.response,
+                    "status": "received", # For clarity on frontend
+                    "sent_time": eng_record.created_at.isoformat() if eng_record.created_at else None, # Customer message time = engagement creation time
+                    "source": "customer_reply",
+                    "customer_id": eng_record.customer_id,
+                    "is_hidden": False, 
                 })
 
-        # Sort by time
+            # Add AI response from the engagement (draft or sent)
+            if eng_record.ai_response:
+                logger.debug(f"Considering AI response from engagement: eng_id={eng_record.id}, status={eng_record.status}, message_id={eng_record.message_id}, ai_response='{eng_record.ai_response[:30]}...'")
+                # Skip if this AI response was 'sent' AND it's linked to a Message record
+                # that we've already processed from the `messages` table.
+                # This prevents duplicating sent messages that exist in both tables.
+                if eng_record.status == "sent" and \
+                   eng_record.message_id and \
+                   eng_record.message_id in processed_sent_message_ids_from_messages_table:
+                    logger.debug(f"SKIPPING sent AI response from eng_id={eng_record.id} as message_id={eng_record.message_id} already processed.")
+                    continue
+                
+                logger.debug(f"ADDING AI response from eng_id={eng_record.id}")
+                message_type = "ai_draft" if eng_record.status != "sent" else "sent"
+                message_history.append({
+                    "id": f"eng-ai-{eng_record.id}",
+                    "type": message_type,
+                    "content": eng_record.ai_response,
+                    "status": eng_record.status,
+                    # sent_time is only for 'sent' type messages from engagements
+                    "sent_time": eng_record.sent_at.isoformat() if eng_record.sent_at and message_type == "sent" else None,
+                    "source": "ai_response_engagement",
+                    "customer_id": eng_record.customer_id,
+                    "is_hidden": False, 
+                })
+        
         message_history.sort(
-            key=lambda x: x.get("sent_time") or x.get("scheduled_time") or "",
-            reverse=True
+            key=lambda x: datetime.fromisoformat(x.get("sent_time").replace("Z", "+00:00")) if x.get("sent_time") else datetime.min.replace(tzinfo=timezone.utc)
         )
 
         result.append({
@@ -314,11 +323,11 @@ def get_full_customer_history(
             "phone": customer.phone,
             "opted_in": opted_in,
             "consent_status": consent_status,
-            "consent_updated": latest_consent.replied_at.isoformat() if latest_consent else None,
+            "consent_updated": latest_consent.replied_at.isoformat() if latest_consent and latest_consent.replied_at else None,
             "message_count": len(message_history),
             "messages": message_history
         })
-
+    logger.info(f"Finished processing history for business_id: {business_id}. Total customers processed: {len(customers)}")
     return result
 
 @router.get("/review/customer-id/from-message/{message_id}")

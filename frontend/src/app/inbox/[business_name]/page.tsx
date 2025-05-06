@@ -3,677 +3,466 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
-import { Clock, Send, MessageSquare, Check, AlertCircle } from "lucide-react";
+import { Clock, Send, MessageSquare, Check, AlertCircle, Trash2, Edit3, CheckCheck } from "lucide-react"; // Added CheckCheck for potential future use
 import clsx from "clsx";
-import { formatDistanceToNow } from "date-fns";
 
-interface Message {
-  id: number;
+// Interface for the customer summary object received from /review/full-customer-history
+interface CustomerSummary {
   customer_id: number;
   customer_name: string;
   phone: string;
-  content: string; // May represent latest message content in the summary view
-  type: "outbound" | "inbound"; // May represent latest message type
-  status: string; // May represent latest message status
-  scheduled_time?: string;
-  sent_time?: string; // May represent latest message time
-  source: string;
-  is_hidden?: boolean;
-  latest_consent_status: string;
   opted_in: boolean;
-  response?: string;
-  messages?: Message[]; // Nested messages if the API provides them this way
+  consent_status: string;
+  consent_updated?: string | null;
+  message_count: number;
+  messages: BackendMessage[];
+  content?: string; 
+  sent_time?: string; 
+}
+
+interface BackendMessage {
+  id: string | number; 
+  type: "sent" | "customer" | "ai_draft" | "scheduled";
+  content: string;
+  status?: string; // Important for "Sent" ✓, "delivered" ✓✓, "read" etc.
+  scheduled_time?: string | null;
+  sent_time?: string | null;
+  source?: string;
+  customer_id: number; 
+  is_hidden?: boolean;
+  response?: string; 
 }
 
 type TimelineEntry = {
-  type: "customer" | "sent" | "ai_draft" | "scheduled";
+  id: string | number; 
+  type: "customer" | "sent" | "ai_draft" | "scheduled"; 
   content: string;
-  timestamp: string | null;
-  id: number | string;
+  timestamp: string | null; 
   customer_id: number;
   is_hidden?: boolean;
+  status?: string; // Pass status to TimelineEntry for rendering checkmarks
 };
 
 export default function InboxPage() {
-  const { business_name } = useParams();
-  // 'messages' state likely holds customer summary objects from /review/full-customer-history
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { business_name } = useParams<{business_name: string}>();
+  const [customerSummaries, setCustomerSummaries] = useState<CustomerSummary[]>([]);
   const [activeCustomerId, setActiveCustomerId] = useState<number | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [businessId, setBusinessId] = useState<number | null>(null);
-  const [scheduledSms, setScheduledSms] = useState<any[]>([]);
-  const [selectedDraftId, setSelectedDraftId] = useState<number | null>(null);
-  const [pendingReplyCustomerId, setPendingReplyCustomerId] = useState<number | null>(null);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | number | null>(null);
+
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   const [lastSeenMap, setLastSeenMap] = useState<Record<number, string>>({});
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
 
-  // Ref for scrolling (Approach 3: Ref on Container)
   const chatContainerRef = useRef<null | HTMLDivElement>(null);
+  const inputRef = useRef<null | HTMLInputElement>(null);
 
   useEffect(() => {
-    // Scroll effect - kept from previous attempt, maybe revisit if still problematic
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
-  }, [timelineEntries, activeCustomerId]);
+  }, [timelineEntries]);
 
+  const fetchAndSetCustomerSummaries = async (bId: number) => {
+    const res = await apiClient.get(`/review/full-customer-history?business_id=${bId}`);
+    const customerDataArray: CustomerSummary[] = res.data || [];
+    
+    const summariesWithPreview = customerDataArray.map(cs => {
+        const lastMsgArray = cs.messages?.filter(m => m.type === 'sent' || m.type === 'customer').sort((a,b) => new Date(b.sent_time || 0).getTime() - new Date(a.sent_time || 0).getTime());
+        const lastMsg = lastMsgArray && lastMsgArray.length > 0 ? lastMsgArray[0] : null;
+        return {
+          ...cs,
+          content: lastMsg?.content.slice(0,30) + (lastMsg?.content && lastMsg.content.length > 30 ? "..." : ""),
+          sent_time: lastMsg?.sent_time || lastMsg?.scheduled_time || cs.consent_updated || "1970-01-01T00:00:00.000Z"
+        }
+      });
+
+    summariesWithPreview.sort((a,b) => {
+        const timeA = a.sent_time ? new Date(a.sent_time).getTime() : 0;
+        const timeB = b.sent_time ? new Date(b.sent_time).getTime() : 0;
+        return timeB - timeA; 
+    });
+    setCustomerSummaries(summariesWithPreview);
+    return summariesWithPreview; 
+  };
 
   useEffect(() => {
-    const fetchBusinessAndMessages = async () => {
-      if (!business_name) return;
+    const initialize = async () => {
+      if (!business_name) {
+        setIsLoading(false);
+        setFetchError("Business identifier is missing.");
+        return;
+      }
+      setIsLoading(true);
+      setFetchError(null);
       try {
-        console.log("Fetching business ID for slug:", business_name);
         const bizRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
         const id = bizRes.data.business_id;
-        console.log("Business ID fetched:", id);
         setBusinessId(id);
 
-        console.log("Fetching full customer history for business ID:", id);
-        const res = await apiClient.get(`/review/full-customer-history?business_id=${id}`);
-        const messageData = res.data || [];
-        console.log(`Workspaceed ${messageData.length} customer history entries.`);
-        console.log("Sample entry:", messageData[0]); // Log first entry to see structure
-
-        // Basic mapping - ensure core fields exist
-        const mappedData = messageData.map((msg: any) => ({
-          ...msg,
-          customer_id: msg.customer_id, // Ensure these exist
-          customer_name: msg.customer_name || "Unknown Customer", // Provide fallback name
-          latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
-        }));
-
-        setMessages(mappedData);
-
-        if (mappedData.length > 0) {
-           // Check if the first customer is valid before setting active
-           if (mappedData[0].customer_id) {
-             console.log("Setting active customer:", mappedData[0].customer_id);
-             setActiveCustomerId(mappedData[0].customer_id);
-             fetchScheduledSms(mappedData[0].customer_id);
-           } else {
-             console.warn("First customer entry has no ID, cannot set active customer.");
-             setActiveCustomerId(null);
-             setTimelineEntries([]);
-           }
+        if (id) {
+          const initialSummaries = await fetchAndSetCustomerSummaries(id);
+          if (initialSummaries.length > 0 && initialSummaries[0].customer_id){
+              setActiveCustomerId(initialSummaries[0].customer_id);
+          } else {
+            setActiveCustomerId(null);
+          }
         } else {
-           console.log("No customer history entries found, clearing active customer.");
-           setActiveCustomerId(null);
-           setTimelineEntries([]);
+          setFetchError("Failed to retrieve business ID.");
         }
-      } catch (error) {
-         console.error("Failed to fetch initial business and messages:", error);
-         // Handle error appropriately, maybe show a message to the user
+      } catch (error: any) {
+        setFetchError(error.message || "Failed to load initial data.");
+      } finally {
+        setIsLoading(false);
       }
     };
-    fetchBusinessAndMessages();
+    initialize();
   }, [business_name]);
 
   useEffect(() => {
-    if (!businessId) return;
+    if (!businessId ) return; 
     const interval = setInterval(async () => {
       try {
-        // console.log("Polling for history updates for business ID:", businessId);
-        const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
-        const messageData = res.data || [];
-
-        const mappedData = messageData.map((msg: any) => ({
-          ...msg,
-          customer_id: msg.customer_id,
-          customer_name: msg.customer_name || "Unknown Customer",
-          latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
-        }));
-
-        setMessages(mappedData);
+        await fetchAndSetCustomerSummaries(businessId);
       } catch (error) {
-         console.error("Failed to fetch messages during polling:", error);
+        // silent fail for polling
       }
-    }, 4000);
+    }, 7000); 
     return () => clearInterval(interval);
   }, [businessId]);
 
-  const fetchScheduledSms = async (customerId: number) => {
-    try {
-      console.log("Fetching scheduled SMS for customer:", customerId);
-      const res = await apiClient.get(`/message-workflow/sent/${customerId}`);
-      setScheduledSms(res.data || []);
-      console.log("Scheduled SMS fetched:", res.data);
-    } catch (error) {
-       console.error(`Failed to fetch scheduled SMS for customer ${customerId}:`, error);
-       setScheduledSms([]);
+  useEffect(() => {
+    const currentCustomerData = customerSummaries.find(cs => cs.customer_id === activeCustomerId);
+    let newTimelineEntries: TimelineEntry[] = [];
+
+    if (currentCustomerData && Array.isArray(currentCustomerData.messages)) {
+      newTimelineEntries = currentCustomerData.messages
+        .filter(msg => !msg.is_hidden) 
+        .map((msg: BackendMessage): TimelineEntry | null => {
+          if (!msg.type || typeof msg.id === 'undefined') return null;
+          return {
+            id: String(msg.id),
+            type: msg.type as TimelineEntry['type'],
+            content: msg.content || (msg.type === 'customer' && msg.response) || "",
+            timestamp: msg.sent_time || msg.scheduled_time || null,
+            customer_id: currentCustomerData.customer_id,
+            is_hidden: msg.is_hidden || false,
+            status: msg.status // Pass status through
+          };
+        }).filter(Boolean) as TimelineEntry[];
+
+      newTimelineEntries.sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : null;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : null;
+        const validTimeA = timeA !== null && !isNaN(timeA) ? timeA : null;
+        const validTimeB = timeB !== null && !isNaN(timeB) ? timeB : null;
+        if (validTimeA === null && validTimeB === null) return String(a.id).localeCompare(String(b.id));
+        if (validTimeA === null) return 1; 
+        if (validTimeB === null) return -1;
+        return validTimeA - validTimeB; 
+      });
     }
-  };
-
-  // filteredMessages now relies on the top-level 'messages' state structure
-  const filteredMessages = useMemo(
-     () => messages.filter(customerSummary => customerSummary.customer_id === activeCustomerId),
-     [messages, activeCustomerId]
-  );
-
-  // Reverted useEffect hook for building timeline
-   useEffect(() => {
-    const base: TimelineEntry[] = [];
-
-    // Find the data object for the active customer from the main 'messages' state
-    const customerData = messages.find(m => m.customer_id === activeCustomerId);
-
-    // Check if customerData exists AND if it has a nested 'messages' array
-    // This structure MUST match what the /review/full-customer-history returns
-    if (customerData && Array.isArray(customerData.messages)) {
-       console.log(`Building base timeline from nested messages for customer ${activeCustomerId}`);
-      for (const msg of customerData.messages) { // Iterate nested messages
-        if (msg.is_hidden) continue;
-
-        if (msg.type === "inbound") {
-          base.push({
-            id: msg.id, type: "customer", content: msg.content,
-            timestamp: msg.sent_time || null, customer_id: msg.customer_id, is_hidden: msg.is_hidden
-          });
-        } else if (msg.type === "outbound") {
-          if (msg.status === "pending_review") {
-            base.push({
-              id: msg.id, type: "ai_draft", content: msg.content,
-              timestamp: null, customer_id: msg.customer_id, is_hidden: msg.is_hidden
-            });
-          } else if (msg.status === "sent") {
-            base.push({
-              id: msg.id, type: "sent", content: msg.content,
-              timestamp: msg.sent_time || msg.scheduled_time || null, customer_id: msg.customer_id, is_hidden: msg.is_hidden
-            });
-          }
-        }
-      }
-    } else if(customerData) {
-        // Handle cases where customerData exists but doesn't have a nested 'messages' array
-        // Maybe the top-level 'messages' state *is* the flat list? Adapt if necessary.
-        console.warn("Timeline build: Customer data found, but 'messages' property is missing or not an array.", customerData);
-        // If 'messages' state IS the flat list of all messages for the business, the logic needs a full rewrite here.
-        // Assuming for now the nested structure was intended by the API.
-    }
-
-
-    const fetchConversationHistory = async () => {
-      if (!activeCustomerId) {
-          console.log("No active customer, setting timeline to base entries.");
-          setTimelineEntries(base.sort((a, b) => {
-            if (!a.timestamp && !b.timestamp) return 0;
-            if (!a.timestamp) return 1; // Place entries without timestamp last
-            if (!b.timestamp) return -1;
-            try {
-               const dateA = new Date(a.timestamp);
-               const dateB = new Date(b.timestamp);
-               if (isNaN(dateA.getTime())) return 1; // Invalid dates last
-               if (isNaN(dateB.getTime())) return -1;
-               return dateA.getTime() - dateB.getTime();
-            } catch (e) { return 0; } // Fallback on error
-        }));
-          return;
-      };
-      try {
-        console.log("Fetching additional history from /conversations/customer/", activeCustomerId);
-        const res = await apiClient.get(`/conversations/customer/${activeCustomerId}`);
-        const conversationEntries = (res.data.messages || []).map((msg: any, index: number) => ({
-          id: msg.id || `conv-${index}`,
-          type: msg.type === "customer" ? "customer" : (msg.type === "ai_draft" ? "ai_draft" : "sent"),
-          content: msg.text || msg.content,
-          timestamp: msg.timestamp || msg.sent_time || msg.created_at || null,
-          customer_id: activeCustomerId,
-          is_hidden: msg.is_hidden || false
-        }));
-        console.log(`Workspaceed ${conversationEntries.length} additional conversation entries.`);
-
-        const scheduled: TimelineEntry[] = scheduledSms
-          .filter(sms => sms.status === "sent" && sms.customer_id === activeCustomerId)
-          .map(sms => ({
-            id: `sch-${sms.id}`, type: "sent", content: sms.message,
-            timestamp: sms.send_time || null, customer_id: sms.customer_id, is_hidden: sms.is_hidden || false
-          })) as TimelineEntry[];
-        console.log(`Adding ${scheduled.length} sent scheduled SMS entries.`);
-
-        const allEntries = [...base, ...conversationEntries, ...scheduled];
-        const uniqueEntries = Array.from(new Map(allEntries.map(entry => [`${entry.type}-${entry.id}`, entry])).values());
-        const sortedEntries = uniqueEntries.sort((a, b) => {
-           if (!a.timestamp && !b.timestamp) return 0;
-           if (!a.timestamp) return 1;
-           if (!b.timestamp) return -1;
-           try { // Add try-catch for date parsing
-              const dateA = new Date(a.timestamp);
-              const dateB = new Date(b.timestamp);
-              if (isNaN(dateA.getTime())) return 1; // Invalid date sort last
-              if (isNaN(dateB.getTime())) return -1; // Invalid date sort last
-              return dateA.getTime() - dateB.getTime();
-           } catch (e) {
-              console.error("Date sorting error:", e, a, b);
-              return 0;
-           }
-        });
-
-        console.log(`Total unique timeline entries: ${sortedEntries.length}`);
-        setTimelineEntries(sortedEntries);
-      } catch (err) {
-        console.error("Failed to fetch conversation history:", err);
-        setTimelineEntries(base.sort((a, b) => {
-          if (!a.timestamp && !b.timestamp) return 0;
-          if (!a.timestamp) return 1; // Place entries without timestamp last
-          if (!b.timestamp) return -1;
-          try {
-             const dateA = new Date(a.timestamp);
-             const dateB = new Date(b.timestamp);
-             if (isNaN(dateA.getTime())) return 1; // Invalid dates last
-             if (isNaN(dateB.getTime())) return -1;
-             return dateA.getTime() - dateB.getTime();
-          } catch (e) { return 0; } // Fallback on error
-      }));
-      }
-    };
-
-    fetchConversationHistory();
-
-  }, [messages, activeCustomerId, scheduledSms]);
-
+    setTimelineEntries(newTimelineEntries);
+  }, [customerSummaries, activeCustomerId]);
 
   const handleSendMessage = async () => {
-    console.log('handleSendMessage triggered', { selectedDraftId, pendingReplyCustomerId, newMessage, activeCustomerId });
     const messageToSend = newMessage.trim();
-    if (!messageToSend) return;
-
-    if (isSending) {
-      console.log("Send already in progress, aborting.");
-      return;
-    }
-
+    if (!messageToSend || isSending) return;
     setIsSending(true);
     setSendError(null);
-
-    const isSendingDraft = selectedDraftId && pendingReplyCustomerId;
-    const isSendingManual = !isSendingDraft && activeCustomerId;
-
-    const currentDraftId = selectedDraftId;
-    const currentPendingCustomerId = pendingReplyCustomerId;
-    const currentActiveCustomerId = activeCustomerId;
-
+    const isSendingDraft = selectedDraftId != null && activeCustomerId;
+    const targetCustomerId = activeCustomerId; 
+    if (!targetCustomerId) {
+        setSendError("No active customer selected.");
+        setIsSending(false);
+        return;
+    }
     try {
-      if (isSendingDraft) {
-        console.log(`Attempting to send draft ID: ${currentDraftId} for customer ID: ${currentPendingCustomerId}`);
-        await apiClient.put(`/engagement-workflow/reply/${currentDraftId}/send`, {
-          updated_content: messageToSend,
-        });
-        console.log(`✅ Draft ${currentDraftId} sent successfully via API.`);
-        setNewMessage("");
-        setSelectedDraftId(null);
-        setPendingReplyCustomerId(null);
-
-      } else if (isSendingManual) {
-        console.log(`Attempting to send manual reply to customer ID: ${currentActiveCustomerId}`);
-        await apiClient.post(`/engagement-workflow/manual-reply/${currentActiveCustomerId}`, {
-          message: messageToSend,
-        });
-        console.log(`✅ Manual message sent successfully to customer ${currentActiveCustomerId} via API.`);
-        setNewMessage("");
-
+      if (isSendingDraft && selectedDraftId) {
+        await apiClient.put(`/engagement-workflow/reply/${selectedDraftId}/send`, { updated_content: messageToSend });
       } else {
-        console.error("Send triggered without a valid target (no draft selected and no active customer).");
-        throw new Error("Cannot send message: No recipient context.");
+        await apiClient.post(`/conversations/customer/${targetCustomerId}/reply`, { message: messageToSend });
       }
-
-      if (businessId) {
-        console.log(`🔄 Re-fetching history for business ${businessId} after message send.`);
-        try {
-          const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
-          const messageData = res.data || [];
-          const mappedData = messageData.map((msg: any) => ({
-            ...msg,
-             customer_id: msg.customer_id,
-             customer_name: msg.customer_name || "Unknown Customer",
-            latest_consent_status: msg.opted_in ? "opted_in" : "opted_out"
-          }));
-          setMessages(mappedData);
-          console.log(`✅ History updated for business ${businessId}. Messages count: ${mappedData.length}`);
-        } catch (fetchError) {
-           console.error("❌ Failed to re-fetch customer history after sending:", fetchError);
-           setSendError("Message sent, but failed to refresh conversation history.");
-        }
-      }
-
-      const customerIdToUpdate = isSendingDraft ? currentPendingCustomerId : currentActiveCustomerId;
-      if (customerIdToUpdate) {
-          setLastSeenMap(prev => ({ ...prev, [customerIdToUpdate]: new Date().toISOString() }));
-      }
-
-    } catch (err) {
-      console.error("❌ Error during send process:", err);
-      const response = (err as any)?.response;
+      setNewMessage("");
+      setSelectedDraftId(null);
+      if (inputRef.current) inputRef.current.focus();
+      if (businessId) await fetchAndSetCustomerSummaries(businessId);
+      setLastSeenMap(prev => ({ ...prev, [targetCustomerId]: new Date().toISOString() }));
+    } catch (err: any) {
+      const response = err?.response;
       const status = response?.status;
-      const detail = response?.data?.detail || (err as any).message || "An unknown error occurred.";
-      console.error(`❌ API Error Details: Status ${status}, Detail: ${detail}`);
-
-      if (status === 409) {
-        setSendError("This draft is no longer valid. It may have already been sent or expired. Refreshing data...");
-         if (businessId) {
-            console.log(`🔄 Triggering refresh due to ${status} error.`);
-             try {
-                 const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
-                 setMessages(res.data || []);
-             } catch (refreshError) {
-                 console.error("Failed to refresh after 409 error:", refreshError);
-             }
-         }
-         setSelectedDraftId(null);
-         setPendingReplyCustomerId(null);
-         setNewMessage("");
-
-      } else if (status === 404) {
-        setSendError("Draft or customer not found. Please refresh and try again.");
-         if (businessId) {
-            console.log(`🔄 Triggering refresh due to ${status} error.`);
-             try {
-                 const res = await apiClient.get(`/review/full-customer-history?business_id=${businessId}`);
-                 setMessages(res.data || []);
-             } catch (refreshError) {
-                 console.error("Failed to refresh after 404 error:", refreshError);
-             }
-         }
-         setSelectedDraftId(null);
-         setPendingReplyCustomerId(null);
-         setNewMessage("");
-
-      } else {
-        setSendError(`Failed to send message: ${detail}`);
+      const detail = response?.data?.detail || err.message || "An error occurred.";
+      setSendError(`Failed to send: ${detail}. Status: ${status || 'N/A'}`);
+      if ((status === 409 || status === 404) && businessId) { 
+        await fetchAndSetCustomerSummaries(businessId);
       }
     } finally {
       setIsSending(false);
-      console.log("handleSendMessage finished.");
     }
   };
 
-  // Revised: More robust function to get customer summaries for the sidebar
-  const getLatestMessagesByCustomer = () => {
-    // This function should ideally return unique customer entries from the 'messages' state.
-    // Assuming 'messages' state holds the array of customer summary objects
-    // returned by `/review/full-customer-history`.
-
-    const customerMap = new Map<number, Message>();
-    messages.forEach((customerData) => {
-      // Basic validation of the customer data object
-      if (customerData && customerData.customer_id && typeof customerData.customer_name === 'string') {
-         // Use a Map to ensure we only list each customer once in the sidebar
-         if (!customerMap.has(customerData.customer_id)) {
-             customerMap.set(customerData.customer_id, customerData);
-         } else {
-             // If customer already exists, potentially update if this entry is more recent?
-             // Requires a timestamp field at this top level, e.g., customerData.last_message_time
-             // For now, just keep the first one encountered.
-         }
-      } else {
-         console.warn("Skipping invalid customer summary entry in messages state:", customerData);
-      }
-    });
-
-    const customerList = Array.from(customerMap.values());
-    console.log(`Sidebar customer list size: ${customerList.length}`); // Log size
-    return customerList;
+  const handleEditDraft = (draft: TimelineEntry) => {
+    if (draft.type === 'ai_draft' && draft.customer_id === activeCustomerId) {
+      setSelectedDraftId(draft.id);
+      setNewMessage(draft.content);
+      if (inputRef.current) inputRef.current.focus();
+    }
   };
 
+  const handleDeleteDraft = async (draftId: string | number) => {
+    if (window.confirm("Delete this draft? This action cannot be undone.")) {
+      try {
+        await apiClient.delete(`/engagement-workflow/${draftId}`);
+        if (selectedDraftId === draftId) {
+          setNewMessage("");
+          setSelectedDraftId(null);
+        }
+        if (businessId) await fetchAndSetCustomerSummaries(businessId);
+      } catch (err) {
+        alert("Failed to delete draft.");
+      }
+    }
+  };
+  
+  const currentCustomer = useMemo(() => {
+    return customerSummaries.find(cs => cs.customer_id === activeCustomerId);
+  }, [customerSummaries, activeCustomerId]);
+
+  if (isLoading && !customerSummaries.length) {
+    return <div className="h-screen flex items-center justify-center bg-[#0B0E1C] text-white text-lg">Loading Inbox... <span className="animate-pulse">⏳</span></div>;
+  }
+
+  if (fetchError && !customerSummaries.length) { 
+    return <div className="h-screen flex flex-col items-center justify-center bg-[#0B0E1C] text-red-400 p-4 text-center">
+        <AlertCircle className="w-12 h-12 mb-3 text-red-500"/>
+        <p className="text-xl font-semibold">Oops! Something went wrong.</p>
+        <p className="text-sm mt-1">{fetchError}</p>
+        <p className="text-xs mt-3">Please try refreshing the page. If the problem persists, contact support.</p>
+    </div>;
+  }
 
   return (
     <div className="h-screen flex md:flex-row flex-col bg-[#0B0E1C]">
-      {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-4 bg-[#1A1D2D] border-b border-[#2A2F45]">
         <h1 className="text-xl font-semibold text-white">Inbox</h1>
         <button
           onClick={() => setShowMobileDrawer(!showMobileDrawer)}
           className="p-2 hover:bg-[#242842] rounded-lg transition-colors"
+          aria-label="Toggle contact list"
         >
           <MessageSquare className="w-5 h-5 text-white" />
         </button>
       </div>
 
-      {/* Sidebar */}
       <aside className={clsx(
         "w-full md:w-80 bg-[#1A1D2D] border-r border-[#2A2F45]",
-        "md:relative fixed inset-0 z-50",
+        "md:relative fixed inset-0 z-30 md:z-auto",
         "transition-transform duration-300 ease-in-out",
         showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0",
-        "flex flex-col h-full md:h-screen"
+        "flex flex-col h-full" 
       )}>
-        {/* Desktop Header */}
-        <div className="hidden md:block p-4 border-b border-[#2A2F45]">
-          <h2 className="text-xl font-semibold text-white">Inbox</h2>
-        </div>
-        {/* Mobile Header inside drawer */}
-        <div className="md:hidden flex justify-between items-center p-4 border-b border-[#2A2F45]">
-          <h2 className="text-xl font-semibold text-white">Contacts</h2>
-          <button
-            onClick={() => setShowMobileDrawer(false)}
-            className="p-2 hover:bg-[#242842] rounded-lg"
-          >
-            ✕
-          </button>
+        <div className="flex justify-between items-center p-4 border-b border-[#2A2F45]">
+          <h2 className="text-xl font-semibold text-white">{showMobileDrawer ? "Contacts" : "Inbox"}</h2>
+          {showMobileDrawer && (
+            <button
+              onClick={() => setShowMobileDrawer(false)}
+              className="p-2 hover:bg-[#242842] rounded-lg"
+              aria-label="Close contact list"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
-        {/* Contact List */}
         <div className="flex-1 overflow-y-auto">
-          {getLatestMessagesByCustomer().map((msg) => ( // msg is a customer summary object
-            <div
-              key={msg.customer_id} // Use unique customer ID
-              onClick={() => {
-                setActiveCustomerId(msg.customer_id);
-                setSelectedDraftId(null);
-                setNewMessage("");
-                setPendingReplyCustomerId(null);
-                fetchScheduledSms(msg.customer_id);
-                setLastSeenMap(prev => ({ ...prev, [msg.customer_id]: new Date().toISOString() }));
-                setShowMobileDrawer(false);
-              }}
-              className={clsx(
-                "p-4 cursor-pointer border-b border-[#2A2F45] last:border-b-0",
-                "hover:bg-[#242842] transition-colors",
-                msg.customer_id === activeCustomerId && "bg-[#242842]"
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
-                   {/* Safer Access */}
-                  {msg.customer_name?.[0]?.toUpperCase() || '?'}
+          {customerSummaries.length === 0 && !isLoading && (
+            <p className="p-4 text-gray-400 text-center">No conversations yet. Add contacts to begin.</p>
+          )}
+          {customerSummaries.map((cs) => {
+            const lastMessage = cs.messages && cs.messages.length > 0 ? 
+                                cs.messages.filter(m => m.type === 'sent' || m.type === 'customer')
+                                .sort((a,b) => new Date(b.sent_time || 0).getTime() - new Date(a.sent_time || 0).getTime())[0] 
+                                : null;
+            const previewText = lastMessage ? (lastMessage.content.slice(0, 30) + (lastMessage.content.length > 30 ? "..." : "")) : "No recent messages";
+            return (
+                <div
+                key={cs.customer_id}
+                onClick={() => {
+                    setActiveCustomerId(cs.customer_id);
+                    setSelectedDraftId(null);
+                    setNewMessage("");
+                    setLastSeenMap(prev => ({ ...prev, [cs.customer_id]: new Date().toISOString() }));
+                    if (showMobileDrawer) setShowMobileDrawer(false);
+                }}
+                className={clsx(
+                    "p-4 cursor-pointer border-b border-[#2A2F45] last:border-b-0",
+                    "hover:bg-[#242842] transition-colors",
+                    cs.customer_id === activeCustomerId && "bg-[#242842]"
+                )}
+                >
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
+                    {cs.customer_name?.[0]?.toUpperCase() || '?'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                        <span className="font-medium text-white truncate">
+                        {cs.customer_name || 'Unknown Customer'}
+                        </span>
+                    </div>
+                    <p className="text-sm text-gray-400 truncate">
+                        {previewText}
+                    </p>
+                    </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-white truncate">
-                      {/* Safer Access */}
-                      {msg.customer_name || 'Unknown'}
-                    </span>
-                    {/* Unread indicator logic would go here, comparing last message timestamp to lastSeenMap */}
-                  </div>
-                  <p className="text-sm text-gray-400 truncate">
-                    {/* Use content field from the customer summary object if API provides it */}
-                    {/* Otherwise, this might need fetching the actual latest message */}
-                    {msg.content?.slice(0, 40) || 'No recent messages'}
-                  </p>
                 </div>
-              </div>
-            </div>
-          ))}
+            );
+            })}
         </div>
       </aside>
 
-      {/* Main Chat Area */}
       <main className="flex-1 flex flex-col h-[calc(100vh-4rem)] md:h-screen">
-        {/* Chat Header */}
-        {activeCustomerId && (
-          <div className="bg-[#1A1D2D] border-b border-[#2A2F45] p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
-                 {messages.find(m => m.customer_id === activeCustomerId)?.customer_name[0]?.toUpperCase() || '?'}
-              </div>
-              <div className="flex-1">
-                <h1 className="text-lg font-semibold text-white">
-                   {messages.find(m => m.customer_id === activeCustomerId)?.customer_name || "Loading..."}
-                </h1>
-                <div className="flex items-center gap-2">
-                   {(() => {
-                      const currentCustomer = messages.find(m => m.customer_id === activeCustomerId);
-                      const optedIn = currentCustomer?.opted_in || currentCustomer?.latest_consent_status === "opted_in";
-                      return (
-                         <span className={clsx(
-                           "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
-                           optedIn ? "bg-emerald-400/10 text-emerald-400" : "bg-red-400/10 text-red-400"
-                         )}>
-                           {optedIn ? <><Check className="w-3 h-3" /> Opted In</> : <><AlertCircle className="w-3 h-3" /> Not Opted In</>}
-                         </span>
-                      );
-                   })()}
+        {currentCustomer ? (
+          <>
+            <div className="bg-[#1A1D2D] border-b border-[#2A2F45] p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
+                  {currentCustomer.customer_name[0]?.toUpperCase() || '?'}
+                </div>
+                <div>
+                  <h1 className="text-lg font-semibold text-white">{currentCustomer.customer_name}</h1>
+                  <span className={clsx(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
+                    currentCustomer.opted_in ? "bg-emerald-400/10 text-emerald-400" : "bg-red-400/10 text-red-400"
+                  )}>
+                    {currentCustomer.opted_in ? <><Check className="w-3 h-3" /> Opted In</> : <><AlertCircle className="w-3 h-3" /> Not Opted In</>}
+                  </span>
                 </div>
               </div>
             </div>
+
+            <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-2"> {/* Reduced space-y for tighter packing */}
+              {timelineEntries.map((entry) => (
+                <div
+                  key={`${entry.type}-${entry.id}`} 
+                  className={clsx(
+                      "flex flex-col w-full mb-1", // Added mb-1 for slight separation
+                      entry.type === "customer" ? "items-start" : "items-end")}
+                >
+                  <div className={clsx(
+                    "max-w-[80%] md:max-w-[70%] px-3.5 py-2 rounded-2xl shadow", // Slightly adjusted padding
+                    entry.type === "customer" ? "bg-gradient-to-r from-emerald-500 to-blue-500 text-white rounded-br-none" :
+                    entry.type === "sent" ? "bg-[#242842] text-white rounded-bl-none" :
+                    "bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white rounded-bl-none" 
+                  )}>
+                    {entry.type === "ai_draft" && (
+                      <div className="text-xs font-semibold mb-1 text-purple-200">💡 Draft Reply</div>
+                    )}
+                    <div className="whitespace-pre-wrap break-words text-sm">{entry.content}</div> {/* text-sm for message content */}
+                    
+                    {/* Timestamp and Status - Rendered below the message text, inside the bubble but aligned */}
+                    {(entry.type === "sent" || entry.type === "customer") && entry.timestamp && (
+                      <div className={clsx(
+                        "text-xs mt-1.5 flex items-center gap-1",
+                        entry.type === "customer" ? "text-gray-200/70 justify-start" : "text-gray-400/70 justify-end", 
+                      )}>
+                        <Clock className="w-2.5 h-2.5" />
+                        <span>
+                          {new Date(entry.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
+                        </span>
+                        {entry.type === "sent" && entry.status === "sent" && (
+                          <Check className="w-3.5 h-3.5 text-sky-400 ml-0.5" />
+                        )}
+                        {/* Example for delivered (you'd need backend status for this) */}
+                        {/* {entry.type === "sent" && entry.status === "delivered" && (
+                          <CheckCheck className="w-3.5 h-3.5 text-sky-400 ml-0.5" title="Delivered" />
+                        )} */}
+                      </div>
+                    )}
+                  </div>
+                   {/* Date Separator - Optional, uncomment if you want date separators between days */}
+                  {/* { (index === 0 || new Date(entry.timestamp).toDateString() !== new Date(timelineEntries[index-1].timestamp).toDateString()) && entry.timestamp && (
+                        <div className="text-xs text-gray-500 my-3 self-center px-2 py-0.5 bg-[#1A1D2D] border border-[#2A2F45] rounded-full">
+                           {new Date(entry.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </div>
+                    )} */}
+                </div>
+              ))}
+               {timelineEntries.length === 0 && (
+                    <div className="text-center text-gray-400 py-10">No messages in this conversation yet.</div>
+                )}
+            </div>
+
+            <div className="bg-[#1A1D2D] border-t border-[#2A2F45] p-4">
+              {!currentCustomer.opted_in && (
+                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-4 py-3 mb-3 gap-2">
+                    <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <span className="text-sm">Messaging blocked: Customer has not opted in.</span>
+                    </div>
+                    <button
+                        onClick={async () => {
+                        if (!activeCustomerId) return;
+                        try {
+                            await apiClient.post(`/consent/resend-optin/${activeCustomerId}`);
+                            alert("A new opt-in request has been sent to the customer.");
+                        } catch (err) {
+                            alert("Failed to resend opt-in request. Please try again.");
+                        }
+                        }}
+                        className="w-full sm:w-auto bg-[#242842] hover:bg-[#2A2F45] text-white text-xs px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
+                    >
+                        💌 Request Opt-In
+                    </button>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  ref={inputRef}
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyPress={(e) => { if (e.key === 'Enter' && !isSending && newMessage.trim() && currentCustomer.opted_in) handleSendMessage(); }}
+                  placeholder={currentCustomer.opted_in ? "Type your message..." : "Customer not opted in"}
+                  className="flex-1 bg-[#242842] border border-[#2A2F45] px-4 py-3 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all text-sm"
+                  disabled={!currentCustomer.opted_in || isSending}
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={isSending || !newMessage.trim() || !currentCustomer.opted_in}
+                  className={clsx(
+                    "p-3 rounded-lg transition-all duration-200",
+                    "bg-gradient-to-r from-emerald-500 to-blue-500 hover:opacity-90",
+                    (isSending || !newMessage.trim() || !currentCustomer.opted_in) && "opacity-50 cursor-not-allowed",
+                    isSending && "animate-pulse"
+                  )}
+                  aria-label="Send message"
+                >
+                  <Send className="w-5 h-5 text-white" />
+                </button>
+              </div>
+              {sendError && (
+                <div className="text-xs text-red-400 mt-2 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {sendError}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-500 p-8 text-center">
+            <MessageSquare className="w-16 h-16 mb-4 opacity-50" />
+            <p className="text-xl font-semibold">Select a conversation</p>
+            <p className="text-sm mt-1">Choose a contact from the list to see your message history.</p>
+            {customerSummaries.length === 0 && !isLoading && (
+                 <p className="text-sm mt-2">No contacts found. Add contacts from the "Contacts" page to begin.</p>
+            )}
           </div>
         )}
-
-        {/* Messages Area - Scrollable Container */}
-        <div
-          ref={chatContainerRef} // Ref attached
-          className="flex-1 overflow-y-auto p-4 space-y-4"
-        >
-          {timelineEntries
-            .filter(entry => !entry.is_hidden)
-            .map((entry) => (
-            <div
-              key={`${entry.type}-${entry.id}`}
-              className={clsx(
-                "flex flex-col",
-                entry.type === "customer" ? "items-start" : "items-end"
-              )}
-            >
-              {entry.timestamp && (
-                <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                   {(() => { // Safer date formatting
-                      try {
-                         return new Date(entry.timestamp).toLocaleString();
-                      } catch {
-                         return 'Invalid Date';
-                      }
-                   })()}
-                </div>
-              )}
-              <div
-                className={clsx(
-                  "max-w-[85%] md:max-w-md px-4 py-2.5 rounded-2xl",
-                  entry.type === "customer" && "bg-gradient-to-r from-emerald-500 to-blue-500 text-white",
-                  entry.type === "sent" && "bg-[#242842] text-white",
-                  entry.type === "ai_draft" && "bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white"
-                )}
-              >
-                {entry.type === "ai_draft" && (
-                  <div className="text-xs font-medium mb-1">💡 Draft Reply</div>
-                )}
-                <div className="whitespace-pre-wrap break-words">{entry.content}</div>
-                {entry.type === "ai_draft" && (
-                  <>
-                    <button
-                      onClick={() => {
-                        const idNum = Number(entry.id);
-                        setSelectedDraftId(Number.isNaN(idNum) ? null : idNum);
-                        setPendingReplyCustomerId(entry.customer_id);
-                        setActiveCustomerId(entry.customer_id);
-                        setNewMessage(entry.content);
-                      }}
-                      className="mt-2 text-xs font-medium text-white/90 hover:text-white flex items-center gap-1 transition-colors"
-                    >
-                      ✏️ Edit & Send
-                    </button>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await apiClient.delete(`/engagement-workflow/${entry.id}`);
-                          setTimelineEntries((prev) =>
-                            prev.filter((e) => !(e.id === entry.id && e.type === "ai_draft"))
-                          );
-                        } catch (err) {
-                          console.error("❌ Failed to delete draft", err);
-                          alert("Failed to delete draft.");
-                        }
-                      }}
-                      className="mt-1 text-xs font-medium text-white/90 hover:text-white flex items-center gap-1 transition-colors"
-                    >
-                      🗑️ Delete Draft
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-          {/* Removed the empty div target */}
-        </div>
-
-        {/* Message Input Area */}
-        <div className="bg-[#1A1D2D] border-t border-[#2A2F45] p-4">
-          {/* Opt-in Warning */}
-          {activeCustomerId && (() => {
-            const currentCustomer = messages.find(m => m.customer_id === activeCustomerId);
-            const optedIn = currentCustomer?.opted_in || currentCustomer?.latest_consent_status === "opted_in";
-
-            if (!optedIn) {
-              return (
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-4 py-3 mb-4 gap-3">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span className="text-sm">Messaging is blocked (not opted in)</span>
-                  </div>
-                  <button
-                    onClick={async () => {
-                      try {
-                        await apiClient.post(`/consent/resend-optin/${activeCustomerId}`);
-                        alert("Opt-in request sent again.");
-                      } catch (err) {
-                        console.error("Failed to resend opt-in:", err);
-                        alert("Failed to resend opt-in request.");
-                      }
-                    }}
-                    className="w-full md:w-auto bg-[#242842] hover:bg-[#2A2F45] text-white text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    💌 Request Opt-In
-                  </button>
-                </div>
-              );
-            }
-            return null;
-          })()}
-
-          {/* Message Input */}
-          <div className="flex gap-2">
-            <input
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="Type your message..."
-              className="flex-1 bg-[#242842] border border-[#2A2F45] px-4 py-3 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all"
-            />
-            <button
-              onClick={() => {
-                console.log("🚀 Clicked send button");
-                handleSendMessage();
-              }}
-              disabled={isSending || !newMessage.trim()}
-              className={clsx(
-                "p-3 rounded-lg transition-all duration-200",
-                "bg-gradient-to-r from-emerald-500 to-blue-500 hover:opacity-90",
-                "disabled:opacity-50 disabled:cursor-not-allowed",
-                isSending && "animate-pulse"
-              )}
-            >
-              <Send className="w-5 h-5 text-white" />
-            </button>
-          </div>
-
-          {/* Error Message */}
-          {sendError && (
-            <div className="text-xs text-red-400 mt-2 flex items-center gap-1">
-              <AlertCircle className="w-3 h-3" />
-              {sendError}
-            </div>
-          )}
-        </div>
       </main>
     </div>
   );
