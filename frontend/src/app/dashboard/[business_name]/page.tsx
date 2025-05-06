@@ -308,16 +308,6 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
-
-        {/* Instant Nudge Button */}
-        <button
-          onClick={() => router.push(`/instant-nudge/${currentBusinessNameStr}`)}
-          className="fixed bottom-6 right-6 z-50 bg-gradient-to-r from-emerald-400 to-blue-500
-            text-white px-6 py-3 rounded-full shadow-xl hover:shadow-2xl hover:scale-105
-            transition-all duration-300 font-medium text-sm md:text-base"
-        >
-          ✨ Instant Nudge
-        </button>
       </div>
     </div>
   );
