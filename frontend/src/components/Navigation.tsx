@@ -10,8 +10,10 @@ import {
   BarChart,
   UserCircle,
   Settings,
-  Zap,       // Icon for Instant Nudge
-  MailCheck  // Icon for Replies
+  Zap,            // Icon for Instant Nudge
+  MailCheck,      // Icon for Replies
+  MoreHorizontal, // Icon for "More" on mobile
+  LogIn,          // Example for Logout, if needed in "More"
 } from "lucide-react";
 import { cn } from "@/lib/utils"; // Assuming you have this utility function
 import { useState, useEffect } from "react";
@@ -26,6 +28,7 @@ export function Navigation() {
 
   const [isMobile, setIsMobile] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [showMobileMenu, setShowMobileMenu] = useState(false); // For the "More" menu
   const [businessProfile, setBusinessProfile] = useState({
     representative_name: "",
     business_name: ""
@@ -36,35 +39,39 @@ export function Navigation() {
       if (typeof window !== 'undefined') {
          setIsMobile(window.innerWidth < 768);
       }
-      setIsLoading(false);
+      // Keep isLoading tied to data fetching, not just mobile check
     };
-    checkMobile();
+    checkMobile(); // Initial check
     window.addEventListener('resize', checkMobile);
+
+    // Set initial loading state for business profile fetch
+    setIsLoading(true);
+
+
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
   useEffect(() => {
     const fetchBusinessProfile = async () => {
       if (!business_name || typeof business_name !== 'string') {
-        // If business name isn't valid yet, maybe wait or set default
+        setIsLoading(false); // Stop loading if no valid business name
         return;
       }
-      setIsLoading(true); // Set loading true when fetching
+      setIsLoading(true);
       try {
         const response = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
         if (response?.data) {
             setBusinessProfile({
-              representative_name: response.data.representative_name || "User", // Add fallback
-              business_name: response.data.business_name || "Business" // Add fallback
+              representative_name: response.data.representative_name || "User",
+              business_name: response.data.business_name || "Business"
             });
         } else {
-           setBusinessProfile({ representative_name: "User", business_name: "Business" }); // Set fallback on bad response
+           setBusinessProfile({ representative_name: "User", business_name: "Business" });
         }
       } catch (error) {
         console.error("Failed to fetch business profile:", error);
-        setBusinessProfile({ representative_name: "User", business_name: "Business" }); // Set fallback on error
+        setBusinessProfile({ representative_name: "User", business_name: "Business" });
       } finally {
-        // Consider delaying isLoading false slightly if needed for smoother transition
         setIsLoading(false);
       }
     };
@@ -78,6 +85,8 @@ export function Navigation() {
                          !(pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/onboarding"));
 
   if (!shouldRenderNav) {
+    // If still loading business_name but it's expected, you might want a loading spinner
+    // For now, returning null if shouldRenderNav is false.
     return null;
   }
 
@@ -252,8 +261,8 @@ export function Navigation() {
               {/* Consider using an Avatar component if you have one */}
               <UserCircle className="w-7 h-7 text-gray-400 group-hover:text-gray-200" /> {/* Adjusted size/color */}
               <div className="flex flex-col">
-                <span className="font-medium text-sm text-white group-hover:text-emerald-300 transition-colors">{businessProfile.representative_name}</span>
-                <span className="text-xs text-gray-400">{businessProfile.business_name}</span>
+                {/* Display only business_name as requested */}
+                <span className="font-medium text-sm text-white group-hover:text-emerald-300 transition-colors">{businessProfile.business_name || "Business"}</span>
               </div>
             </div>
             <Settings className="w-5 h-5 text-gray-500 group-hover:text-gray-300 transition-colors" />
@@ -265,16 +274,15 @@ export function Navigation() {
       {/* ====================== */}
       {/* Mobile Navigation Bar */}
       {/* ====================== */}
-      <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-[#131625]/95 backdrop-blur-sm border-t border-gray-700/50 z-[40]">
+      <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-[#131625]/95 backdrop-blur-sm border-t border-gray-700/50 z-[40] ">
         <div className="flex justify-around items-stretch h-16"> {/* Ensure items stretch */}
-          {[ // Define mobile items directly here
-              { name: "Dashboard", href: `/dashboard/${business_name}`, icon: BarChart },
+          {[ // Define main mobile items
+              { name: "Contacts", href: `/contacts/${business_name}`, icon: Users },
               { name: "Plans", href: `/all-engagement-plans/${business_name}`, icon: CalendarCheck },
               { name: "Instant", href: `/instant-nudge/${business_name}`, icon: Zap },
-              { name: "Replies", href: `/replies/${business_name}`, icon: MailCheck },
-              { name: "Contacts", href: `/contacts/${business_name}`, icon: Users },
-              // Add Profile link if needed, maybe replace Contacts?
-              // { name: "Profile", href: `/profile/${business_name}`, icon: UserCircle },
+              { name: "Inbox", href: `/inbox/${business_name}`, icon: MessageSquare },
+              { name: "Dashboard", href: `/dashboard/${business_name}`, icon: BarChart },
+              // "More" button will be handled separately
           ].map((item) => {
             const safeHref = item.href || '#';
             const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
@@ -295,8 +303,56 @@ export function Navigation() {
               </Link>
             );
           })}
+          {/* "More" button for mobile */}
+          <button
+            onClick={() => setShowMobileMenu(!showMobileMenu)}
+            className={cn(
+              "flex flex-col items-center justify-center flex-1 px-1 py-2 rounded-md transition-colors duration-200",
+              showMobileMenu
+                ? "text-emerald-400 bg-emerald-500/10"
+                : "text-gray-400 hover:text-white hover:bg-gray-700/50"
+            )}
+            style={{ minWidth: '0' }}
+          >
+            <MoreHorizontal className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] leading-tight text-center font-medium">More</span>
+          </button>
         </div>
       </nav>
+
+      {/* Mobile "More" Menu Popup */}
+      {isMobile && showMobileMenu && (
+        <div className="fixed inset-0 bg-black/50 z-[45]" onClick={() => setShowMobileMenu(false)}> {/* Backdrop */}
+          <div
+            className="fixed bottom-16 left-4 right-4 mb-2 p-4 bg-[#1A1D2E] border border-gray-700/50 rounded-lg shadow-xl z-[50]"
+            onClick={(e) => e.stopPropagation()} // Prevent click-through to backdrop
+          >
+            <div className="grid grid-cols-1 gap-2">
+              {[
+                { name: "Replies", href: `/replies/${business_name}`, icon: MailCheck },
+                { name: "Profile", href: `/profile/${business_name}`, icon: UserCircle },
+                // Optional: Add Logout or other links here
+                // { name: "Logout", onClick: () => console.log("Logout clicked"), icon: LogIn },
+              ].map((item) => (
+                <Link
+                  key={item.name}
+                  href={item.href || '#'} // Fallback href
+                  onClick={() => {
+                    if ((item as any).onClick) (item as any).onClick(); // Type assertion for onClick
+                    setShowMobileMenu(false); // Close menu on click
+                  }}
+                  className={cn(
+                    "flex items-center p-3 rounded-md transition-colors duration-150 text-gray-300 hover:bg-gray-700/60 hover:text-white group"
+                  )}
+                >
+                  <item.icon className="w-5 h-5 mr-3 text-gray-400 group-hover:text-emerald-400" />
+                  <span className="text-sm font-medium">{item.name}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
