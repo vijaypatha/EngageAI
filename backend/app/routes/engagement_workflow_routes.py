@@ -256,3 +256,48 @@ def clear_engagement_ai_draft(engagement_id: int, db: Session = Depends(get_db))
             "message_id": engagement.message_id
         }
     }
+
+class EngagementStatusUpdatePayload(BaseModel): # Pydantic model for request body
+    status: str
+
+@router.put("/{engagement_id}/status", summary="Update the status of an engagement")
+def update_engagement_status(
+    engagement_id: int,
+    payload: EngagementStatusUpdatePayload, # Use a Pydantic model for the payload
+    db: Session = Depends(get_db)
+):
+    """
+    Updates the status of a specific engagement.
+    For example, can be used to mark an engagement as 'dismissed' or 'actioned'.
+    """
+    engagement = db.query(Engagement).filter(Engagement.id == engagement_id).first()
+
+    if not engagement:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Engagement not found")
+
+    new_status = payload.status.strip().lower()
+    
+    # Optional: Validate the new_status against a list of allowed statuses
+    allowed_statuses_for_manual_update = ["dismissed", "actioned", "closed", "pending_review"] # Add more as needed
+    if new_status not in allowed_statuses_for_manual_update:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status value. Allowed values are: {', '.join(allowed_statuses_for_manual_update)}"
+        )
+
+    logger.info(f"Updating status of engagement ID {engagement_id} from '{engagement.status}' to '{new_status}'.")
+    engagement.status = new_status
+    engagement.updated_at = datetime.datetime.utcnow() # Update the timestamp
+
+    try:
+        db.commit()
+        db.refresh(engagement)
+        return {
+            "message": f"Engagement status updated to '{new_status}' successfully.",
+            "engagement_id": engagement.id,
+            "new_status": engagement.status
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Database error updating engagement status for ID {engagement_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update engagement status.")
