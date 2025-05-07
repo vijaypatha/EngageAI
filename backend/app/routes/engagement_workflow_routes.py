@@ -287,7 +287,8 @@ def update_engagement_status(
 
     logger.info(f"Updating status of engagement ID {engagement_id} from '{engagement.status}' to '{new_status}'.")
     engagement.status = new_status
-    engagement.updated_at = datetime.datetime.utcnow() # Update the timestamp
+    engagement.updated_at = datetime.utcnow() # Update the timestamp
+
 
     try:
         db.commit()
