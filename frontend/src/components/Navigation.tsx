@@ -262,7 +262,9 @@ export function Navigation() {
               <UserCircle className="w-7 h-7 text-gray-400 group-hover:text-gray-200" /> {/* Adjusted size/color */}
               <div className="flex flex-col">
                 {/* Display only business_name as requested */}
-                <span className="font-medium text-sm text-white group-hover:text-emerald-300 transition-colors">{businessProfile.business_name || "Business"}</span>
+                <span className="font-medium text-sm text-white group-hover:text-emerald-300 transition-colors">
+                  {isLoading ? "Loading..." : (businessProfile.business_name || "Business")}
+                </span>
               </div>
             </div>
             <Settings className="w-5 h-5 text-gray-500 group-hover:text-gray-300 transition-colors" />

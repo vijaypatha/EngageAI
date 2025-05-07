@@ -59,8 +59,9 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
 
     # 🔹 Step 6: Check for existing scheduled message linked to roadmap message
     existing_message = db.query(Message).filter(
-        Message.message_metadata['roadmap_id'].cast(Integer) == msg.id,
-        Message.message_type == 'scheduled'
+    Message.message_type == 'scheduled', # Check type first
+    Message.message_metadata != None,    # Ensure metadata is not null
+    cast(Message.message_metadata.op('->>')('roadmap_id'), Integer) == msg.id
     ).first()
 
     if not existing_message:
