@@ -183,3 +183,29 @@ def cleanup_abandoned_profiles(db: Session = Depends(get_db)):
     
     db.commit()
     return {"message": f"Deleted {len(abandoned_profiles)} abandoned profiles"}
+
+# NEW Endpoint for Navigation Data
+@router.get("/navigation-profile/slug/{slug}", response_model=BusinessProfile)
+async def get_navigation_profile_by_slug(slug: str, db: Session = Depends(get_db)):
+    logger.info(f"Attempting to fetch navigation profile with slug: {slug}")
+    try:
+        business = db.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first()
+        if not business:
+            logger.warning(f"No business found for navigation profile with slug: {slug}")
+            # Return a default structure or raise 404.
+            # For navigation, it's often better to provide defaults if the main app should still load.
+            # However, if the slug is essential for all nav links, a 404 might be appropriate.
+            # Let's raise 404 for now, consistent with other lookups.
+            raise HTTPException(status_code=404, detail="Business profile not found for this slug (for navigation)")
+        
+        logger.info(f"Successfully found navigation profile for slug {slug}: {business.business_name}")
+        # Convert the SQLAlchemy model instance to a Pydantic model instance
+        return BusinessProfile.from_orm(business)
+    except HTTPException:
+        raise # Re-raise HTTPExceptions directly
+    except Exception as e:
+        logger.error(f"Error fetching navigation profile by slug {slug}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while fetching navigation profile by slug"
+        )
