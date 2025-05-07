@@ -199,18 +199,29 @@ def get_customer_replies(
     ).order_by(Engagement.sent_at.desc()).all()
 
     result = []
-    for reply in replies:
-        customer = db.query(Customer).filter(Customer.id == reply.customer_id).first()
+    for reply_engagement in replies: # Renamed loop variable for clarity
+        customer = db.query(Customer).filter(Customer.id == reply_engagement.customer_id).first()
         if customer:
             result.append({
+                "id": reply_engagement.id,  # <--- THIS IS THE PRIMARY FIX (Engagement ID)
                 "customer_id": customer.id,
                 "customer_name": customer.customer_name,
-                "response": reply.response,
-                "ai_response": reply.ai_response,
-                "status": reply.status,
-                "sent_at": reply.sent_at.isoformat() if reply.sent_at else None
+                "phone": customer.phone, # Added from Customer model
+                "response": reply_engagement.response, # Customer's message
+                "ai_response": reply_engagement.ai_response, # AI's draft for this engagement
+                "status": reply_engagement.status,
+                # Use engagement's created_at for the customer's message timestamp
+                "timestamp": reply_engagement.created_at.isoformat() if reply_engagement.created_at else None,
+                "lifecycle_stage": customer.lifecycle_stage,
+                "pain_points": customer.pain_points,
+                "interaction_history": customer.interaction_history,
+                # Note: 'last_message' from CustomerReply interface is ambiguous here;
+                # 'response' (customer's message) or 'ai_response' (AI's message) are more specific.
+                # 'sent_at' in the original code referred to the engagement's sent_at,
+                # which is for when the AI's reply was sent. We'll keep it if useful,
+                # but 'timestamp' above is likely for the customer's message.
+                "engagement_sent_at": reply_engagement.sent_at.isoformat() if reply_engagement.sent_at else None
             })
-
     return result
 
 @router.post("/debug/send-sms-now/{message_id}")

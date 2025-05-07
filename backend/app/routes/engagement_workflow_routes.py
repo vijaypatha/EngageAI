@@ -7,7 +7,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Engagement, Customer, BusinessProfile
@@ -17,6 +17,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
+
 
 logger = logging.getLogger(__name__)
 
@@ -202,20 +203,56 @@ def update_ai_draft(
 
 
 # Delete engagement draft route
-from fastapi import status
-
-@router.delete("/{engagement_id}", summary="Delete an engagement draft")
-def delete_engagement_draft(engagement_id: int, db: Session = Depends(get_db)):
+@router.delete("/{engagement_id}", summary="Clear an AI draft from an engagement")
+def clear_engagement_ai_draft(engagement_id: int, db: Session = Depends(get_db)):
     """
-    Delete an engagement draft by ID. Only allowed if the engagement is still in 'pending_review' state.
+    Clears the AI-generated draft response for an engagement by setting ai_response to None.
+    The customer's original response and the engagement record itself remain.
+    Only allowed if the engagement is in 'pending_review' status and has an ai_response.
     """
+    logger.info(f"Attempting to clear AI draft for engagement_id: {engagement_id}")
     engagement = db.query(Engagement).filter(Engagement.id == engagement_id).first()
+
     if not engagement:
-        raise HTTPException(status_code=404, detail="Engagement not found")
+        logger.warning(f"DELETE /engagement-workflow/{engagement_id}: Engagement not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Engagement not found")
 
+    # Check if there's an AI draft to clear
+    if not engagement.ai_response:
+        logger.info(f"DELETE /engagement-workflow/{engagement_id}: No AI draft to clear. ai_response is already null or empty.")
+        # Return a success or specific message, as there's nothing to "delete"
+        return {"message": "No AI draft to clear or it was already cleared.", "engagement_id": engagement_id}
+
+    # Only allow clearing if it's truly a pending draft
     if engagement.status != "pending_review":
-        raise HTTPException(status_code=400, detail="Only drafts can be deleted")
+        logger.warning(f"DELETE /engagement-workflow/{engagement_id}: Attempt to clear AI draft for engagement with status '{engagement.status}'. Only 'pending_review' allowed.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Only AI drafts for engagements in 'pending_review' status can be cleared. Current status: {engagement.status}")
 
-    db.delete(engagement)
-    db.commit()
-    return {"message": "Engagement draft deleted successfully."}
+    # --- THIS IS THE FIX ---
+    engagement.ai_response = None  # Set the ai_response field to None (or an empty string if your DB/model prefers)
+    # engagement.status = "customer_replied" # Optionally, change status to indicate manual review needed again, or create a new specific status
+                                          # If you keep it 'pending_review', the UI will just show no draft.
+    
+    try:
+        db.commit()
+        db.refresh(engagement)
+        logger.info(f"DELETE /engagement-workflow/{engagement_id}: AI draft cleared successfully. Customer response ('{engagement.response[:50]}...') remains.")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"DELETE /engagement-workflow/{engagement_id}: Database error during commit: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update engagement in database.")
+    
+    return {
+        "message": "AI draft cleared successfully.",
+        "engagement": { 
+            "id": engagement.id,
+            "customer_id": engagement.customer_id,
+            "response": engagement.response,
+            "ai_response": engagement.ai_response, # This will now be null
+            "status": engagement.status,
+            # Include other fields from your Engagement model/schema if needed by frontend
+            "sent_at": engagement.sent_at.isoformat() if engagement.sent_at else None,
+            "created_at": engagement.created_at.isoformat() if engagement.created_at else None,
+            "message_id": engagement.message_id
+        }
+    }
