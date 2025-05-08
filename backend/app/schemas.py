@@ -1,7 +1,7 @@
 # backend/app/schemas.py
 
 from pydantic import BaseModel, constr, Field, EmailStr, validator
-from typing import Optional, Annotated, List, Dict, Any
+from typing import Optional, Annotated, List, Dict, Any, StringConstraints
 import pytz
 from datetime import datetime
 import uuid
@@ -47,7 +47,7 @@ def normalize_phone_number(cls, v: Optional[str]) -> Optional[str]:
 
 # --- Add these Tag schemas ---
 class TagBase(BaseModel):
-    name: constr(strip_whitespace=True, to_lower=True, min_length=1, max_length=100)
+    name: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=100)]
 
 class TagCreate(TagBase):
     pass
@@ -168,7 +168,7 @@ class Customer(CustomerBase):
 ### ✅ SMS Schemas
 class SMSCreate(BaseModel):
     customer_id: int
-    message: constr(max_length=160)
+    message: Annotated[str, StringConstraints(max_length=160)]
     send_time: Optional[str] = None # Consider using datetime
 
     @validator('message')
