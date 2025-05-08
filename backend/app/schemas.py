@@ -1,7 +1,8 @@
 # backend/app/schemas.py
 
 from pydantic import BaseModel, constr, Field, EmailStr, validator
-from typing import Optional, Annotated, List, Dict, Any, StringConstraints
+from typing import Optional, Annotated, List, Dict, Any
+from pydantic import StringConstraints
 import pytz
 from datetime import datetime
 import uuid
