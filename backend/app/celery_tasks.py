@@ -5,6 +5,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone as dt_timezone # Alias timezone to avoid conflict
 from typing import Dict, Optional, Union
+from fastapi import HTTPException
 
 from app.celery_app import celery_app as celery
 from app.database import SessionLocal
