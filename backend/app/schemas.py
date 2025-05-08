@@ -1,3 +1,5 @@
+# backend/app/schemas.py
+
 from pydantic import BaseModel, constr, Field, EmailStr, validator
 from typing import Optional, Annotated, List, Dict, Any
 import pytz
@@ -9,29 +11,38 @@ import re # Added for regex operations in validator
 def normalize_phone_number(cls, v: Optional[str]) -> Optional[str]:
     if v is None:
         return None
+
+    # Remove leading/trailing whitespace first
+    v_stripped = v.strip()
+
+    # Remove all non-digit characters for length checks, KEEP '+' if present at start
+    digits = re.sub(r'\D', '', v_stripped)
     
-    # Remove all non-digit characters
-    digits = re.sub(r'\D', '', v)
-    
-    # If 10 digits, assume US number and prepend +1
+    # If 10 digits (North America without country code)
     if len(digits) == 10:
         return f"+1{digits}"
-    # If 11 digits and starts with 1 (e.g., 13856268825), prepend +
+    # If 11 digits and starts with 1 (North America with country code)
     elif len(digits) == 11 and digits.startswith('1'):
-        return f"+{digits}"
-    # If already starts with +, assume it's in a valid format (or close enough)
-    # Also ensure only digits remain after the +
-    elif v.startswith('+'):
-        return f"+{re.sub(r'\D', '', v[1:])}"
-    # For other cases, if it's all digits but not matching above, prepend +
-    # This is a fallback, might need adjustment based on expected non-US formats
-    elif digits.isdigit() and len(digits) > 0 : # Check if it became all digits
+        return f"+{digits}" # Already includes the 1
+    # If the *original* input started with '+' (E.164 or similar)
+    elif v_stripped.startswith('+'):
+        # Keep the '+' and remove non-digits from the rest
+        digits_after_plus = re.sub(r'\D', '', v_stripped[1:])
+        # Basic validation: ensure there's something after '+'
+        if not digits_after_plus:
+             raise ValueError(f"Invalid phone number format (empty after '+'): {v}")
+        return f"+{digits_after_plus}"
+    # Fallback for other numeric inputs (might be international without '+')
+    # This is less reliable - assumes user input a valid number without '+'
+    elif digits.isdigit() and len(digits) > 0 :
+        # You might want stricter validation here depending on your needs
+        # Prepending '+' might be incorrect if it's not a +1 number.
+        # Consider returning digits or raising error if format is ambiguous.
+        # For now, returning digits prepended with '+' as a best guess.
         return f"+{digits}"
         
-    # If the input (after initial stripping of non-digits) was not purely digits or not a recognized format
-    # return v # Fallback for unrecognized formats, or you could raise ValueError
-    # Let's raise a ValueError for inputs that aren't clearly phone numbers after processing
-    raise ValueError(f"Invalid phone number format: {v}")
+    # If the input doesn't resemble a phone number after cleaning
+    raise ValueError(f"Invalid or unrecognized phone number format: {v}")
 
 
 # --- Add these Tag schemas ---
@@ -43,7 +54,7 @@ class TagCreate(TagBase):
 
 class TagRead(TagBase):
     id: int
-    # business_id: int # Optional: Decide if frontend needs this when reading a tag
+    # business_id: int # Optional
 
     class Config:
         from_attributes = True
@@ -72,6 +83,7 @@ class BusinessProfileBase(BaseModel):
     timezone: Optional[str] = "UTC"
     business_phone_number: Optional[str] = None
 
+    # Apply the validator using the function defined above
     _normalize_business_phone = validator('business_phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
 class BusinessProfileCreate(BusinessProfileBase):
@@ -84,9 +96,10 @@ class BusinessProfileUpdate(BaseModel):
     primary_services: Optional[str] = None
     representative_name: Optional[str] = None
     timezone: Optional[str] = None
-    twilio_number: Optional[str] = None # Typically assigned by system, not direct update
+    twilio_number: Optional[str] = None # Assigned by system, not usually direct update
     business_phone_number: Optional[str] = None
 
+    # Apply validators
     _normalize_business_phone_update = validator('business_phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
     _normalize_twilio_number_update = validator('twilio_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
@@ -104,6 +117,7 @@ class BusinessProfile(BusinessProfileBase):
 class BusinessPhoneUpdate(BaseModel):
     business_phone_number: str
 
+    # Apply validator
     _normalize_business_phone = validator('business_phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
     class Config:
@@ -122,6 +136,7 @@ class CustomerBase(BaseModel):
     is_generating_roadmap: Optional[bool] = False
     last_generation_attempt: Optional[datetime] = None
 
+    # Apply validator
     _normalize_customer_phone = validator('phone', pre=True, allow_reuse=True)(normalize_phone_number)
 
 class CustomerCreate(CustomerBase):
@@ -136,6 +151,7 @@ class CustomerUpdate(BaseModel):
     timezone: Optional[str] = None
     opted_in: Optional[bool] = None
 
+    # Apply validator
     _normalize_customer_phone_update = validator('phone', pre=True, allow_reuse=True)(normalize_phone_number)
 
 class Customer(CustomerBase):
@@ -153,7 +169,7 @@ class Customer(CustomerBase):
 class SMSCreate(BaseModel):
     customer_id: int
     message: constr(max_length=160)
-    send_time: Optional[str] = None
+    send_time: Optional[str] = None # Consider using datetime
 
     @validator('message')
     def validate_message_length(cls, v):
@@ -164,7 +180,7 @@ class SMSCreate(BaseModel):
 class SMSUpdate(BaseModel):
     updated_message: str
     status: str
-    send_time: Optional[str] = None
+    send_time: Optional[str] = None # Consider using datetime
 
 class SMSApproveOnly(BaseModel):
     status: str
@@ -180,10 +196,11 @@ class SMSStyleInput(BaseModel):
     scenario: str
     response: str
     context_type: str
-    tone: str # This field and below might be part of analysis, not direct input for training response
-    language_style: str
-    key_phrases: List[str]
-    formatting_preferences: Dict[str, Any]
+    # Fields below are usually derived from analysis, not direct input for response training
+    # tone: str
+    # language_style: str
+    # key_phrases: List[str]
+    # formatting_preferences: Dict[str, Any]
 
 class StyleAnalysis(BaseModel):
     key_phrases: List[str]
@@ -191,7 +208,7 @@ class StyleAnalysis(BaseModel):
     personality_traits: List[str]
     message_patterns: Dict[str, Any]
     special_elements: Dict[str, Any]
-    overall_summary: str  
+    overall_summary: Optional[str] = None # Made optional
 
 class SMSStyleResponse(BaseModel):
     status: str
@@ -208,13 +225,13 @@ class RoadmapMessageOut(BaseModel):
     customer_id: int
     customer_name: str
     smsContent: str
-    smsTiming: str
+    smsTiming: str # Descriptive timing
     status: str
-    send_datetime_utc: Optional[str] = None # Should be datetime if used for calculations
+    send_datetime_utc: Optional[datetime] = None # Changed to datetime
     customer_timezone: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        orm_mode = True # Use orm_mode for SQLAlchemy models
 
 class AllRoadmapMessagesResponse(BaseModel):
     total: int
@@ -222,23 +239,26 @@ class AllRoadmapMessagesResponse(BaseModel):
     messages: list[RoadmapMessageOut]
 
 class ConversationMessage(BaseModel):
-    sender: str
+    id: str # Unique ID for frontend (e.g., "msg-123", "eng-cust-45")
+    sender: Optional[str] = None # "customer", "ai", "owner" - Make Optional if not always applicable
     text: str
-    timestamp: Optional[str] = None # Should be datetime
-    source: str
-    direction: str
+    timestamp: Optional[datetime] = None # Changed to datetime
+    source: str # e.g., "ai_draft", "manual_reply", "scheduled_sms", "customer_reply"
+    direction: Optional[str] = None # "incoming" or "outgoing" - Make Optional
+    type: Optional[str] = None # Added for simpler frontend logic (e.g., 'customer', 'sent', 'ai_draft', 'scheduled')
+    status: Optional[str] = None # Added status (e.g., 'sent', 'delivered', 'failed', 'pending_review')
 
 class ConversationResponse(BaseModel):
-    customer: dict
+    customer: dict # e.g., {"id": 1, "name": "Jane Doe", "phone": "+1..."}
     messages: List[ConversationMessage]
 
 class ScheduledSMSOut(BaseModel):
     id: int
     customer_id: int
     business_id: int
-    message: str
+    message: str # Changed from 'content' to 'message' for consistency? Check model.
     status: str
-    send_time: str # Should be datetime
+    send_time: datetime # Changed to datetime
     source: Optional[str] = None
     roadmap_id: Optional[int] = None
     is_hidden: bool
@@ -246,7 +266,7 @@ class ScheduledSMSOut(BaseModel):
     customer_timezone: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        orm_mode = True # Use orm_mode for SQLAlchemy models
 
 # Conversation Schemas
 class ConversationBase(BaseModel):
@@ -310,14 +330,14 @@ class MessageResponse(MessageBase):
 
 # Engagement Schemas
 class EngagementBase(BaseModel):
-    message_id: int # Should this be optional if an engagement can start from customer?
+    message_id: Optional[int] = None # Allow null if engagement starts with customer reply
     customer_id: int
     business_id: int
-    response: str # Customer's response
-    ai_response: Optional[str] = None
-    status: str = "pending_review"
+    response: Optional[str] = None # Customer's response (null if AI initiated)
+    ai_response: Optional[str] = None # Business/AI response
+    status: str = "pending_review" # Status of the AI response (pending, sent, etc.)
     parent_engagement_id: Optional[int] = None
-    sent_at: Optional[datetime] = None # When AI response was sent
+    sent_at: Optional[datetime] = None # When the business/AI response was sent
 
 class EngagementCreate(EngagementBase):
     pass
@@ -338,13 +358,13 @@ class Engagement(EngagementBase):
 
 # Roadmap Message Schemas
 class RoadmapMessageBase(BaseModel):
-    message_id: Optional[int] = None # Making optional if not always linked to a Message table ID initially
+    message_id: Optional[int] = None
     customer_id: int
     business_id: int
     smsContent: str
-    smsTiming: str # This might be descriptive like "Day 5, 10:00 AM"
+    smsTiming: str
     status: str = "pending_review"
-    send_datetime_utc: Optional[datetime] = None # Actual UTC time for sending
+    send_datetime_utc: Optional[datetime] = None
     relevance: Optional[str] = None
     success_indicator: Optional[str] = None
     no_response_plan: Optional[str] = None
@@ -369,7 +389,7 @@ class RoadmapMessage(RoadmapMessageBase):
     class Config:
         from_attributes = True
 
-# Scheduled SMS Schemas (Potentially redundant with Message model if message_type='scheduled')
+# Scheduled SMS Schemas (Potentially redundant with Message model)
 class ScheduledSMSBase(BaseModel):
     customer_id: int
     business_id: int
@@ -403,18 +423,18 @@ class ScheduledSMSResponse(ScheduledSMSBase):
 class ConsentLogBase(BaseModel):
     customer_id: int
     business_id: int
-    method: str
+    method: str # e.g., "sms_double_optin", "manual_override"
     phone_number: str
     message_sid: Optional[str] = None
-    status: str = "pending" # e.g. pending, opted_in, opted_out, declined
+    status: str = "pending" # e.g., pending_confirmation, opted_in, opted_out, declined
     sent_at: Optional[datetime] = None # When the opt-in request was sent
     replied_at: Optional[datetime] = None # When the customer replied
 
     _normalize_consent_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
 class ConsentLogCreate(ConsentLogBase):
-    # sent_at will be set by the service, make it optional here or remove if not user-provided
-    sent_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    # Make sent_at truly optional or default to None, service will set it
+    sent_at: Optional[datetime] = None
 
 
 class ConsentLogUpdate(BaseModel):
@@ -423,8 +443,8 @@ class ConsentLogUpdate(BaseModel):
 
 class ConsentLog(ConsentLogBase):
     id: int
-    # created_at: datetime # If you have these in your model
-    # updated_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None # Add if in model and needed
+    updated_at: Optional[datetime] = None # Add if in model and needed
 
     class Config:
         from_attributes = True
@@ -436,15 +456,15 @@ class RoadmapMessageResponse(BaseModel):
     message: str = Field(..., alias='smsContent')
     scheduled_time: datetime = Field(..., alias='send_datetime_utc')
     status: str
-    # relevance: Optional[str] = Field(None, alias='relevance')
-    # success_indicator: Optional[str] = Field(None, alias='success_indicator')
-    # no_response_plan: Optional[str] = Field(None, alias='no_response_plan')
+    # relevance: Optional[str] = None # Aliases are optional here if names match model
+    # success_indicator: Optional[str] = None
+    # no_response_plan: Optional[str] = None
     # created_at: datetime
     # updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
-        populate_by_name = True
+        populate_by_name = True # Important for aliases
 
 class RoadmapGenerate(BaseModel):
     customer_id: int
@@ -469,41 +489,29 @@ class TwilioNumberAssign(BaseModel):
 
     _normalize_twilio_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
-class ConsentBase(BaseModel): # This is a duplicate of the earlier ConsentBase. Consolidate if identical.
-    customer_id: int
-    business_id: int
-    phone_number: str # Already has validator in its original definition
-    status: str = "awaiting_optin"
+# Consolidating ConsentBase, ensure only one definition is used
+# class ConsentBase(BaseModel):
+#     customer_id: int
+#     business_id: int
+#     phone_number: str
+#     status: str = "awaiting_optin"
+#     _normalize_consent_phone_2 = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
-    # Re-applying validator here for clarity if this definition is used independently
-    _normalize_consent_phone_2 = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
-
-
-class ConsentCreate(ConsentBase):
+class ConsentCreate(ConsentLogBase): # Inherit from the detailed ConsentLogBase
     pass
 
-class ConsentResponse(ConsentBase):
-    id: int
-    method: str
-    replied_at: Optional[datetime] = None
-    sent_at: Optional[datetime] = None
-    message_sid: Optional[str] = None
-    # created_at: datetime # Add if in model and needed
-    # updated_at: Optional[datetime] = None # Add if in model and needed
-
-    class Config:
-        from_attributes = True
+class ConsentResponse(ConsentLog): # Inherit from the detailed ConsentLog
+    pass
 
 class BusinessScenarioCreate(BaseModel):
     scenario: str = Field(..., description="The scenario description")
     context_type: str = Field(..., description="The type of context (e.g., inquiry, appreciation, follow_up)")
-    # The fields below are more for the *output* of style analysis, not typical input for creating a scenario response
-    key_phrases: Optional[List[str]] = Field(default=[])
-    style_notes: Optional[Dict[str, Any]] = Field(default={})
-    personality_traits: Optional[List[str]] = Field(default=[])
-    # message_patterns used to be List[str], ensure consistency with model or analysis output
-    message_patterns: Optional[Dict[str, Any]] = Field(default={}) # Changed to Dict to match StyleAnalysis
-    special_elements: Optional[Dict[str, Any]] = Field(default={})
+    # Fields below are typically outputs of analysis, not inputs for creation
+    # key_phrases: Optional[List[str]] = Field(default=[])
+    # style_notes: Optional[Dict[str, Any]] = Field(default={})
+    # personality_traits: Optional[List[str]] = Field(default=[])
+    # message_patterns: Optional[Dict[str, Any]] = Field(default={})
+    # special_elements: Optional[Dict[str, Any]] = Field(default={})
     response: Optional[str] = Field(default="", description="The response to the scenario")
 
 class BusinessOwnerStyleResponse(BaseModel):
