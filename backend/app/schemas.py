@@ -3,12 +3,40 @@ from typing import Optional, Annotated, List, Dict, Any
 import pytz
 from datetime import datetime
 import uuid
+import re # Added for regex operations in validator
+
+# Helper function to normalize phone numbers
+def normalize_phone_number(cls, v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    
+    # Remove all non-digit characters
+    digits = re.sub(r'\D', '', v)
+    
+    # If 10 digits, assume US number and prepend +1
+    if len(digits) == 10:
+        return f"+1{digits}"
+    # If 11 digits and starts with 1 (e.g., 13856268825), prepend +
+    elif len(digits) == 11 and digits.startswith('1'):
+        return f"+{digits}"
+    # If already starts with +, assume it's in a valid format (or close enough)
+    # Also ensure only digits remain after the +
+    elif v.startswith('+'):
+        return f"+{re.sub(r'\D', '', v[1:])}"
+    # For other cases, if it's all digits but not matching above, prepend +
+    # This is a fallback, might need adjustment based on expected non-US formats
+    elif digits.isdigit() and len(digits) > 0 : # Check if it became all digits
+        return f"+{digits}"
+        
+    # If the input (after initial stripping of non-digits) was not purely digits or not a recognized format
+    # return v # Fallback for unrecognized formats, or you could raise ValueError
+    # Let's raise a ValueError for inputs that aren't clearly phone numbers after processing
+    raise ValueError(f"Invalid phone number format: {v}")
+
 
 # --- Add these Tag schemas ---
 class TagBase(BaseModel):
-    #name: str
     name: constr(strip_whitespace=True, to_lower=True, min_length=1, max_length=100)
-
 
 class TagCreate(TagBase):
     pass
@@ -44,6 +72,8 @@ class BusinessProfileBase(BaseModel):
     timezone: Optional[str] = "UTC"
     business_phone_number: Optional[str] = None
 
+    _normalize_business_phone = validator('business_phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
+
 class BusinessProfileCreate(BusinessProfileBase):
     pass
 
@@ -54,8 +84,12 @@ class BusinessProfileUpdate(BaseModel):
     primary_services: Optional[str] = None
     representative_name: Optional[str] = None
     timezone: Optional[str] = None
-    twilio_number: Optional[str] = None
+    twilio_number: Optional[str] = None # Typically assigned by system, not direct update
     business_phone_number: Optional[str] = None
+
+    _normalize_business_phone_update = validator('business_phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
+    _normalize_twilio_number_update = validator('twilio_number', pre=True, allow_reuse=True)(normalize_phone_number)
+
 
 class BusinessProfile(BusinessProfileBase):
     id: int
@@ -69,6 +103,8 @@ class BusinessProfile(BusinessProfileBase):
 
 class BusinessPhoneUpdate(BaseModel):
     business_phone_number: str
+
+    _normalize_business_phone = validator('business_phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
     class Config:
         from_attributes = True
@@ -86,6 +122,8 @@ class CustomerBase(BaseModel):
     is_generating_roadmap: Optional[bool] = False
     last_generation_attempt: Optional[datetime] = None
 
+    _normalize_customer_phone = validator('phone', pre=True, allow_reuse=True)(normalize_phone_number)
+
 class CustomerCreate(CustomerBase):
     pass
 
@@ -98,13 +136,15 @@ class CustomerUpdate(BaseModel):
     timezone: Optional[str] = None
     opted_in: Optional[bool] = None
 
+    _normalize_customer_phone_update = validator('phone', pre=True, allow_reuse=True)(normalize_phone_number)
+
 class Customer(CustomerBase):
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
     latest_consent_status: Optional[str] = None
     latest_consent_updated: Optional[datetime] = None
-    tags: List[TagRead] = [] # Include associated tags in customer response
+    tags: List[TagRead] = []
 
     class Config:
         from_attributes = True
@@ -112,8 +152,8 @@ class Customer(CustomerBase):
 ### ✅ SMS Schemas
 class SMSCreate(BaseModel):
     customer_id: int
-    message: constr(max_length=160)  # Enforces SMS character limit
-    send_time: Optional[str] = None  # ISO format datetime string in business timezone
+    message: constr(max_length=160)
+    send_time: Optional[str] = None
 
     @validator('message')
     def validate_message_length(cls, v):
@@ -124,10 +164,10 @@ class SMSCreate(BaseModel):
 class SMSUpdate(BaseModel):
     updated_message: str
     status: str
-    send_time: Optional[str] = None  # ISO format datetime string in business timezone
+    send_time: Optional[str] = None
 
 class SMSApproveOnly(BaseModel):
-    status: str  # Just 'scheduled'
+    status: str
 
 ### ✅ Engagement Schema
 class EngagementResponse(BaseModel):
@@ -140,7 +180,7 @@ class SMSStyleInput(BaseModel):
     scenario: str
     response: str
     context_type: str
-    tone: str
+    tone: str # This field and below might be part of analysis, not direct input for training response
     language_style: str
     key_phrases: List[str]
     formatting_preferences: Dict[str, Any]
@@ -170,7 +210,7 @@ class RoadmapMessageOut(BaseModel):
     smsContent: str
     smsTiming: str
     status: str
-    send_datetime_utc: Optional[str] = None
+    send_datetime_utc: Optional[str] = None # Should be datetime if used for calculations
     customer_timezone: Optional[str] = None
 
     class Config:
@@ -182,14 +222,14 @@ class AllRoadmapMessagesResponse(BaseModel):
     messages: list[RoadmapMessageOut]
 
 class ConversationMessage(BaseModel):
-    sender: str  # "customer", "ai", or "owner"
+    sender: str
     text: str
-    timestamp: Optional[str] = None
-    source: str  # "ai_draft", "manual_reply", "scheduled_sms", "customer_response"
-    direction: str  # "incoming" or "outgoing"
+    timestamp: Optional[str] = None # Should be datetime
+    source: str
+    direction: str
 
 class ConversationResponse(BaseModel):
-    customer: dict  # Contains "id" and "name"
+    customer: dict
     messages: List[ConversationMessage]
 
 class ScheduledSMSOut(BaseModel):
@@ -198,7 +238,7 @@ class ScheduledSMSOut(BaseModel):
     business_id: int
     message: str
     status: str
-    send_time: str
+    send_time: str # Should be datetime
     source: Optional[str] = None
     roadmap_id: Optional[int] = None
     is_hidden: bool
@@ -261,7 +301,6 @@ class Message(MessageBase):
         from_attributes = True
 
 class MessageResponse(MessageBase):
-    """Schema for message responses"""
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -271,14 +310,14 @@ class MessageResponse(MessageBase):
 
 # Engagement Schemas
 class EngagementBase(BaseModel):
-    message_id: int
+    message_id: int # Should this be optional if an engagement can start from customer?
     customer_id: int
     business_id: int
-    response: str
+    response: str # Customer's response
     ai_response: Optional[str] = None
     status: str = "pending_review"
     parent_engagement_id: Optional[int] = None
-    sent_at: Optional[datetime] = None
+    sent_at: Optional[datetime] = None # When AI response was sent
 
 class EngagementCreate(EngagementBase):
     pass
@@ -299,13 +338,13 @@ class Engagement(EngagementBase):
 
 # Roadmap Message Schemas
 class RoadmapMessageBase(BaseModel):
-    message_id: int
+    message_id: Optional[int] = None # Making optional if not always linked to a Message table ID initially
     customer_id: int
     business_id: int
     smsContent: str
-    smsTiming: str
+    smsTiming: str # This might be descriptive like "Day 5, 10:00 AM"
     status: str = "pending_review"
-    send_datetime_utc: Optional[datetime] = None
+    send_datetime_utc: Optional[datetime] = None # Actual UTC time for sending
     relevance: Optional[str] = None
     success_indicator: Optional[str] = None
     no_response_plan: Optional[str] = None
@@ -330,7 +369,7 @@ class RoadmapMessage(RoadmapMessageBase):
     class Config:
         from_attributes = True
 
-# Scheduled SMS Schemas
+# Scheduled SMS Schemas (Potentially redundant with Message model if message_type='scheduled')
 class ScheduledSMSBase(BaseModel):
     customer_id: int
     business_id: int
@@ -353,7 +392,6 @@ class ScheduledSMSUpdate(BaseModel):
     is_hidden: Optional[bool] = None
 
 class ScheduledSMSResponse(ScheduledSMSBase):
-    """Schema for scheduled SMS responses"""
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -368,12 +406,16 @@ class ConsentLogBase(BaseModel):
     method: str
     phone_number: str
     message_sid: Optional[str] = None
-    status: str = "pending"
-    sent_at: datetime
-    replied_at: Optional[datetime] = None
+    status: str = "pending" # e.g. pending, opted_in, opted_out, declined
+    sent_at: Optional[datetime] = None # When the opt-in request was sent
+    replied_at: Optional[datetime] = None # When the customer replied
+
+    _normalize_consent_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
 class ConsentLogCreate(ConsentLogBase):
-    pass
+    # sent_at will be set by the service, make it optional here or remove if not user-provided
+    sent_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
 
 class ConsentLogUpdate(BaseModel):
     status: Optional[str] = None
@@ -381,43 +423,35 @@ class ConsentLogUpdate(BaseModel):
 
 class ConsentLog(ConsentLogBase):
     id: int
+    # created_at: datetime # If you have these in your model
+    # updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
-
 class RoadmapMessageResponse(BaseModel):
-    """Schema for roadmap message responses"""
     id: int
     customer_id: int
     business_id: int
-    # Alias 'message' schema field to the model's 'smsContent' column
     message: str = Field(..., alias='smsContent')
-    # Alias 'scheduled_time' schema field to the model's 'send_datetime_utc' column
     scheduled_time: datetime = Field(..., alias='send_datetime_utc')
     status: str
-    # Add other fields from the model you might need in the response schema,
-    # with aliases if their names differ from the model
-    # Example (add these if they should be in the response):
     # relevance: Optional[str] = Field(None, alias='relevance')
     # success_indicator: Optional[str] = Field(None, alias='success_indicator')
     # no_response_plan: Optional[str] = Field(None, alias='no_response_plan')
-    # created_at: datetime = Field(..., alias='created_at')
-    # updated_at: Optional[datetime] = Field(None, alias='updated_at')
-
+    # created_at: datetime
+    # updated_at: Optional[datetime] = None
 
     class Config:
-        from_attributes = True # Keep this
-        populate_by_name = True # Add this line
+        from_attributes = True
+        populate_by_name = True
 
 class RoadmapGenerate(BaseModel):
-    """Schema for generating a new roadmap of messages for a customer"""
     customer_id: int
     business_id: int
     context: Optional[Dict[str, Any]] = None
 
 class RoadmapResponse(BaseModel):
-    """Schema for roadmap generation response"""
     status: str
     message: Optional[str] = None
     roadmap: Optional[List[RoadmapMessageResponse]] = None
@@ -430,26 +464,22 @@ class RoadmapResponse(BaseModel):
 
 # Twilio Schemas
 class TwilioNumberAssign(BaseModel):
-    """Schema for assigning a Twilio number to a business"""
     business_id: int
     phone_number: str
 
-    @validator('phone_number')
-    def validate_phone_number(cls, v):
-        # Remove any spaces or special characters except +
-        v = ''.join(c for c in v if c.isdigit() or c == '+')
-        if not v.startswith('+'):
-            v = '+' + v
-        return v
+    _normalize_twilio_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
-class ConsentBase(BaseModel):
+class ConsentBase(BaseModel): # This is a duplicate of the earlier ConsentBase. Consolidate if identical.
     customer_id: int
     business_id: int
-    phone_number: str
-    status: str = "awaiting_optin"  # or "opted_in" / "opted_out"
+    phone_number: str # Already has validator in its original definition
+    status: str = "awaiting_optin"
+
+    # Re-applying validator here for clarity if this definition is used independently
+    _normalize_consent_phone_2 = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
+
 
 class ConsentCreate(ConsentBase):
-    """Schema for creating a new consent record"""
     pass
 
 class ConsentResponse(ConsentBase):
@@ -458,25 +488,25 @@ class ConsentResponse(ConsentBase):
     replied_at: Optional[datetime] = None
     sent_at: Optional[datetime] = None
     message_sid: Optional[str] = None
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    # created_at: datetime # Add if in model and needed
+    # updated_at: Optional[datetime] = None # Add if in model and needed
 
     class Config:
         from_attributes = True
 
 class BusinessScenarioCreate(BaseModel):
-    """Schema for creating a new business scenario."""
     scenario: str = Field(..., description="The scenario description")
     context_type: str = Field(..., description="The type of context (e.g., inquiry, appreciation, follow_up)")
-    key_phrases: Optional[List[str]] = Field(default=[], description="Key phrases that characterize the business's style")
-    style_notes: Optional[Dict[str, Any]] = Field(default={}, description="Additional style-related notes")
-    personality_traits: Optional[List[str]] = Field(default=[], description="Personality traits to reflect in responses")
-    message_patterns: Optional[List[str]] = Field(default=[], description="Common message patterns to follow")
-    special_elements: Optional[Dict[str, Any]] = Field(default={}, description="Special elements to include in responses")
+    # The fields below are more for the *output* of style analysis, not typical input for creating a scenario response
+    key_phrases: Optional[List[str]] = Field(default=[])
+    style_notes: Optional[Dict[str, Any]] = Field(default={})
+    personality_traits: Optional[List[str]] = Field(default=[])
+    # message_patterns used to be List[str], ensure consistency with model or analysis output
+    message_patterns: Optional[Dict[str, Any]] = Field(default={}) # Changed to Dict to match StyleAnalysis
+    special_elements: Optional[Dict[str, Any]] = Field(default={})
     response: Optional[str] = Field(default="", description="The response to the scenario")
 
 class BusinessOwnerStyleResponse(BaseModel):
-    """Schema for business owner style responses."""
     id: int
     business_id: int
     scenario: str
@@ -486,4 +516,3 @@ class BusinessOwnerStyleResponse(BaseModel):
 
     class Config:
         from_attributes = True
-

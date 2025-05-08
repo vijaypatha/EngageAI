@@ -14,7 +14,7 @@
 # - GET /auth/me - Gets current logged-in business profile, including business_id, name, and slug.
 # - POST /auth/logout - Ends the current session.
 #
-# Services Used: TwilioService (for sending OTP messages)
+# Services Used: TwilioService (for sending OTPs via Twilio)
 #
 # Frontend Usage:
 # - Used during onboarding and login for phone verification.
@@ -30,13 +30,16 @@ from fastapi import APIRouter, Request, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import BusinessProfile # Import the BusinessProfile model
-from pydantic import BaseModel
+from pydantic import BaseModel, validator # Added validator
 import random
 import string
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 import logging
 from app.services.twilio_service import TwilioService # Service for sending OTPs via Twilio
+
+# Import the normalize_phone_number function from schemas
+from app.schemas import normalize_phone_number
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -51,10 +54,18 @@ otp_storage: Dict[str, Dict[str, any]] = {}
 class OTPRequest(BaseModel):
     phone_number: str
 
+    # Apply the imported validator
+    _normalize_otp_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
+
+
 # Pydantic model for the OTP verification body
 class OTPVerify(BaseModel):
     phone_number: str
     otp: str
+
+    # Apply the imported validator
+    _normalize_verify_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
+
 
 # Pydantic model for the session creation body
 class SessionCreateBody(BaseModel):
@@ -72,11 +83,13 @@ async def request_otp(
     """
     Generates an OTP, stores it, and sends it to the provided phone number via SMS.
     """
+    # phone_number will already be normalized by the Pydantic validator
     phone_number = request_data.phone_number
     otp_code = generate_otp()
     expires_at = datetime.utcnow() + timedelta(minutes=5) # OTP expires in 5 minutes
 
     # Store OTP details (otp, expiry, attempts)
+    # Use the normalized phone_number as the key
     otp_storage[phone_number] = {
         'otp': otp_code,
         'expires_at': expires_at,
@@ -104,11 +117,13 @@ async def verify_otp(
     Verifies the provided OTP against the stored OTP for the phone number.
     Returns business_id and slug upon successful verification.
     """
+    # phone_number will already be normalized by the Pydantic validator
     phone_number = request_data.phone_number
     submitted_otp = request_data.otp
 
     logger.info(f"Attempting OTP verification for phone: {phone_number} with OTP: {submitted_otp}")
 
+    # Use the normalized phone_number to look up in otp_storage
     stored_otp_data = otp_storage.get(phone_number)
 
     # Log the state of otp_storage for debugging if needed
@@ -166,7 +181,7 @@ async def verify_otp(
         del otp_storage[phone_number]
         logger.info(f"Removed verified OTP data for {phone_number} from storage.")
 
-    # Retrieve business profile using the verified phone number
+    # Retrieve business profile using the verified (and normalized) phone number
     logger.info(f"Fetching business profile for phone number: {phone_number}")
     business = db.query(BusinessProfile).filter(BusinessProfile.business_phone_number == phone_number).first()
 

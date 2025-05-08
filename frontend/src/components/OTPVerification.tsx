@@ -4,42 +4,42 @@
 
 import { useState } from 'react';
 import { apiClient } from '@/lib/api';
-// Import AxiosError if you need more specific error handling
-// import { AxiosError } from 'axios';
+// Import the new utility function
+import { formatPhoneNumberForDisplay } from '@/lib/phoneUtils'; // Adjust path if needed
 
 interface OTPVerificationProps {
-  // Update the onVerified prop to expect business_id and slug
   onVerified: (business_id: number, slug: string) => void;
   initialPhoneNumber?: string;
 }
 
 export default function OTPVerification({ onVerified, initialPhoneNumber = '' }: OTPVerificationProps) {
-  const [phoneNumber, setPhoneNumber] = useState(initialPhoneNumber);
+  // Initialize state with potentially pre-formatted number if provided
+  const [phoneNumber, setPhoneNumber] = useState(initialPhoneNumber ? formatPhoneNumberForDisplay(initialPhoneNumber) : '');
   const [otp, setOTP] = useState('');
   const [isOTPSent, setIsOTPSent] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const formatPhoneNumberToE164 = (raw: string): string => {
-    const digits = raw.replace(/\D/g, '');
-    if (digits.length === 10) return `+1${digits}`;
-    if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
-    return raw.startsWith('+') ? raw : `+${raw}`;
-  };
+  // Removed the old formatPhoneNumberToE164 function
 
   const handleOTPRequest = async () => {
     setError('');
     setIsLoading(true);
-    const formattedNumber = formatPhoneNumberToE164(phoneNumber);
-    if (!/^\+1\d{10}$/.test(formattedNumber)) {
-         setError('Please enter a valid 10-digit US phone number.');
+    // The phoneNumber state should already be formatted by the input's onChange
+    const numberToSend = phoneNumber;
+
+    // Optional: Basic client-side check before sending (backend handles final validation)
+    // This regex specifically checks for +1 and 10 digits.
+    if (!/^\+1\d{10}$/.test(numberToSend)) {
+         setError('Please enter a valid US phone number (e.g., +14155551212).');
          setIsLoading(false);
          return;
     }
 
     try {
-      console.log(`Requesting OTP for: ${formattedNumber}`);
-      await apiClient.post('/auth/request-otp', { phone_number: formattedNumber });
+      console.log(`Requesting OTP for: ${numberToSend}`);
+      // Send the state variable which is formatted by onChange
+      await apiClient.post('/auth/request-otp', { phone_number: numberToSend });
       setIsOTPSent(true);
       setError('');
     } catch (err: any) {
@@ -55,24 +55,24 @@ export default function OTPVerification({ onVerified, initialPhoneNumber = '' }:
   const handleOTPVerify = async () => {
     setError('');
     setIsLoading(true);
-    const formattedNumber = formatPhoneNumberToE164(phoneNumber);
+    // The phoneNumber state should already be formatted by the input's onChange
+    const numberToSend = phoneNumber;
+
+    // Optional: Add validation here too if desired
 
     try {
-      console.log(`Verifying OTP for: ${formattedNumber} with OTP: ${otp}`);
+      console.log(`Verifying OTP for: ${numberToSend} with OTP: ${otp}`);
+      // Send the state variable which is formatted by onChange
       const verifyResponse = await apiClient.post('/auth/verify-otp', {
-          phone_number: formattedNumber,
+          phone_number: numberToSend,
           otp
       });
 
-      // Expect 'business_id' and 'slug' in the response
       if (verifyResponse.data && verifyResponse.data.business_id && verifyResponse.data.slug) {
         const businessId = verifyResponse.data.business_id;
-        const businessSlug = verifyResponse.data.slug; // Get the slug
+        const businessSlug = verifyResponse.data.slug;
         console.log(`OTP verified successfully for business_id: ${businessId}, slug: ${businessSlug}`);
-
-        // Call onVerified with both businessId and businessSlug
         onVerified(businessId, businessSlug);
-
       } else {
         console.error("Verification succeeded but response missing business_id or slug:", verifyResponse.data);
         setError('Verification failed. Unexpected response from server.');
@@ -93,6 +93,7 @@ export default function OTPVerification({ onVerified, initialPhoneNumber = '' }:
         Secure your account
       </h2>
       <p className="text-center text-gray-300 text-sm">
+         {/* Display the formatted phone number from state */}
          {isOTPSent ? `Enter the code sent to ${phoneNumber}` : 'Verify your phone number to continue'}
       </p>
 
@@ -104,15 +105,16 @@ export default function OTPVerification({ onVerified, initialPhoneNumber = '' }:
             type="tel"
             autoComplete="tel"
             className="w-full border border-white/10 rounded-lg p-3 text-black placeholder-gray-500 bg-white/90 focus:ring-2 focus:ring-emerald-400/50 focus:border-transparent transition-all duration-200"
-            placeholder="Your Phone Number (e.g., +14155551212)"
+            placeholder="Your Phone Number (e.g., 4155551212)" // Updated placeholder
             value={phoneNumber}
-            onChange={(e) => setPhoneNumber(e.target.value)}
+            // Use the formatter directly in onChange to update state
+            onChange={(e) => setPhoneNumber(formatPhoneNumberForDisplay(e.target.value))}
             disabled={isLoading}
           />
           <button
             className="w-full bg-gradient-to-r from-emerald-400 to-blue-500 text-white font-semibold py-3 rounded-lg hover:opacity-90 transition-all shadow-md disabled:opacity-50"
             onClick={handleOTPRequest}
-            disabled={isLoading || !phoneNumber}
+            disabled={isLoading || !phoneNumber} // Keep basic check for non-empty
           >
             {isLoading ? 'Sending...' : 'Send Verification Code'}
           </button>
@@ -141,7 +143,7 @@ export default function OTPVerification({ onVerified, initialPhoneNumber = '' }:
             {isLoading ? 'Verifying...' : 'Verify Code'}
           </button>
            <button
-              onClick={() => { setIsOTPSent(false); setError(''); setOTP(''); }}
+              onClick={() => { setIsOTPSent(false); setError(''); setOTP(''); /* Consider if phoneNumber should be reset */ }}
               className="text-sm text-gray-400 hover:text-white text-center w-full mt-2 disabled:opacity-50"
               disabled={isLoading}
            >
