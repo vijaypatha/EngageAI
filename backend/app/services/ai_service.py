@@ -18,16 +18,13 @@ from app.timezone_utils import get_business_timezone
 logger = logging.getLogger(__name__)
 
 def parse_customer_notes(notes: str) -> dict:
-    """
-    Parses customer interaction history notes for key information like birthday.
-    """
+    # ... (parse_customer_notes function for birthday, etc., remains the same)
     parsed_info = {}
     if not notes:
         return parsed_info
-
     notes_lower = notes.lower()
     birthday_patterns = [
-        r'(?:birthday|bday)\s*(?:is|on)?\s+([a-zA-Z]+)\s+(\d{1,2})(?:st|nd|rd|th)?', 
+        r'(?:birthday|bday)\s*(?:is|on)?\s+([a-zA-Z]+)\s+(\d{1,2})(?:st|nd|rd|th)?',
         r'(\d{1,2})/(\d{1,2})\s+birthday'
     ]
     found_birthday = False
@@ -59,14 +56,40 @@ def parse_customer_notes(notes: str) -> dict:
                         found_birthday = True
                         break
                     except ValueError:
-                        logger.warning(f"Could not calculate days for birthday {month_num}/{day}. Date might be invalid.")
-                        parsed_info['birthday_details'] = f"Month {month_num}, Day {day} (could not validate precisely)"
+                        logger.warning(f"Could not calculate days for birthday {month_num}/{day}.")
+                        parsed_info['birthday_details'] = f"Month {month_num}, Day {day} (invalid date)"
                         found_birthday = True
                         break
             except (ValueError, IndexError):
                  logger.warning(f"Could not parse birthday fragment: Month='{month_str}', Day='{day_str}'")
                  continue
     return parsed_info
+
+def parse_business_profile_for_campaigns(business_goal: str, primary_services: str) -> dict:
+    # ... (parse_business_profile_for_campaigns function remains the same)
+    campaign_details = {
+        "detected_sales_phrases": [],
+        "discounts_mentioned": [],
+        "product_focus_for_sales": [],
+        "general_strategy": business_goal
+    }
+    text_to_search = (business_goal.lower() if business_goal else "") + " " + (primary_services.lower() if primary_services else "")
+    sales_keywords = ["sale", "sales", "discount", "offer", "promo", "special", "off"]
+    for keyword in sales_keywords:
+        if keyword in text_to_search:
+            campaign_details["detected_sales_phrases"].append(keyword)
+    percentage_matches = re.findall(r'(\d{1,2}(?:-\d{1,2})?%?\s*(?:off|discount))', text_to_search)
+    if percentage_matches:
+        campaign_details["discounts_mentioned"].extend(percentage_matches)
+    product_focus_matches = re.findall(r'(?:sale|discount|offer)s?[\s\w%-]*on\s+([\w\s]+?)(?:\s+for|\s+during|\s+on|\.|$)', text_to_search)
+    if product_focus_matches:
+        campaign_details["product_focus_for_sales"].extend([p.strip() for p in product_focus_matches])
+    if campaign_details["detected_sales_phrases"] or campaign_details["discounts_mentioned"]:
+        campaign_details["has_sales_info"] = True
+    else:
+        campaign_details["has_sales_info"] = False
+    logger.info(f"Parsed Campaign Details from Business Profile: {campaign_details}")
+    return campaign_details
 
 
 class AIService:
@@ -81,39 +104,42 @@ class AIService:
         try:
             customer = self.db.query(Customer).filter(Customer.id == data.customer_id).first()
             if not customer:
-                 logger.warning(f"Customer not found for ID: {data.customer_id}")
                  raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Customer with ID {data.customer_id} not found")
             business = self.db.query(BusinessProfile).filter(BusinessProfile.id == data.business_id).first()
             if not business:
-                 logger.warning(f"Business not found for ID: {data.business_id}")
                  raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Business with ID {data.business_id} not found")
 
             style_service = StyleService()
             class StyleWrapper:
-                 def __init__(self, style_dict):
-                    self.style_analysis = style_dict or {}
+                 def __init__(self, style_dict): self.style_analysis = style_dict or {}
             style = StyleWrapper(await style_service.get_style_guide(business.id, self.db))
             style_guide = style.style_analysis if style and style.style_analysis else {}
 
+            extracted_campaign_info = parse_business_profile_for_campaigns(
+                business.business_goal,
+                business.primary_services
+            )
             business_context = {
                 "name": business.business_name,
                 "industry": business.industry,
-                "goal": business.business_goal,
-                "services": business.primary_services,
-                "representative_name": business.representative_name or business.business_name
+                "goal_text": business.business_goal,
+                "primary_services_text": business.primary_services,
+                "representative_name": business.representative_name or business.business_name,
+                "extracted_campaign_info": extracted_campaign_info
             }
             customer_notes_info = parse_customer_notes(customer.interaction_history)
             customer_context = {
                 "name": customer.customer_name,
                 "lifecycle_stage": customer.lifecycle_stage,
                 "pain_points": customer.pain_points,
-                "relationship_notes": customer.interaction_history,
+                "relationship_notes": customer.interaction_history, # This is where language notes would be
                 "parsed_notes": customer_notes_info
             }
-            preferred_language = "Spanish" if "spanish" in (customer.interaction_history or "").lower() else "English"
+            # REMOVED: Python-based preferred_language detection
+            # preferred_language = "Spanish" if "spanish" in (customer.interaction_history or "").lower() else "English"
             current_date_str = datetime.utcnow().strftime("%Y-%m-%d")
 
-            # --- Generalized and Refined OpenAI Prompt ---
+            # --- MODIFIED: AI Prompt for AI-driven language detection ---
             messages_for_openai = [
                 {
                     "role": "system",
@@ -121,16 +147,17 @@ class AIService:
                         "You are an expert SMS engagement strategist for small businesses. Your goal is to create thoughtful, personalized SMS roadmaps that genuinely connect with customers and align with the business's objectives. You must strictly follow all instructions and use the provided data accurately.\n\n"
                         "GENERAL PRINCIPLES:\n"
                         "1.  **Data-Driven Personalization:** The 'Customer Profile' (especially 'relationship_notes', 'pain_points', and 'parsed_notes') is paramount. Your messages MUST reflect this data. If 'relationship_notes' indicate a dislike (e.g., 'Doesn't Bike'), NEVER suggest that activity. If no specific interests are noted for general check-ins, keep messages broadly positive and supportive, related to the business's services without making assumptions.\n"
-                        "2.  **Business Goal Alignment:** The 'Business Profile -> goal' dictates the strategy. This includes message frequency (e.g., 'monthly', 'quarterly'), holiday messaging strategy (e.g., 'sales on holidays'), and the overall purpose of the engagement (e.g., 'growth', 'retention').\n"
-                        "3.  **Event-Specific Messaging Rules:**\n"
+                        "2.  **Language Determination:** Carefully analyze 'Customer Profile -> relationship_notes' to determine if a preferred communication language other than English is explicitly stated or strongly implied (e.g., 'prefers Spanish', 'communicates in Mandarin', 'customer is from Brazil'). If a clear preference for a specific language is found, ALL generated SMS messages for this customer MUST be in that language. If no such preference is clear, default to English.\n"
+                        "3.  **Business Goal & Campaign Alignment:** The 'Business Profile -> goal_text' and 'extracted_campaign_info' dictate the strategy. This includes message frequency, holiday messaging strategy (including any sales details from 'extracted_campaign_info'), and the overall purpose.\n"
+                        "4.  **Event-Specific Messaging Rules:**\n"
                         "    * **Birthdays:** Purely warm wishes, 3-5 days prior, using 'parsed_notes' for dates.\n"
-                        "    * **Holidays:** Warm greetings, 1-3 days prior. CRITICALLY: If 'Business Profile -> goal' mentions 'sales', 'promotions', or 'offers' for holidays, you MUST incorporate a brief, natural mention of relevant holiday offers. Otherwise, holiday messages are for greetings ONLY.\n"
-                        "4.  **Style Adherence:** Perfectly match the 'Business Owner Communication Style'.\n"
-                        "5.  **Technical Requirements:** End with signature ('- {representative_name} from {business_name}'), keep SMS under 160 chars, calculate 'days_from_today' from 'Current Date' ({current_date_str}), and output ONLY the specified JSON.\n\n"
-                        "INTERPRETING 'Business Profile -> goal':\n"
-                        "- If goal mentions a specific check-in frequency (e.g., 'Send messages Once a month'), prioritize this for general check-ins (approx. 30 days for monthly, 90 for quarterly).\n"
-                        "- If goal mentions 'sales during big holidays', apply this to holiday message content as per rule #3.\n"
-                        "- If goal mentions 'growth', non-event messages can gently remind about services. For 'retention', focus on relationship building.\n"
+                        "    * **Holidays:** Warm greetings, 1-3 days prior. CRITICALLY: If 'Business Profile -> extracted_campaign_info -> has_sales_info' is true, you MUST try to incorporate sales details mentioned in 'discounts_mentioned' or 'product_focus_for_sales' into the holiday messages naturally. If specific details are missing from extraction but 'has_sales_info' is true, use a placeholder like `[Check out our current holiday offers!]`. If 'has_sales_info' is false, holiday messages are for greetings ONLY.\n"
+                        "5.  **Style Adherence:** Perfectly match the 'Business Owner Communication Style'.\n"
+                        "6.  **Technical Requirements:** End with signature ('- {representative_name} from {business_name}'), keep SMS under 160 chars, calculate 'days_from_today' from 'Current Date' ({current_date_str}), and output ONLY the specified JSON.\n\n"
+                        "INTERPRETING 'Business Profile -> extracted_campaign_info':\n"
+                        "- Use 'general_strategy' (the original business_goal text) for overall direction.\n"
+                        "- If 'has_sales_info' is true, use 'discounts_mentioned' and 'product_focus_for_sales' to make holiday and promotional messages specific. If these details are vague in the extraction, create a compelling general sales message or use a placeholder for the owner to refine.\n"
+                        "- Determine check-in frequency based on keywords like 'monthly' or 'quarterly' found in 'general_strategy'. Default to quarterly if unspecified.\n"
                     ).format(representative_name=business_context['representative_name'], business_name=business_context['name'], current_date_str=current_date_str)
                 },
                 {
@@ -147,24 +174,22 @@ Customer Profile:
 Business Owner Communication Style:
 {json.dumps(style_guide, indent=2)}
 
-Language Preference:
-{preferred_language}
-
 ---
 
 TASK:
 
-Generate a comprehensive and personalized SMS engagement plan for the customer for the next 6-9 months. This plan must strictly follow the strategy outlined in 'Business Profile -> goal' and all system instructions.
+First, determine the customer's preferred communication language by carefully analyzing the 'Customer Profile -> relationship_notes'. If a specific language (e.g., Spanish, Chinese, Portuguese, French) is mentioned or strongly implied as their preference, use that language for all SMS messages you generate. If no preference is found, default to English.
+
+Then, generate a comprehensive and personalized SMS engagement plan for the customer in the determined language for the next 6-9 months. This plan must strictly follow the strategy outlined in 'Business Profile -> goal_text' and 'Business Profile -> extracted_campaign_info', and all system instructions.
 
 The plan should thoughtfully integrate:
-A.  **Regular Check-ins:** At the frequency specified in 'Business Profile -> goal'. If no frequency is given, default to quarterly (approx. every 90 days).
+A.  **Regular Check-ins:** At the frequency indicated by 'Business Profile -> extracted_campaign_info -> general_strategy' or default to quarterly.
 B.  **Birthday Message:** If birthday information is available in 'Customer Profile -> parsed_notes', schedule one 3-5 days prior.
-C.  **Holiday Messages:** For relevant major US holidays (e.g., Memorial Day, July 4th, Labor Day, Thanksgiving, Christmas, New Year's Day) that fall within the plan's timeframe. Schedule these 1-3 days before the holiday. The content must reflect the holiday sales strategy from 'Business Profile -> goal' (see system instruction #3).
-D.  **Content Sensitivity:** Ensure all messages are sensitive to 'Customer Profile -> relationship_notes' and 'pain_points'. Do NOT suggest activities the customer dislikes or is not noted to be interested in.
+C.  **Holiday Messages:** For relevant major US holidays. The content MUST reflect any sales strategy indicated in 'Business Profile -> extracted_campaign_info' (see system instruction #4 and the 'INTERPRETING' section). If specific extracted discounts are present, use them. If sales are generally indicated but specifics are not clear from extraction, craft a compelling generic sales message or use a placeholder like `[View our special holiday deals!]`.
+D.  **Content Sensitivity:** Ensure all messages are sensitive to 'Customer Profile'. Do NOT suggest activities the customer dislikes or is not noted to be interested in.
 
-For each message, calculate 'days_from_today' accurately based on the '{current_date_str}' and the event date.
-Ensure distinct holidays (e.g., Christmas and New Year's) have separate, appropriately timed messages. Avoid redundancy.
-The "purpose" field should clearly state the reason for the message (e.g., "Monthly Check-in based on Business Goal", "Thanksgiving Greetings with Holiday Offer", "Birthday Well-wishes").
+For each message, calculate 'days_from_today' accurately. Ensure distinct holidays have separate, appropriately timed messages.
+The "purpose" field should be descriptive (e.g., "Monthly Check-in", "Thanksgiving Greetings with Extracted Offer Details", "Birthday Well-wishes").
 
 Output ONLY the JSON object with the 'messages' array.
 """
@@ -174,11 +199,12 @@ Output ONLY the JSON object with the 'messages' array.
             logger.info(f"ℹ️ Sending request to OpenAI for customer {data.customer_id}, business {data.business_id}")
             # logger.debug(f"🧠 OpenAI Prompt: {json.dumps(messages_for_openai, indent=2)}")
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o", # Or your preferred model that's good with multilingual and instruction following
                 messages=messages_for_openai,
                 response_format={"type": "json_object"}
             )
 
+            # ... (Rest of the parsing, draft creation, and error handling remains the same) ...
             content = response.choices[0].message.content
             logger.info("🧠 OpenAI raw response: %s", content)
             try:
@@ -280,7 +306,7 @@ Output ONLY the JSON object with the 'messages' array.
             )
 
     async def generate_sms_response(self, message: str, customer_id: int, business_id: int) -> str:
-        # ... (generate_sms_response method remains the same as you provided) ...
+        # ... (generate_sms_response method remains the same) ...
         customer = self.db.query(Customer).filter(Customer.id == customer_id).first()
         if not customer:
             raise HTTPException(status_code=404, detail="Customer not found")
@@ -293,6 +319,25 @@ Output ONLY the JSON object with the 'messages' array.
         style = StyleWrapper(await style_service.get_style_guide(business.id, self.db))
         style_guide = style.style_analysis if style and style.style_analysis else {}
         rep_name = business.representative_name or business.business_name
+        
+        # AI-driven language detection for one-off replies too
+        # This is a simplified version. For a full system, you might want to make this a helper.
+        user_notes_for_reply = customer.interaction_history or ""
+        reply_language_instruction = ""
+        # Basic check for language keywords in notes for one-off replies
+        if "spanish" in user_notes_for_reply.lower() or "español" in user_notes_for_reply.lower():
+            reply_language_instruction = "Please reply in Spanish."
+        elif "chinese" in user_notes_for_reply.lower() or "mandarin" in user_notes_for_reply.lower():
+            reply_language_instruction = "Please reply in Chinese (Mandarin)."
+        elif "portuguese" in user_notes_for_reply.lower() or "português" in user_notes_for_reply.lower():
+            reply_language_instruction = "Please reply in Portuguese."
+        elif "telugu" in user_notes_for_reply.lower() or "telugu" in user_notes_for_reply.lower():
+            reply_language_instruction = "Please reply in Telugu."
+        # Add more language detections if needed
+        else:
+            reply_language_instruction = "Please reply in English."
+
+
         prompt = f"""
 You are a friendly assistant for {business.business_name}, a {business.industry} business.
 
@@ -300,12 +345,13 @@ The business owner is {rep_name} and prefers this tone and style:
 {json.dumps(style_guide, indent=2)}
 
 The customer is {customer.customer_name}, who previously shared:
-{customer.interaction_history or "No interaction history."}
+{user_notes_for_reply}
 
 They just sent this message:
 "{message}"
 
-Please draft a friendly, natural-sounding SMS reply that fits the business tone and maintains the relationship. Keep it under 160 characters. Do not include promotions unless relevant.
+{reply_language_instruction}
+Draft a friendly, natural-sounding SMS reply that fits the business tone and maintains the relationship. Keep it under 160 characters. Do not include promotions unless relevant.
 Always sign off with the business owner's name like: "- {rep_name}".
 """
         response = self.client.chat.completions.create(
@@ -319,7 +365,5 @@ Always sign off with the business owner's name like: "- {rep_name}".
         return content
 
     async def analyze_customer_response(self, customer_id: int, message: str) -> dict:
-        # ... (analyze_customer_response method remains the same as you provided) ...
         logger.warning("analyze_customer_response not fully implemented yet.")
-        pass
         return {"sentiment": "unknown", "next_step": "review_manually"}

@@ -205,7 +205,7 @@ export default function ContactEngagementPage() {
                 const time = localDate ? format(localDate, "h:mm a") : "";
 
                 return (
-                  <div key={msg.id} className="relative mb-12 pl-10 mt-12">
+                  <div key={`${msg.id}-${msg.status}`} className="relative mb-12 pl-10 mt-12">
                     <div className="absolute -left-6 top-1/2 transform -translate-y-1/2 flex flex-col items-center gap-1">
                       <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-600 to-pink-500 flex flex-col items-center justify-center text-white font-bold text-xs shadow-md">
                         <span>{format(new Date(msg.send_datetime_utc!), "LLL").toUpperCase()}</span>

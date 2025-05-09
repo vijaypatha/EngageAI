@@ -184,7 +184,22 @@ export default function InboxPage() {
     }
     try {
       if (isSendingDraft && selectedDraftId) {
-        await apiClient.put(`/engagement-workflow/reply/${selectedDraftId}/send`, { updated_content: messageToSend });
+        let numericIdToSend: number;
+        if (typeof selectedDraftId === 'string') {
+          const match = selectedDraftId.match(/\d+$/); // Extracts trailing digits
+          if (match) {
+            numericIdToSend = parseInt(match[0], 10);
+          } else {
+            // Fallback or error if parsing fails unexpectedly
+            console.error("Could not parse numeric ID from selectedDraftId:", selectedDraftId);
+            setSendError("Error: Could not identify the draft to send.");
+            setIsSending(false);
+            return;
+          }
+        } else { // if selectedDraftId is already a number
+          numericIdToSend = selectedDraftId;
+        }
+        await apiClient.put(`/engagement-workflow/reply/${numericIdToSend}/send`, { updated_content: messageToSend });
       } else {
         await apiClient.post(`/conversations/customer/${targetCustomerId}/reply`, { message: messageToSend });
       }
