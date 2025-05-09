@@ -85,7 +85,7 @@ export default function LandingPage() {
                 name: "Reggie Scott",
                 title: "Scott Realty",
                 img: "https://images.unsplash.com/photo-1573497491208-6b1acb260507?auto=format&fit=crop&w=300&h=300&q=80",
-                quote: "Clients message back like I sent it personally. That's real ROI."
+                quote: "AI Nudge focuses on ALL my clients while I can only work with one or two clients in a day. That's real ROI."
               }
             ].map((person, i) => (
               <div key={i} className="card p-6 text-center group hover:scale-[1.02] transition-all duration-300">
