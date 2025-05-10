@@ -224,9 +224,11 @@ def clear_engagement_ai_draft(engagement_id: int, db: Session = Depends(get_db))
         return {"message": "No AI draft to clear or it was already cleared.", "engagement_id": engagement_id}
 
     # Only allow clearing if it's truly a pending draft
-    if engagement.status != "pending_review":
-        logger.warning(f"DELETE /engagement-workflow/{engagement_id}: Attempt to clear AI draft for engagement with status '{engagement.status}'. Only 'pending_review' allowed.")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Only AI drafts for engagements in 'pending_review' status can be cleared. Current status: {engagement.status}")
+    # Only allow clearing if it's a pending or dismissed draft
+    allowed_statuses_for_clearing = ["pending_review", "dismissed"]
+    if engagement.status not in allowed_statuses_for_clearing:
+        logger.warning(f"DELETE /engagement-workflow/{engagement_id}: Attempt to clear AI draft for engagement with status '{engagement.status}'. Only statuses {allowed_statuses_for_clearing} allowed.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Only AI drafts for engagements in {allowed_statuses_for_clearing} status can be cleared. Current status: {engagement.status}")
 
     # --- THIS IS THE FIX ---
     engagement.ai_response = None  # Set the ai_response field to None (or an empty string if your DB/model prefers)
