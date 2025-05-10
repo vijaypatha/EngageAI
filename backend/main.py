@@ -3,6 +3,7 @@
 from datetime import datetime
 import logging
 from typing import Dict, Optional
+import os 
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -126,13 +127,6 @@ async def trigger_ping() -> Dict[str, str]:
     """Debug endpoint to test Celery task execution."""
     task = ping.delay()
     return {"task_id": task.id}
-
-@app.get("/test-sms", response_model=Dict[str, str])
-async def test_sms_now() -> Dict[str, str]:
-    """Debug endpoint to test SMS scheduling."""
-    logger.info("Dispatching Celery task for scheduled_sms_id=2")
-    schedule_sms_task.apply_async(args=[2])
-    return {"status": "SMS task dispatched"}
 
 @app.get("/debug/celery-basic", response_model=Dict[str, str])
 async def trigger_basic_task() -> Dict[str, str]:
