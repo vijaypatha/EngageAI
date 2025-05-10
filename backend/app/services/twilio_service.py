@@ -9,10 +9,13 @@ from fastapi import status
 from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
 from twilio.rest import Client
+from twilio.base.exceptions import TwilioRestException
+
 
 from app.config import settings
 from app.database import SessionLocal # Keep SessionLocal if it's used by send_sms_via_twilio
 from app.models import BusinessProfile, Customer, Message
+
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -176,78 +179,58 @@ class TwilioService:
 
     async def send_sms(self, to: str, message: str, business: BusinessProfile) -> str:
         """
-        Sends an SMS message via Twilio.
-        Uses the business's specific twilio_number as the 'From' number if available,
-        and always associates it with the business's messaging_service_sid for A2P compliance.
-
-        Args:
-            to: Recipient phone number
-            message: SMS content to send
-            business: BusinessProfile instance for the sender
-
-        Returns:
-            Twilio message SID
+        Sends an SMS message via Twilio, using the business's messaging service SID
+        and specific 'From' number.
         """
-        logger.info(f"Initiating send_sms to={to} for business_id={business.id if business else 'unknown'}.")
-        logger.info(f"  Using business.twilio_number='{business.twilio_number}', business.messaging_service_sid='{business.messaging_service_sid}'")
-
+        logger.info(f"Starting send_sms to={to} for business_id={business.id if business else 'unknown'} using From: {business.twilio_number if business else 'N/A'} and MS SID: {business.messaging_service_sid if business else 'N/A'}")
         try:
-            if not all([settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN]):
-                logger.error(f"❌ send_sms aborted: Missing Twilio account credentials (TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN).")
+            if not all([
+                settings.TWILIO_ACCOUNT_SID,
+                settings.TWILIO_AUTH_TOKEN
+            ]):
+                logger.error(f"❌ send_sms failed: Missing Twilio account credentials.")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="SMS provider account is not configured."
                 )
 
+            # The messaging_service_sid is shared but should be present on the business profile.
             if not business.messaging_service_sid:
-                logger.error(f"❌ send_sms aborted for business_id={business.id}: Missing messaging_service_sid. This is required for A2P compliance.")
+                logger.error(f"❌ send_sms failed: Missing messaging_service_sid for business_id={business.id}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Business messaging service identifier is not configured."
+                    detail="SMS Messaging Service is not configured for this business."
                 )
-            
-            message_params = {
-                "to": to,
-                "messaging_service_sid": business.messaging_service_sid,
-                "body": message
-            }
 
-            # <<< THIS IS THE KEY CHANGE: Add 'from_' if business.twilio_number is set >>>
-            if business.twilio_number:
-                message_params["from_"] = business.twilio_number
-                logger.info(f"  Specific 'From' number '{business.twilio_number}' will be used.")
-            else:
-                # This case means the business relies on the Messaging Service to pick a number.
-                # This could lead to the original issue if multiple numbers are in the service.
-                # For your use case, business.twilio_number should ideally always be set.
-                logger.warning(f"  No specific business.twilio_number set for business_id={business.id}. Messaging Service will select sender.")
-
-
-            logger.info(f"📤 Attempting to send SMS with Twilio params: To='{message_params.get('to')}', From='{message_params.get('from_')}', MSID='{message_params.get('messaging_service_sid')}', Body='{message_params.get('body')[:30]}...'")
-            
-            twilio_msg = self.client.messages.create(**message_params)
-            
-            # Log details from Twilio's response
-            logger.info(f"✅ SMS submission to Twilio successful. SID: {twilio_msg.sid}, Status: {twilio_msg.status}, From: {twilio_msg.from_}, To: {twilio_msg.to}, Price: {twilio_msg.price}")
-
-            if twilio_msg.status in ['failed', 'undelivered']:
-                error_detail = f"SMS provider reported error: {twilio_msg.error_message or 'Unknown reason'} (Code: {twilio_msg.error_code or 'N/A'})"
-                logger.error(f"❌ Twilio send failed. SID: {twilio_msg.sid}, Status: {twilio_msg.status}, ErrorCode: {twilio_msg.error_code}, ErrorMsg: {twilio_msg.error_message}")
+            # This is the business's specific phone number that is part of the Messaging Service.
+            if not business.twilio_number:
+                logger.error(f"❌ send_sms failed: Missing sender phone number (twilio_number) for business_id={business.id}")
                 raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=error_detail
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Sender phone number not configured for this business."
                 )
-            
-            return twilio_msg.sid
 
-        except HTTPException as http_exc: # Re-raise known HTTPExceptions
-            logger.error(f"❌ send_sms HTTP error for business_id={business.id if business else 'unknown'} to {to}: {http_exc.detail}", exc_info=True)
+            twilio_msg = self.client.messages.create(
+                to=to,
+                messaging_service_sid=business.messaging_service_sid, # The shared Messaging Service SID
+                from_=business.twilio_number,                         # The specific 'From' number for this business
+                body=message
+            )
+            logger.info(f"📤 Sent SMS to {to} from {business.twilio_number} via MS {business.messaging_service_sid}. SID: {twilio_msg.sid}")
+            return twilio_msg.sid
+        except HTTPException as http_exc: # Re-raise HTTPExceptions from checks
             raise http_exc
-        except Exception as e:
-            logger.error(f"❌ send_sms unexpected error for business_id={business.id if business else 'unknown'} to {to}: {str(e)}", exc_info=True)
+        except TwilioRestException as e: # Catch Twilio specific errors
+            logger.error(f"❌ Twilio API error sending SMS to {to} for business_id={business.id} from {business.twilio_number}: {e.status} - {e.msg}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE if e.status >= 500 else status.HTTP_400_BAD_REQUEST,
+                detail=f"Twilio error: {e.msg}"
+            )
+        except Exception as e: # Catch other unexpected errors
+            logger.error(f"❌ Unexpected error in send_sms to {to} for business_id={business.id} from {business.twilio_number}: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to send SMS due to an internal server error: {str(e)}"
+                detail=f"Failed to send SMS due to an unexpected error: {str(e)}"
             )
 
     async def send_scheduled_message(self, message_id: int):

@@ -57,26 +57,23 @@ def send_reply(
     engagement = db.query(Engagement).filter(Engagement.id == id).first()
     if not engagement:
         logger.warning(f"[SEND_REPLY] ❌ No engagement with ID {id}")
-        count_all = db.query(Engagement).count()
-        logger.info(f"[SEND_REPLY] Total engagements in DB: {count_all}")
         raise HTTPException(status_code=404, detail="Engagement not found")
+    
     logger.info(f"[SEND_REPLY] ✅ Engagement found: status={engagement.status}, customer_id={engagement.customer_id}")
     logger.info(f"[SEND_REPLY] 📦 Payload received: {payload}")
-
-    logger.info(f"[DEBUG] Engagement {id} — status: '{engagement.status}', sent_at: {engagement.sent_at}")
 
     if engagement.status.strip().lower() != "pending_review" or engagement.sent_at is not None:
         logger.warning(f"[BLOCKED] Draft not valid for sending — status: '{engagement.status}', sent_at: {engagement.sent_at}")
         raise HTTPException(
-            status_code=409,
-            detail="Draft not valid for sending (already sent or corrupted)."
+            status_code=409, # Conflict
+            detail=f"Draft not valid for sending. Current status: '{engagement.status}', Sent at: {engagement.sent_at}"
         )
 
     message_content = payload.updated_content.strip()
     if not message_content:
         raise HTTPException(status_code=400, detail="Updated message content is empty")
 
-    engagement.ai_response = message_content
+    engagement.ai_response = message_content # Update draft content before sending
 
     customer = db.query(Customer).filter(Customer.id == engagement.customer_id).first()
     if not customer or not customer.phone:
@@ -85,65 +82,92 @@ def send_reply(
     business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
     if not business:
         logger.error(f"[SEND_REPLY] ❌ Business profile not found for business_id={customer.business_id}")
-        raise HTTPException(status_code=500, detail="Business profile missing")
+        raise HTTPException(status_code=500, detail="Business profile missing for customer")
 
-    messaging_service_sid = business.messaging_service_sid
-    if not messaging_service_sid:
-        logger.warning("[SEND_REPLY] No messaging_service_sid in business profile, using fallback from settings")
-        messaging_service_sid = settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID
+    # Ensure the business has the necessary Twilio details
+    if not business.messaging_service_sid:
+        logger.error(f"[SEND_REPLY] ❌ Business profile (ID: {business.id}) is missing the Messaging Service SID.")
+        raise HTTPException(status_code=500, detail="SMS Messaging Service ID is not configured for the business.")
+    
+    shared_messaging_service_sid = business.messaging_service_sid
 
-    if not messaging_service_sid:
-        logger.error("[SEND_REPLY] ❌ No valid messaging_service_sid found in business profile or fallback settings")
-        raise HTTPException(status_code=500, detail="SMS provider is not configured")
-
-    logger.info(f"[ENV CHECK] Business SID: {business.messaging_service_sid}")
-    logger.info(f"[ENV CHECK] Fallback SID from settings: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
-
-    logger.info(f"[DEBUG] TWILIO_ACCOUNT_SID: {settings.TWILIO_ACCOUNT_SID}")
-    logger.info(f"[DEBUG] TWILIO_AUTH_TOKEN present: {bool(settings.TWILIO_AUTH_TOKEN)}")
-    logger.info(f"[DEBUG] Default SID: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
+    if not business.twilio_number: # This is the specific 'From' number
+        logger.error(f"[SEND_REPLY] ❌ Business profile (ID: {business.id}) is missing its specific Twilio phone number (twilio_number).")
+        raise HTTPException(status_code=500, detail="Sender phone number is not configured for this business.")
+    
+    specific_from_number = business.twilio_number
 
     if not all([
         settings.TWILIO_ACCOUNT_SID,
         settings.TWILIO_AUTH_TOKEN
     ]):
-        raise HTTPException(status_code=500, detail="SMS provider is not configured")
+        logger.error("[SEND_REPLY] ❌ Twilio account credentials missing in settings.")
+        raise HTTPException(status_code=500, detail="SMS provider account is not configured")
 
     twilio_client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
     try:
-        logger.info(f"[SEND_REPLY] 📤 Sending updated AI draft to {customer.phone}")
-        engagement.sent_at = None  # Clear leftover timestamp from broken draft creation
-        message = twilio_client.messages.create(
+        logger.info(f"[SEND_REPLY] 📤 Sending updated AI draft to {customer.phone} from {specific_from_number} via MS {shared_messaging_service_sid}")
+        
+        twilio_api_response = twilio_client.messages.create(
             body=message_content,
-            messaging_service_sid=messaging_service_sid,
+            messaging_service_sid=shared_messaging_service_sid, # Use the shared service SID
+            from_=specific_from_number,                         # Use the business's specific 'From' number
             to=customer.phone
         )
 
-        if message.status in ['failed', 'undelivered']:
-            raise TwilioRestException(
-                status=500,
-                uri=message.uri,
-                msg=f"Twilio reported message status: {message.status}. Error: {message.error_message}"
+        if twilio_api_response.status in ['failed', 'undelivered']:
+            logger.error(f"[SEND_REPLY] Twilio reported message status: {twilio_api_response.status}. Error: {twilio_api_response.error_message} (SID: {twilio_api_response.sid})")
+            # We will still update our DB to 'failed' but raise an error to frontend
+            engagement.status = "failed_to_send" # Or a similar status
+            engagement.message_metadata = {**(engagement.message_metadata or {}), 'twilio_error': twilio_api_response.error_message, 'twilio_sid': twilio_api_response.sid}
+            db.commit()
+            raise TwilioRestException( # Raise to be caught by the general TwilioRestException handler
+                status=500, # Or map Twilio's error if available
+                uri=twilio_api_response.uri,
+                msg=f"Twilio reported message status: {twilio_api_response.status}. Error: {twilio_api_response.error_message}"
             )
 
         engagement.status = "sent"
         engagement.sent_at = datetime.utcnow()
+        engagement.message_id = engagement.message_id # Keep existing link if any, or this could be source of original message
+        engagement.message_metadata = {**(engagement.message_metadata or {}), 'twilio_sid': twilio_api_response.sid}
+
         db.commit()
         db.refresh(engagement)
 
+        logger.info(f"[SEND_REPLY] ✅ Draft reply sent successfully. Engagement ID: {engagement.id}, New Status: {engagement.status}, SMS SID: {twilio_api_response.sid}")
         return {
             "message": "Draft reply sent successfully",
             "engagement_id": engagement.id,
             "status": engagement.status,
-            "sms_sid": message.sid
+            "sms_sid": twilio_api_response.sid
         }
 
     except TwilioRestException as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Twilio error: {e.msg}")
+        db.rollback() # Ensure rollback if commit hasn't happened or if error occurs after commit attempt
+        logger.error(f"[SEND_REPLY] TwilioRestException: {e.status} - {e.msg}", exc_info=True)
+        # Update engagement status to reflect failure if appropriate
+        if engagement and engagement.status == "pending_review": # Check if not already updated by specific failure case
+            engagement.status = "failed_to_send" # Or a generic "error" status
+            engagement.message_metadata = {**(engagement.message_metadata or {}), 'twilio_error': e.msg}
+            try:
+                db.commit()
+            except Exception as db_err:
+                logger.error(f"[SEND_REPLY] Failed to update engagement status to failed after TwilioRestException: {db_err}")
+                db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE if e.status >= 500 else status.HTTP_400_BAD_REQUEST, detail=f"Twilio error: {e.msg}")
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"[SEND_REPLY] Unexpected Exception: {str(e)}", exc_info=True)
+        if engagement and engagement.status == "pending_review":
+            engagement.status = "failed_to_send"
+            engagement.message_metadata = {**(engagement.message_metadata or {}), 'error': str(e)}
+            try:
+                db.commit()
+            except Exception as db_err:
+                logger.error(f"[SEND_REPLY] Failed to update engagement status to failed after Unexpected Exception: {db_err}")
+                db.rollback()
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 class ManualReplyPayload(BaseModel):
     message: str

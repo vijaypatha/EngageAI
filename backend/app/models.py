@@ -179,6 +179,7 @@ class Engagement(Base):
     sent_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), default=utc_now)
     updated_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    message_metadata = Column(JSON, nullable=True)
 
     # Relationships
     message = relationship("Message")
