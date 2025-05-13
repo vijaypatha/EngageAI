@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-jwt-secret-key-here")
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    FRONTEND_APP_URL: str = os.getenv("FRONTEND_APP_URL", "http://localhost:3000") # Add/Confirm this
+
 
     class Config:
         env_file = ".env"

@@ -337,32 +337,115 @@ Output ONLY the JSON object with the 'messages' array.
         else:
             reply_language_instruction = "Please reply in English."
 
+# --- START: FAQ Context Preparation ---
+        faq_context_str = ""
+        is_faq_type_request = False 
+        faq_data_dict = {} # Initialize for later use in determining if FAQ was answered
 
-        prompt = f"""
-You are a friendly assistant for {business.business_name}, a {business.industry} business.
+        if business.enable_ai_faq_auto_reply and business.structured_faq_data:
+            logger.info(f"FAQ Auto-Reply enabled for Business ID {business.id}. Preparing FAQ data.")
+            faq_data_dict = business.structured_faq_data 
+            
+            lower_message = message.lower()
+            address_keywords = ["address", "location", "where are you", "where is your office", "directions"]
+            hours_keywords = ["hours", "open", "close", "operating hours", "when are you open"]
+            website_keywords = ["website", "site", "url", "web page"]
 
-The business owner is {rep_name} and prefers this tone and style:
-{json.dumps(style_guide, indent=2)}
+            if any(keyword in lower_message for keyword in address_keywords):
+                is_faq_type_request = True
+                faq_context_str += f"\n- The business address is: {faq_data_dict.get('address', 'Not specified')}"
+            if any(keyword in lower_message for keyword in hours_keywords):
+                is_faq_type_request = True
+                faq_context_str += f"\n- Operating hours: {faq_data_dict.get('operating_hours', 'Not specified')}"
+            if any(keyword in lower_message for keyword in website_keywords):
+                is_faq_type_request = True
+                faq_context_str += f"\n- Website: {faq_data_dict.get('website', 'Not specified')}"
+            
+            custom_faqs = faq_data_dict.get('custom_faqs', [])
+            if custom_faqs:
+                custom_faq_match_found = False
+                temp_custom_faq_context = "\n\nCustom Q&As available:"
+                for faq_item in custom_faqs:
+                    question_text = faq_item.get('question', '').lower()
+                    if question_text and (question_text in lower_message or lower_message in question_text):
+                         is_faq_type_request = True
+                         custom_faq_match_found = True
+                         temp_custom_faq_context += f"\n  - Q: {faq_item.get('question')}\n    A: {faq_item.get('answer')}"
+                if custom_faq_match_found:
+                    faq_context_str += temp_custom_faq_context
+            
+            if is_faq_type_request:
+                logger.info(f"Potential FAQ request detected. Context prepared: {faq_context_str}")
+            elif business.enable_ai_faq_auto_reply : # If not a direct FAQ but autopilot is on, provide all FAQ data as general context
+                logger.info("Message not a direct FAQ type, but AI Autopilot is ON. Providing all FAQ data for general context.")
+                if faq_data_dict.get('address'): faq_context_str += f"\n- Business address: {faq_data_dict.get('address')}"
+                if faq_data_dict.get('operating_hours'): faq_context_str += f"\n- Operating hours: {faq_data_dict.get('operating_hours')}"
+                if faq_data_dict.get('website'): faq_context_str += f"\n- Website: {faq_data_dict.get('website')}"
+                if custom_faqs:
+                    faq_context_str += "\n\nOther potentially relevant Q&As:"
+                    for faq_item in custom_faqs: faq_context_str += f"\n  - Q: {faq_item.get('question')} -> A: {faq_item.get('answer')}"
+        # --- END: FAQ Context Preparation ---
 
-The customer is {customer.customer_name}, who previously shared:
-{user_notes_for_reply}
+        # --- START: Dynamic Prompt Construction ---
+        prompt_parts = [
+            f"You are a friendly assistant for {business.business_name}, a {business.industry} business.",
+            f"The business owner is {rep_name} and prefers this tone and style (follow it closely):",
+            json.dumps(style_guide, indent=2),
+            f"\nThe customer is {customer.customer_name}. Previous interactions/notes: '{user_notes_for_reply}'.",
+            f"\nThe customer just sent this message: \"{message}\"",
+            reply_language_instruction 
+        ]
 
-They just sent this message:
-"{message}"
+        faq_marker = "##FAQ_ANSWERED##" # Define the marker
 
-{reply_language_instruction}
-Draft a friendly, natural-sounding SMS reply that fits the business tone and maintains the relationship. Keep it under 160 characters. Do not include promotions unless relevant.
-Always sign off with the business owner's name like: "- {rep_name}".
-"""
+        if business.enable_ai_faq_auto_reply and faq_context_str:
+            prompt_parts.append(f"\n\nIMPORTANT CONTEXTUAL BUSINESS INFORMATION (for FAQs if applicable):")
+            prompt_parts.append(faq_context_str)
+            prompt_parts.append(f"\nIf you use any of the above contextual business information to directly and completely answer the customer's question, append the exact marker '{faq_marker}' to the VERY END of your reply. Otherwise, do NOT append the marker.")
+            prompt_parts.append("If you cannot directly answer, have a natural, helpful conversation or indicate you will get assistance.")
+        
+        prompt_parts.append(f"\n\nRESPONSE GUIDELINES: Draft a friendly, natural-sounding SMS reply. Keep it under 160 characters. Adhere to the owner's style. Sign off as \"- {rep_name}\".")
+        if not (business.enable_ai_faq_auto_reply and is_faq_type_request):
+             prompt_parts.append("Avoid promotions unless directly asked or highly relevant to their query.")
+
+        prompt = "\n".join(prompt_parts)
+        logger.debug(f"generate_sms_response PROMPT for Business ID {business.id}:\n{prompt}")
+        # --- END: Dynamic Prompt Construction -
+        
         response = self.client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "system", "content": "You craft helpful and friendly SMS replies."},
                       {"role": "user", "content": prompt}],
             max_tokens=100
         )
-        content = response.choices[0].message.content.strip()
-        logger.info(f"🧠 One-off AI reply generated for customer {customer_id}: {content}")
-        return content
+        
+        # --- START: Process OpenAI Response and Determine FAQ ---
+        # --- START: Process OpenAI Response and Check for FAQ Marker ---
+        raw_generated_content = response.choices[0].message.content.strip()
+        
+        faq_marker = "##FAQ_ANSWERED##" # Must be the same marker defined in the prompt
+        answered_as_faq = False
+        final_content_for_sms = raw_generated_content
+
+        if raw_generated_content.endswith(faq_marker):
+            answered_as_faq = True
+            final_content_for_sms = raw_generated_content[:-len(faq_marker)].strip() # Remove marker from SMS text
+            logger.info(f"AI indicated FAQ was answered. Marker found. Cleaned SMS: '{final_content_for_sms}'")
+        else:
+            logger.info(f"AI did not append FAQ marker. Treating as conversational reply. SMS: '{final_content_for_sms}'")
+
+        # Optional: You can still log if it was an FAQ-type question for your own analytics
+        if is_faq_type_request:
+            logger.info(f"Original question type was determined as FAQ-like for Business ID {business.id}.")
+
+        logger.info(f"🧠 AI reply generated for B:{business.id} C:{customer_id}: '{final_content_for_sms}'. Was FAQ answer (based on marker): {answered_as_faq}")
+        return {
+            "text": final_content_for_sms, # Send the cleaned text
+            "is_faq_answer": answered_as_faq,
+            "ai_can_reply_directly": answered_as_faq and business.enable_ai_faq_auto_reply 
+        }
+        # --- END: Process OpenAI Response and Check for FAQ Marker ---
+        # --- END: Process OpenAI Response and Determine FAQ ---
 
     async def analyze_customer_response(self, customer_id: int, message: str) -> dict:
         logger.warning("analyze_customer_response not fully implemented yet.")
