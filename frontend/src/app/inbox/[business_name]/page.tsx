@@ -1,3 +1,4 @@
+// frontend/src/app/inbox/[business_name]/page.tsx
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
@@ -21,12 +22,12 @@ interface CustomerSummary {
 
 interface BackendMessage {
   id: string | number; 
-  type: "sent" | "customer" | "ai_draft" | "scheduled";
+  type: "sent" | "customer" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message"; // Added more types from backend
   content: string;
   status?: string; 
   scheduled_time?: string | null;
   sent_time?: string | null;
-  source?: string;
+  source?: string; // Added source from backend
   customer_id: number; 
   is_hidden?: boolean;
   response?: string; 
@@ -34,12 +35,13 @@ interface BackendMessage {
 
 type TimelineEntry = {
   id: string | number; 
-  type: "customer" | "sent" | "ai_draft" | "scheduled"; 
+  type: "customer" | "sent" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message"; // Matched BackendMessage
   content: string;
   timestamp: string | null; 
   customer_id: number;
   is_hidden?: boolean;
   status?: string; 
+  source?: string; // Added source here as well
 };
 
 export default function InboxPage() {
@@ -73,7 +75,7 @@ export default function InboxPage() {
     const customerDataArray: CustomerSummary[] = res.data || [];
     
     const summariesWithPreview = customerDataArray.map(cs => {
-        const lastMsgArray = cs.messages?.filter(m => m.type === 'sent' || m.type === 'customer').sort((a,b) => new Date(b.sent_time || 0).getTime() - new Date(a.sent_time || 0).getTime());
+        const lastMsgArray = cs.messages?.filter(m => m.type === 'sent' || m.type === 'customer').sort((a,b) => new Date(b.sent_time || b.scheduled_time || 0).getTime() - new Date(a.sent_time || a.scheduled_time || 0).getTime());
         const lastMsg = lastMsgArray && lastMsgArray.length > 0 ? lastMsgArray[0] : null;
         return {
           ...cs,
@@ -152,7 +154,8 @@ export default function InboxPage() {
             timestamp: msg.sent_time || msg.scheduled_time || null,
             customer_id: currentCustomerData.customer_id,
             is_hidden: msg.is_hidden || false,
-            status: msg.status 
+            status: msg.status,
+            source: msg.source // Ensure source is mapped
           };
         }).filter(Boolean) as TimelineEntry[];
 
@@ -186,17 +189,16 @@ export default function InboxPage() {
       if (isSendingDraft && selectedDraftId) {
         let numericIdToSend: number;
         if (typeof selectedDraftId === 'string') {
-          const match = selectedDraftId.match(/\d+$/); // Extracts trailing digits
+          const match = selectedDraftId.match(/\d+$/); 
           if (match) {
             numericIdToSend = parseInt(match[0], 10);
           } else {
-            // Fallback or error if parsing fails unexpectedly
             console.error("Could not parse numeric ID from selectedDraftId:", selectedDraftId);
             setSendError("Error: Could not identify the draft to send.");
             setIsSending(false);
             return;
           }
-        } else { // if selectedDraftId is already a number
+        } else { 
           numericIdToSend = selectedDraftId;
         }
         await apiClient.put(`/engagement-workflow/reply/${numericIdToSend}/send`, { updated_content: messageToSend });
@@ -222,7 +224,8 @@ export default function InboxPage() {
   };
 
   const handleEditDraft = (draft: TimelineEntry) => {
-    if (draft.type === 'ai_draft' && draft.customer_id === activeCustomerId) {
+    // Ensure we only allow editing actual drafts
+    if (draft.type === 'ai_draft' && draft.source === 'ai_draft_suggestion' && draft.customer_id === activeCustomerId) {
       setSelectedDraftId(draft.id);
       setNewMessage(draft.content);
       if (inputRef.current) inputRef.current.focus();
@@ -230,52 +233,44 @@ export default function InboxPage() {
   };
 
   const handleDeleteDraft = async (draftTimelineEntryId: string | number) => {
-    // Step 1: Extract the numeric part of the ID
     let numericDraftId: number;
 
     if (typeof draftTimelineEntryId === 'string') {
       if (draftTimelineEntryId.startsWith('eng-ai-')) {
         numericDraftId = parseInt(draftTimelineEntryId.replace('eng-ai-', ''), 10);
-      } else if (draftTimelineEntryId.startsWith('msg-') || draftTimelineEntryId.startsWith('eng-cust-')) {
-        // Handle other potential prefixes if they could be passed here, though drafts are typically 'eng-ai-'
+      } else {
         const match = draftTimelineEntryId.match(/\d+$/);
         numericDraftId = match ? parseInt(match[0], 10) : NaN;
-      }
-      else {
-        // Try to parse as int directly if no known prefix but still a string
-        numericDraftId = parseInt(draftTimelineEntryId, 10);
       }
     } else if (typeof draftTimelineEntryId === 'number') {
       numericDraftId = draftTimelineEntryId;
     } else {
-      console.error("[InboxPage] Invalid draft ID format for deletion (neither string nor number):", draftTimelineEntryId);
+      console.error("[InboxPage] Invalid draft ID format for deletion:", draftTimelineEntryId);
       alert("Cannot delete draft: Invalid ID format.");
       return;
     }
 
-    // Step 2: Validate if parsing was successful
     if (isNaN(numericDraftId)) {
         console.error("[InboxPage] Could not parse a valid numeric ID from draft ID:", draftTimelineEntryId);
         alert("Cannot delete draft: ID is not a valid number after parsing.");
         return;
     }
+    
+    // Check if the entry is actually a deletable draft before confirming
+    const entryToDelete = timelineEntries.find(e => e.id === draftTimelineEntryId);
+    if (!(entryToDelete && entryToDelete.type === 'ai_draft' && entryToDelete.source === 'ai_draft_suggestion')) {
+        alert("This message is not a draft and cannot be deleted this way.");
+        return;
+    }
 
-    // Step 3: Confirmation and API Call
     if (window.confirm("Delete this draft? This action cannot be undone.")) {
       try {
-        console.log(`[InboxPage] Attempting to delete engagement draft with NUMERIC ID: ${numericDraftId}`);
-        await apiClient.delete(`/engagement-workflow/${numericDraftId}`); // USE THE NUMERIC ID HERE
-        
-        console.log(`[InboxPage] Draft (original TimelineEntry ID: ${draftTimelineEntryId}, numeric: ${numericDraftId}) presumed deleted from backend.`);
-
-        // Optimistically update UI using the original draftTimelineEntryId (e.g., "eng-ai-37")
+        await apiClient.delete(`/engagement-workflow/${numericDraftId}`);
         setTimelineEntries((prev) => prev.filter((e) => e.id !== draftTimelineEntryId)); 
-        
         if (selectedDraftId === draftTimelineEntryId) {
           setNewMessage("");
           setSelectedDraftId(null);
         }
-        
         if (businessId) {
             await fetchAndSetCustomerSummaries(businessId); 
         }
@@ -306,6 +301,7 @@ export default function InboxPage() {
 
   return (
     <div className="h-screen flex md:flex-row flex-col bg-[#0B0E1C]">
+      {/* Mobile Drawer Button and Aside (Contact List) - No changes needed here */}
       <div className="md:hidden flex items-center justify-between p-4 bg-[#1A1D2D] border-b border-[#2A2F45]">
         <h1 className="text-xl font-semibold text-white">Inbox</h1>
         <button
@@ -338,13 +334,14 @@ export default function InboxPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          {/* ... customerSummaries mapping ... no changes needed here for this specific issue ... */}
           {customerSummaries.length === 0 && !isLoading && (
             <p className="p-4 text-gray-400 text-center">No conversations yet. Add contacts to begin.</p>
           )}
-          {customerSummaries.map((cs) => { // Use customerSummaries directly, sorting is for display order
+          {customerSummaries.map((cs) => { 
             const lastMessage = cs.messages && cs.messages.length > 0 ? 
                                 cs.messages.filter(m => m.type === 'sent' || m.type === 'customer')
-                                .sort((a,b) => new Date(b.sent_time || 0).getTime() - new Date(a.sent_time || 0).getTime())[0] 
+                                .sort((a,b) => new Date(b.sent_time || b.scheduled_time || "1970-01-01T00:00:00.000Z").getTime() - new Date(a.sent_time || a.scheduled_time || "1970-01-01T00:00:00.000Z").getTime())[0] 
                                 : null;
             const previewText = lastMessage ? (lastMessage.content.slice(0, 30) + (lastMessage.content.length > 30 ? "..." : "")) : "No recent messages";
             return (
@@ -387,6 +384,7 @@ export default function InboxPage() {
       <main className="flex-1 flex flex-col h-[calc(100vh-4rem)] md:h-screen">
         {currentCustomer ? (
           <>
+            {/* Header with Customer Name and Opt-in status - No changes needed here */}
             <div className="bg-[#1A1D2D] border-b border-[#2A2F45] p-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
@@ -403,73 +401,92 @@ export default function InboxPage() {
                 </div>
               </div>
             </div>
-
+            
             <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-2">
-              {timelineEntries.map((entry, index) => ( // Added index for optional date separator
-                <div
-                  key={`${entry.type}-${entry.id}-${index}`} // Made key more unique just in case
-                  className={clsx(
-                      "flex flex-col w-full mb-1", 
-                      entry.type === "customer" ? "items-start" : "items-end")}
-                >
-                  {/* Optional Date Separator Logic */}
-                  { (index === 0 || (entry.timestamp && timelineEntries[index-1]?.timestamp && new Date(entry.timestamp).toDateString() !== new Date(timelineEntries[index-1].timestamp!).toDateString())) && entry.timestamp && (
-                        <div className="text-xs text-gray-500 my-3 self-center px-2 py-0.5 bg-[#1A1D2D] border border-[#2A2F45] rounded-full">
-                           {new Date(entry.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+              {timelineEntries.map((entry, index) => {
+                // --- MODIFICATION START ---
+                // Determine if the entry is a draft that should show edit/delete
+                // An entry is a draft if its type is 'ai_draft' AND its source indicates it's a suggestion
+                const isActualDraft = entry.type === "ai_draft" && entry.source === "ai_draft_suggestion";
+                // Messages sent by the business (manual, scheduled, or autopilot FAQ)
+                const isSentByBusiness = entry.type === "sent";
+                // --- MODIFICATION END ---
+
+                return (
+                  <div
+                    key={`${entry.type}-${entry.id}-${index}`}
+                    className={clsx(
+                        "flex flex-col w-full mb-1", 
+                        entry.type === "customer" ? "items-start" : "items-end")}
+                  >
+                    { (index === 0 || (entry.timestamp && timelineEntries[index-1]?.timestamp && new Date(entry.timestamp).toDateString() !== new Date(timelineEntries[index-1].timestamp!).toDateString())) && entry.timestamp && (
+                          <div className="text-xs text-gray-500 my-3 self-center px-2 py-0.5 bg-[#1A1D2D] border border-[#2A2F45] rounded-full">
+                             {new Date(entry.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </div>
+                      )}
+                    <div className={clsx(
+                      "max-w-[80%] md:max-w-[70%] px-3.5 py-2 rounded-2xl shadow", 
+                      entry.type === "customer" ? "bg-gradient-to-r from-emerald-500 to-blue-500 text-white rounded-br-none" :
+                      isSentByBusiness ? "bg-[#242842] text-white rounded-bl-none" : // Style for all business sent messages
+                      isActualDraft ? "bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white rounded-bl-none" : // Style for drafts
+                      "bg-[#242842] text-white rounded-bl-none" // Fallback style for other business messages
+                    )}>
+                      {/* --- MODIFICATION START --- */}
+                      {isActualDraft && ( 
+                        <div className="text-xs font-semibold mb-1 text-purple-200">💡 Draft Reply</div>
+                      )}
+                      {/* --- MODIFICATION END --- */}
+                      <div className="whitespace-pre-wrap break-words text-sm">{entry.content}</div>
+                      
+                      {(entry.type === "sent" || entry.type === "customer") && entry.timestamp && (
+                        <div className={clsx(
+                          "text-xs mt-1.5 flex items-center gap-1",
+                          entry.type === "customer" ? "text-gray-200/70 justify-start" : "text-gray-400/70 justify-end", 
+                        )}>
+                          <Clock className="w-2.5 h-2.5" />
+                          <span>
+                            {new Date(entry.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
+                          </span>
+                          {/* --- MODIFICATION: Show Check for all "sent" types, including autopilot --- */}
+                          {isSentByBusiness && entry.status === "sent" && ( // Simpler check if type is already "sent"
+                            <Check className="w-3.5 h-3.5 text-sky-400 ml-0.5" />
+                          )}
+                          {/* If you have a "delivered" status from Twilio callbacks, you could show CheckCheck here */}
+                          {isSentByBusiness && entry.status === "auto_replied_faq" && ( // Specifically for autopilot
+                            <CheckCheck className="w-3.5 h-3.5 text-emerald-400 ml-0.5" /> // Different icon or color for autopilot
+                          )}
                         </div>
-                    )}
-                  <div className={clsx(
-                    "max-w-[80%] md:max-w-[70%] px-3.5 py-2 rounded-2xl shadow", 
-                    entry.type === "customer" ? "bg-gradient-to-r from-emerald-500 to-blue-500 text-white rounded-br-none" :
-                    entry.type === "sent" ? "bg-[#242842] text-white rounded-bl-none" :
-                    "bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white rounded-bl-none" 
-                  )}>
-                    {entry.type === "ai_draft" && (
-                      <div className="text-xs font-semibold mb-1 text-purple-200">💡 Draft Reply</div>
-                    )}
-                    <div className="whitespace-pre-wrap break-words text-sm">{entry.content}</div>
-                    
-                    {(entry.type === "sent" || entry.type === "customer") && entry.timestamp && (
-                      <div className={clsx(
-                        "text-xs mt-1.5 flex items-center gap-1",
-                        entry.type === "customer" ? "text-gray-200/70 justify-start" : "text-gray-400/70 justify-end", 
-                      )}>
-                        <Clock className="w-2.5 h-2.5" />
-                        <span>
-                          {new Date(entry.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
-                        </span>
-                        {entry.type === "sent" && entry.status === "sent" && (
-                          <Check className="w-3.5 h-3.5 text-sky-400 ml-0.5" />
-                        )}
-                      </div>
-                    )}
-                    {/* RESTORED: Buttons for AI Drafts */}
-                    {entry.type === "ai_draft" && (
-                      <div className="mt-2 flex items-center gap-3 border-t border-white/10 pt-2">
-                        <button
-                          onClick={() => handleEditDraft(entry)}
-                          className="text-xs font-medium text-purple-200 hover:text-white flex items-center gap-1 transition-colors p-1 hover:bg-white/10 rounded"
-                          aria-label="Edit draft"
-                        >
-                          <Edit3 className="w-3 h-3" /> Edit
-                        </button>
-                        <button
-                          onClick={() => handleDeleteDraft(entry.id)}
-                          className="text-xs font-medium text-purple-200 hover:text-white flex items-center gap-1 transition-colors p-1 hover:bg-white/10 rounded"
-                          aria-label="Delete draft"
-                        >
-                          <Trash2 className="w-3 h-3" /> Delete
-                        </button>
-                      </div>
-                    )}
+                      )}
+                      {/* --- MODIFICATION START --- */}
+                      {isActualDraft && ( 
+                        <div className="mt-2 flex items-center gap-3 border-t border-white/10 pt-2">
+                          <button
+                            onClick={() => handleEditDraft(entry)}
+                            className="text-xs font-medium text-purple-200 hover:text-white flex items-center gap-1 transition-colors p-1 hover:bg-white/10 rounded"
+                            aria-label="Edit draft"
+                          >
+                            <Edit3 className="w-3 h-3" /> Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDraft(entry.id)}
+                            className="text-xs font-medium text-purple-200 hover:text-white flex items-center gap-1 transition-colors p-1 hover:bg-white/10 rounded"
+                            aria-label="Delete draft"
+                          >
+                            <Trash2 className="w-3 h-3" /> Delete
+                          </button>
+                        </div>
+                      )}
+                      {/* --- MODIFICATION END --- */}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
                {timelineEntries.length === 0 && (
                     <div className="text-center text-gray-400 py-10">No messages in this conversation yet.</div>
                 )}
             </div>
 
+            {/* Message Input Area - No changes needed here for this specific issue */}
             <div className="bg-[#1A1D2D] border-t border-[#2A2F45] p-4">
               {!currentCustomer.opted_in && (
                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-4 py-3 mb-3 gap-2">
