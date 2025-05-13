@@ -208,7 +208,7 @@ async def receive_sms(
         if should_notify_owner and business.notify_owner_on_reply_with_link and business.business_phone_number and business.slug:
             logger.info(f"{log_prefix}: Owner notification (Flow A) being prepared for Business {business.id}.")
             try:
-                deep_link_url = f"{settings.FRONTEND_APP_URL}/profile/{business.slug}/inbox?conversationId={str(conversation.id)}"
+                deep_link_url = f"{settings.FRONTEND_APP_URL}/inbox/{business.slug}?conversationId={str(conversation.id)}"
                 
                 ai_draft_preview = ""
                 # engagement.ai_response now correctly holds the string text from AI
