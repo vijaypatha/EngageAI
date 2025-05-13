@@ -3,12 +3,13 @@
 import { useState, useEffect, ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
+import { SMSStyleCard } from "@/components/SMSStyleCard"; 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-// import { Loader2 } from "lucide-react";
+// import { Loader2 } from "lucide-react"; 
 
 interface BusinessProfileData {
   business_name: string;
@@ -23,11 +24,15 @@ interface BusinessProfileData {
 
 interface FetchedBusinessProfile extends BusinessProfileData {
   id: number;
-  // slug?: string;
-  // timezone?: string;
-  // enable_ai_faq_auto_reply?: boolean; 
-  // structured_faq_data?: any; 
 }
+
+interface SmsStyleScenario {
+  id: number; 
+  scenario: string;
+  context_type: string;
+  response: string; 
+}
+
 
 export default function ProfilePage() {
   const { business_name: businessSlugFromParams } = useParams();
@@ -37,10 +42,26 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedProfile, setEditedProfile] = useState<Partial<BusinessProfileData> | null>(null);
   const [businessId, setBusinessId] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); 
+  const [isSaving, setIsSaving] = useState(false); 
   const [error, setError] = useState<string | null>(null);
   const [editNotifyOwnerSms, setEditNotifyOwnerSms] = useState(false);
+
+  const [smsStyles, setSmsStyles] = useState<SmsStyleScenario[]>([]); 
+  const [isLoadingStyles, setIsLoadingStyles] = useState(false); 
+
+  const fetchStyles = async () => { 
+    if (!businessId) return;
+    setIsLoadingStyles(true); 
+    try {
+      const res = await apiClient.get<{ scenarios: SmsStyleScenario[] }>(`/sms-style/scenarios/${businessId}`);
+      setSmsStyles(res.data?.scenarios || []);
+    } catch (err) {
+      console.error("Failed to fetch SMS styles", err);
+    } finally {
+      setIsLoadingStyles(false); 
+    }
+  };
 
   useEffect(() => {
     const fetchProfileData = async () => {
@@ -60,7 +81,7 @@ export default function ProfilePage() {
           setIsLoading(false);
           return;
         }
-        setBusinessId(fetchedBusinessId);
+        setBusinessId(fetchedBusinessId); 
         
         const profileRes = await apiClient.get<FetchedBusinessProfile>(`/business-profile/${fetchedBusinessId}`);
         const fetchedData = profileRes.data;
@@ -91,6 +112,12 @@ export default function ProfilePage() {
     fetchProfileData();
   }, [businessSlugFromParams]);
 
+  useEffect(() => { 
+    if (businessId) {
+      fetchStyles();
+    }
+  }, [businessId]); 
+
   const handleInputChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setEditedProfile(prev => prev ? { ...prev, [name]: value } : null);
@@ -110,11 +137,9 @@ export default function ProfilePage() {
       };
       await apiClient.put(`/business-profile/${businessId}`, payloadToUpdate);
       
-      // After successful save, update the main profile state
-      // and reset editNotifyOwnerSms to reflect the saved state
       const updatedProfileData = { ...payloadToUpdate } as BusinessProfileData;
       setProfile(updatedProfileData);
-      setEditNotifyOwnerSms(updatedProfileData.notify_owner_on_reply_with_link || false); // Ensure this reflects saved state
+      setEditNotifyOwnerSms(updatedProfileData.notify_owner_on_reply_with_link || false);
       setIsEditing(false);
       alert("Profile updated successfully!");
     } catch (err: any) {
@@ -170,7 +195,9 @@ export default function ProfilePage() {
   return (
     <div className="min-h-screen bg-nudge-gradient text-white py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-3xl mx-auto">
+        {/* Business Profile Edit Section */}
         <div className="bg-[#1A1D2D] rounded-xl border border-[#2A2F45] p-6 sm:p-8 shadow-xl">
+          {/* Profile Header and Edit/Save Button */}
           <div className="flex flex-col sm:flex-row items-center justify-between mb-8 gap-4">
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent text-center sm:text-left">
               Business Profile
@@ -188,11 +215,11 @@ export default function ProfilePage() {
 
           {error && <p className="mb-4 text-sm text-red-500 bg-red-100/10 p-3 rounded-md">{error}</p>}
 
+          {/* Profile Fields */}
           <div className="space-y-6">
             {displayFields.map(({ key, label, type }) => {
               const value = isEditing ? editedProfile?.[key] : profile?.[key];
               const isNonEditableSystemField = key === 'twilio_number';
-
               return (
                 <div key={key} className="space-y-1.5">
                   <Label htmlFor={key} className="text-xs font-medium text-gray-400 block tracking-wide uppercase">
@@ -201,36 +228,17 @@ export default function ProfilePage() {
                   {isEditing && !isNonEditableSystemField ? (
                     type === "textarea" ? (
                       <Textarea
-                        id={key}
-                        name={key}
-                        value={String(value || "")}
-                        onChange={handleInputChange}
-                        rows={3}
-                        className="w-full bg-[#242842] border border-[#333959] rounded-lg px-4 py-2.5 
-                          text-white placeholder-gray-500 focus:border-emerald-500/70 
-                          focus:ring-1 focus:ring-emerald-500/70 transition-all duration-200 text-sm"
+                        id={key} name={key} value={String(value || "")} onChange={handleInputChange} rows={3}
+                        className="w-full bg-[#242842] border border-[#333959] rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:border-emerald-500/70 focus:ring-1 focus:ring-emerald-500/70 transition-all duration-200 text-sm"
                       />
                     ) : (
                     <Input
-                      id={key}
-                      name={key}
-                      type={type || "text"}
-                      value={String(value || "")}
-                      onChange={handleInputChange}
-                      className="w-full bg-[#242842] border border-[#333959] rounded-lg px-4 py-2.5 
-                        text-white placeholder-gray-500 focus:border-emerald-500/70 
-                        focus:ring-1 focus:ring-emerald-500/70 transition-all duration-200 text-sm"
+                      id={key} name={key} type={type || "text"} value={String(value || "")} onChange={handleInputChange}
+                      className="w-full bg-[#242842] border border-[#333959] rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:border-emerald-500/70 focus:ring-1 focus:ring-emerald-500/70 transition-all duration-200 text-sm"
                     />
                     )
                   ) : (
-                    <div className={`
-                      ${isNonEditableSystemField 
-                        ? 'bg-[#242842]/50 border border-[#2A2F45]/50 rounded-lg px-4 py-2.5 font-mono text-gray-500 text-sm' 
-                        : 'text-base text-white/90 pt-1' 
-                      }
-                      ${key === 'business_name' ? 'text-lg font-semibold' : ''}
-                      ${key === 'business_goal' && !isEditing ? 'text-base font-medium text-emerald-400/90' : ''}
-                    `}>
+                    <div className={` ${isNonEditableSystemField ? 'bg-[#242842]/50 border border-[#2A2F45]/50 rounded-lg px-4 py-2.5 font-mono text-gray-500 text-sm' : 'text-base text-white/90 pt-1'} ${key === 'business_name' ? 'text-lg font-semibold' : ''} ${key === 'business_goal' && !isEditing ? 'text-base font-medium text-emerald-400/90' : ''} `}>
                       {String(value || (isEditing ? "" : "Not set"))}
                     </div>
                   )}
@@ -238,16 +246,14 @@ export default function ProfilePage() {
               );
             })}
 
-            {/* --- SMS Notification Toggle --- */}
+            {/* SMS Notification Toggle Section */}
             <div className="pt-6 mt-6 border-t border-[#2A2F45]">
-              <Label className="text-base font-medium text-white/90 block mb-2">
-                SMS Notifications
-              </Label>
+              <Label className="text-base font-medium text-white/90 block mb-2">SMS Notifications</Label>
               <div className="flex items-center space-x-3 p-3 -ml-3">
                 <Switch
                   id="notify-owner-sms-toggle"
                   checked={isEditing ? editNotifyOwnerSms : (profile?.notify_owner_on_reply_with_link || false)}
-                  onCheckedChange={isEditing ? setEditNotifyOwnerSms : undefined} // Only allow change if editing
+                  onCheckedChange={isEditing ? setEditNotifyOwnerSms : undefined}
                   disabled={!isEditing || isSaving}
                 />
                 <label htmlFor="notify-owner-sms-toggle" className={`text-sm ${!isEditing ? 'text-gray-500' : 'text-gray-300 cursor-pointer'} flex-1`}>
@@ -258,27 +264,78 @@ export default function ProfilePage() {
                 </label>
               </div>
             </div>
-            {/* --- End SMS Notification Toggle --- */}
           </div>
           
-          <div className="mt-8 pt-8 border-t border-[#2A2F45]">
-            <Button 
-              variant="secondary"
-              onClick={() => router.push(`/profile/${businessSlugFromParams}/autopilot`)}
-              className="w-full border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
-            >
-              Configure AI Autopilot Settings
-            </Button>
-          </div>
-
-          <div className="mt-8 pt-8 border-t border-[#2A2F45]">
+          {/* Profile ID Footer (inside the main profile card) */}
+          {/* <div className="mt-8 pt-6 border-t border-[#2A2F45]">
             <p className="text-xs text-gray-600 text-center">
               Profile ID: {businessId}
             </p>
+          </div> */}
+        </div>
+
+        {/* --- NEW: Autopilot Settings Section --- */}
+        <div className="mt-12 bg-[#1A1D2D] rounded-xl border border-[#2A2F45] p-6 sm:p-8 shadow-xl">
+          <h2 className="text-xl sm:text-2xl font-bold text-white mb-4">
+            AI Autopilot
+          </h2>
+          <p className="text-sm text-gray-400 mb-6">
+            Configure AI Nudge to automatically handle common customer inquiries and more. 
+            Take full control of your automated responses.
+          </p>
+          <div className="flex justify-center">
+            <Button 
+              variant="secondary"
+              onClick={() => router.push(`/profile/${businessSlugFromParams}/autopilot`)}
+              className="px-8 py-3 text-base sm:text-lg bg-gradient-to-r from-emerald-400 via-blue-400 to-emerald-400 rounded-lg 
+                text-white font-medium hover:opacity-90 transition-all duration-300 
+                shadow-lg shadow-emerald-400/20 w-full sm:w-auto max-w-md
+                animate-gradient-x bg-[length:200%_100%] hover:shadow-emerald-400/40
+                relative overflow-hidden before:absolute before:inset-0 before:bg-gradient-to-r 
+                before:from-transparent before:via-white/20 before:to-transparent before:translate-x-[-200%]
+                before:animate-shimmer"
+            >
+               Set AI Nudge on Autopilot, and Relax!
+            </Button>
           </div>
         </div>
+        {/* --- END: Autopilot Settings Section --- */}
+
+        {/* SMS Style Section */}
+        <div className="mt-12 bg-[#1A1D2D] rounded-xl border border-[#2A2F45] p-6 sm:p-8 shadow-xl">
+          <h2 className="text-xl sm:text-2xl font-bold text-white mb-4">
+            Refine Your AI's Voice
+          </h2>
+          <p className="text-sm text-gray-400 mb-6">
+            AI Nudge learns from your responses to these scenarios. Provide examples of how you'd reply to help the AI perfectly match your communication style. Your changes are saved automatically when you update a response.
+          </p>
+          {isLoadingStyles && <p className="text-gray-400">Loading style scenarios...</p>}
+          {!isLoadingStyles && smsStyles.length === 0 && (
+            <p className="text-gray-400 text-center py-6 border border-dashed border-[#2A2F45] rounded-lg">
+              No style training scenarios found. They may be generating.
+              <br/>
+              <Button variant="secondary" onClick={fetchStyles} className="text-emerald-400 hover:text-emerald-300 mt-2">
+                Try refreshing scenarios
+              </Button>
+            </p>
+          )}
+          {!isLoadingStyles && smsStyles.length > 0 && (
+            <div className="grid grid-cols-1 gap-6">
+              {smsStyles.map((style) => (
+                businessId && 
+                <SMSStyleCard 
+                  key={style.id} 
+                  style={style} 
+                  onUpdate={fetchStyles}
+                  business_id={businessId} 
+                />
+              ))}
+            </div>
+          )}
+        </div>
         
-        <div className="flex justify-center mt-10">
+        {/* Logout Button */}
+        <div className="flex justify-center mt-10 mb-6">
           <Button
             onClick={async () => {
               try {

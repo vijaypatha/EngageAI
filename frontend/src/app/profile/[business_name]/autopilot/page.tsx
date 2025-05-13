@@ -1,60 +1,47 @@
 // frontend/src/app/profile/[business_name]/autopilot/page.tsx
 "use client";
 
-import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
+import { useEffect, useState, FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AxiosError } from 'axios';
 
-// --- YOUR ACTUAL IMPORTS ---
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
-// import { Separator } from '@/components/ui/separator'; // Uncomment if you use it
-// import { PlusCircle, Trash2, AlertTriangle, CheckCircle2 } from 'lucide-react'; // Example icons
+import { FaqCard } from '@/components/FaqCard'; 
+import type { FaqItem as PageFaqItemType } from '@/components/FaqCard'; // Import the type
+import { PlusCircle, AlertTriangle, CheckCircle2, ArrowLeft } from 'lucide-react'; 
 
-// --- YOUR ACTUAL API CLIENT ---
-import { apiClient } from '@/lib/api'; // Assuming this is your configured axios instance
+import { apiClient } from '@/lib/api';
 
-// --- TYPE DEFINITIONS (Should mirror backend Pydantic schemas from your app/schemas.py) ---
-interface CustomFaq {
+// Backend interfaces
+interface CustomFaqFromBackend {
   question: string;
   answer: string;
 }
 
-interface StructuredFaqData {
+interface StructuredFaqDataFromBackend {
   operating_hours?: string | null;
   address?: string | null;
   website?: string | null;
-  custom_faqs?: CustomFaq[] | null; // Array of simple {question, answer} objects
+  custom_faqs?: CustomFaqFromBackend[] | null;
 }
 
-interface BusinessProfile {
+interface BusinessProfileFromBackend {
   id: number;
   business_name: string;
   slug: string;
-  // flags from backend:
   enable_ai_faq_auto_reply: boolean;
-  notify_owner_on_reply_with_link: boolean; // This flag is managed on the main profile page
-  // data field:
-  structured_faq_data?: StructuredFaqData | null;
-  // Add any other fields your BusinessProfile API returns that might be useful
+  structured_faq_data?: StructuredFaqDataFromBackend | null;
 }
 
-// For local form state, especially for custom_faqs list rendering
-interface ClientCustomFaqItem extends CustomFaq {
-  clientId: string; // Temporary ID for React key prop and list manipulation
-}
+// Use the imported FaqItem type, potentially extending if page needs more info
+interface AutopilotPageFaqItem extends PageFaqItemType {}
 
-// Local form state for this page
 interface AutopilotPageState {
   enable_ai_faq_auto_reply: boolean;
-  operating_hours: string;
-  address: string;
-  website: string;
-  custom_faqs: ClientCustomFaqItem[];
+  faqs: AutopilotPageFaqItem[]; 
 }
 
 export default function AutopilotSettingsPage() {
@@ -63,7 +50,7 @@ export default function AutopilotSettingsPage() {
   const businessSlug = params.business_name as string;
 
   const [businessId, setBusinessId] = useState<number | null>(null);
-  const [currentBusinessName, setCurrentBusinessName] = useState<string>(''); // For display
+  const [currentBusinessName, setCurrentBusinessName] = useState<string>('');
   const [initialLoading, setInitialLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,10 +58,11 @@ export default function AutopilotSettingsPage() {
 
   const [formState, setFormState] = useState<AutopilotPageState>({
     enable_ai_faq_auto_reply: false,
-    operating_hours: '',
-    address: '',
-    website: '',
-    custom_faqs: [],
+    faqs: [ // Initialize with system FAQ structures
+      { id: 'system-hours', type: 'system', questionText: 'What are your Operating Hours?', answerText: '', placeholder: 'e.g., Mon-Fri: 9am-6pm, Sat: 10am-4pm...' },
+      { id: 'system-address', type: 'system', questionText: 'What is your Business Address?', answerText: '', placeholder: 'e.g., 123 Main Street, Anytown...' },
+      { id: 'system-website', type: 'system', questionText: 'What is your Website URL?', answerText: '', placeholder: 'e.g., https://www.yourbusiness.com' },
+    ],
   });
 
   useEffect(() => {
@@ -89,74 +77,81 @@ export default function AutopilotSettingsPage() {
       setError(null);
       setSuccessMessage(null);
       try {
-        // --- CORRECTED API CALL to fetch full profile by slug ---
-        const response = await apiClient.get<BusinessProfile>(
+        const response = await apiClient.get<BusinessProfileFromBackend>(
           `/business-profile/navigation-profile/slug/${businessSlug}`
         );
         const profileData = response.data;
-        // --- END OF CORRECTION ---
         
         if (profileData && profileData.id) {
           setBusinessId(profileData.id);
-          setCurrentBusinessName(profileData.business_name); // Store for display
+          setCurrentBusinessName(profileData.business_name);
 
-          // Initialize formState based on the fetched profileData
+          const systemFaqs: AutopilotPageFaqItem[] = [
+            { id: 'system-hours', type: 'system', questionText: 'What are your Operating Hours?', answerText: profileData.structured_faq_data?.operating_hours || '', placeholder: 'e.g., Mon-Fri: 9am-6pm...', isEditing: false },
+            { id: 'system-address', type: 'system', questionText: 'What is your Business Address?', answerText: profileData.structured_faq_data?.address || '', placeholder: 'e.g., 123 Main Street...', isEditing: false },
+            { id: 'system-website', type: 'system', questionText: 'What is your Website URL?', answerText: profileData.structured_faq_data?.website || '', placeholder: 'e.g., https://www.yourbusiness.com', isEditing: false },
+          ];
+
+          const customFaqsFromBackend = (profileData.structured_faq_data?.custom_faqs || []).map((faq, index): AutopilotPageFaqItem => ({
+            id: `custom-${Date.now()}-${index}`,
+            type: 'custom',
+            questionText: faq.question,
+            answerText: faq.answer,
+            isEditing: false,
+          }));
+
           setFormState({
             enable_ai_faq_auto_reply: profileData.enable_ai_faq_auto_reply || false,
-            operating_hours: profileData.structured_faq_data?.operating_hours || '',
-            address: profileData.structured_faq_data?.address || '',
-            website: profileData.structured_faq_data?.website || '',
-            custom_faqs: (profileData.structured_faq_data?.custom_faqs || []).map((faq, index) => ({
-              ...faq,
-              clientId: `faq-${Date.now()}-${index}`, // Unique client-side ID
-            })),
+            faqs: [...systemFaqs, ...customFaqsFromBackend],
           });
         } else {
           setError(`Business profile not found for "${businessSlug}".`);
-          console.warn("Profile data fetched by slug is missing ID or data:", profileData);
         }
       } catch (err) {
         const axiosError = err as AxiosError<any>;
-        console.error("Failed to fetch business profile for autopilot:", axiosError.response?.data || axiosError.message);
-        setError(axiosError.response?.data?.detail || `Failed to load settings for "${businessSlug}". Please check the slug or try again.`);
+        setError(axiosError.response?.data?.detail || `Failed to load settings for "${businessSlug}".`);
       } finally {
         setInitialLoading(false);
       }
     };
-
     fetchProfileData();
   }, [businessSlug]);
 
-  const handleGenericInputChange = (field: keyof Omit<AutopilotPageState, 'custom_faqs' | 'enable_ai_faq_auto_reply'>, value: string) => {
+  const handleFaqAnswerChange = (id: string, newAnswer: string) => {
     setFormState(prev => ({
       ...prev,
-      [field]: value,
+      faqs: prev.faqs.map(faq => faq.id === id ? { ...faq, answerText: newAnswer, isEditing: false } : faq)
     }));
   };
 
-  const handleCustomFaqChange = (clientId: string, field: 'question' | 'answer', value: string) => {
+  const handleFaqQuestionChange = (id: string, newQuestion: string) => {
     setFormState(prev => ({
       ...prev,
-      custom_faqs: prev.custom_faqs.map(faq =>
-        faq.clientId === clientId ? { ...faq, [field]: value } : faq
-      ),
+      faqs: prev.faqs.map(faq => (faq.id === id && faq.type === 'custom') ? { ...faq, questionText: newQuestion } : faq)
     }));
   };
 
-  const addCustomFaqPair = () => {
+  const addCustomFaqCard = () => {
     setFormState(prev => ({
       ...prev,
-      custom_faqs: [
-        ...prev.custom_faqs,
-        { clientId: `new-faq-${Date.now()}`, question: '', answer: '' },
-      ],
+      faqs: [
+        ...prev.faqs,
+        { 
+          id: `custom-${Date.now()}`, 
+          type: 'custom', 
+          questionText: '', 
+          answerText: '', 
+          isEditing: true, 
+          placeholder: 'Provide an answer...',
+        }
+      ]
     }));
   };
 
-  const removeCustomFaqPair = (clientIdToRemove: string) => {
+  const removeFaqCard = (idToRemove: string) => {
     setFormState(prev => ({
       ...prev,
-      custom_faqs: prev.custom_faqs.filter(faq => faq.clientId !== clientIdToRemove),
+      faqs: prev.faqs.filter(faq => faq.id !== idToRemove)
     }));
   };
 
@@ -165,251 +160,149 @@ export default function AutopilotSettingsPage() {
     if (!businessId) {
       setError("Business ID not available. Cannot save settings.");
       setSuccessMessage(null);
-      // Add user notification (e.g., toast)
       return;
     }
-
     setIsSaving(true);
     setError(null);
     setSuccessMessage(null);
-
     try {
-      // This payload structure must match the BusinessProfileUpdate Pydantic schema on the backend
+      const structuredFaqPayload: StructuredFaqDataFromBackend = {
+        operating_hours: formState.faqs.find(f => f.id === 'system-hours')?.answerText.trim() || null,
+        address: formState.faqs.find(f => f.id === 'system-address')?.answerText.trim() || null,
+        website: formState.faqs.find(f => f.id === 'system-website')?.answerText.trim() || null,
+        custom_faqs: formState.faqs
+          .filter(f => f.type === 'custom')
+          .map(customFaq => ({
+            question: customFaq.questionText.trim(),
+            answer: customFaq.answerText.trim(),
+          }))
+          .filter(cf => cf.question && cf.answer), 
+      };
       const payload = {
         enable_ai_faq_auto_reply: formState.enable_ai_faq_auto_reply,
-        structured_faq_data: {
-          operating_hours: formState.operating_hours.trim() || null,
-          address: formState.address.trim() || null,
-          website: formState.website.trim() || null,
-          custom_faqs: formState.custom_faqs.map(({ question, answer }) => ({ 
-            question: question.trim(), 
-            answer: answer.trim() 
-          })).filter(faq => faq.question && faq.answer), // Filter out empty Q&As
-        },
+        structured_faq_data: structuredFaqPayload,
       };
-
-      // API call to update the business profile
-      // Backend has: PUT /business-profile/{business_id}
       await apiClient.put(`/business-profile/${businessId}`, payload);
       setSuccessMessage("Autopilot settings saved successfully!");
-      // Example: Show toast notification for success
-      // toast.success("Autopilot settings saved!");
+      setFormState(prev => ({ // Ensure isEditing flags are reset on successful save
+        ...prev,
+        faqs: prev.faqs.map(f => ({...f, isEditing: false})) 
+      }));
     } catch (err) {
       const axiosError = err as AxiosError<any>;
-      console.error("Failed to save autopilot settings:", axiosError.response?.data || axiosError.message);
-      setError(axiosError.response?.data?.detail || "An error occurred while saving. Please try again.");
-      // Example: Show toast notification for error
-      // toast.error("Failed to save settings.");
+      setError(axiosError.response?.data?.detail || "An error occurred while saving.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  if (initialLoading) {
+  if (initialLoading) { 
     return (
       <div className="flex flex-col justify-center items-center min-h-screen p-4 text-center">
-        {/* Replace with a proper spinner component from your library */}
-        <svg className="animate-spin h-8 w-8 text-primary mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <svg className="animate-spin h-8 w-8 text-blue-600 dark:text-blue-400 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        <p className="text-muted-foreground">Loading Autopilot Settings...</p>
+        <p className="text-slate-500 dark:text-slate-400">Loading Autopilot Settings...</p>
       </div>
     );
   }
-
-  if (error && !businessId && !initialLoading) { // Critical error if businessId couldn't be fetched and not loading
+  if (error && !businessId && !initialLoading) { 
     return (
       <div className="container mx-auto p-4 md:p-8 text-center">
-        <Card className="max-w-md mx-auto mt-10">
+        <Card className="max-w-md mx-auto mt-10 bg-white dark:bg-slate-800 shadow-lg">
             <CardHeader>
-                <CardTitle className="text-destructive flex items-center justify-center">
-                    {/* <AlertTriangle className="h-5 w-5 mr-2" /> */}
-                    Error Loading Settings
+                <CardTitle className="text-red-600 dark:text-red-400 flex items-center justify-center">
+                    <AlertTriangle className="h-6 w-6 mr-2 shrink-0" /> Error Loading Settings
                 </CardTitle>
             </CardHeader>
-            <CardContent>
-                <p className="text-muted-foreground">{error}</p>
-            </CardContent>
-            <CardFooter>
-                <Button onClick={() => router.back()} className="w-full">Go Back</Button>
-            </CardFooter>
+            <CardContent> <p className="text-slate-600 dark:text-slate-400">{error}</p> </CardContent>
+            <CardFooter> <Button onClick={() => router.back()} className="w-full"> <ArrowLeft className="mr-2 h-4 w-4" /> Go Back </Button> </CardFooter>
         </Card>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto max-w-3xl p-4 py-8 md:p-6 lg:p-8"> {/* Responsive padding */}
-      <div className="mb-8">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">AI Autopilot Settings</h1>
-        <p className="text-muted-foreground mt-1">
-          Configure AI Nudge to automatically answer common questions for <span className="font-semibold text-foreground">{currentBusinessName || businessSlug}</span>.
-        </p>
-      </div>
-
-      {/* General page error (e.g., save error) */}
-      {error && !successMessage && (
-        <div role="alert" className="mb-6 p-4 bg-destructive/10 border border-destructive/30 text-destructive text-sm rounded-md">
-            {/* <AlertTriangle className="h-4 w-4 inline mr-2" /> */}
-            {error}
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-900 py-8">
+      <div className="container mx-auto max-w-4xl p-4 md:p-6">
+        <Button variant="ghost" onClick={() => router.back()} className="mb-6 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5">
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back to Profile
+        </Button>
+        
+        <div className="text-center mb-10">
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
+            AI Nudge Autopilot
+          </h1>
+          <p className="text-slate-600 dark:text-slate-400 mt-2 text-lg max-w-2xl mx-auto">
+          AI Nudge is your sidekick—add Q&As and let it reply for you!
+          </p>
         </div>
-      )}
-      {successMessage && (
-        <div role="alert" className="mb-6 p-4 bg-green-600/10 border border-green-600/30 text-green-700 dark:text-green-400 text-sm rounded-md">
-            {/* <CheckCircle2 className="h-4 w-4 inline mr-2" /> */}
-            {successMessage}
-        </div>
-      )}
 
-      <form onSubmit={handleSubmit} className="space-y-8">
-        <Card>
-          <CardHeader>
-            <CardTitle>AI Auto-Reply Status</CardTitle>
-            <CardDescription>Allow AI Nudge to automatically answer frequently asked questions using the information you provide below.</CardDescription>
-          </CardHeader>
-          <CardContent>
-          <div className="flex items-center space-x-3">
+        {error && !successMessage && (
+          <div role="alert" className="mb-6 p-4 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-500/50 text-red-700 dark:text-red-400 text-sm rounded-lg flex items-center shadow">
+              <AlertTriangle className="h-5 w-5 mr-3 shrink-0" /> {error}
+          </div>
+        )}
+        {successMessage && (
+          <div role="alert" className="mb-6 p-4 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-500/50 text-green-700 dark:text-green-400 text-sm rounded-lg flex items-center shadow">
+              <CheckCircle2 className="h-5 w-5 mr-3 shrink-0" /> {successMessage}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-8">
+          <Card className="bg-white dark:bg-slate-800/80 shadow-lg border border-slate-200 dark:border-slate-700 rounded-xl">
+            <CardContent className="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+              <div className="mb-4 sm:mb-0 flex-grow">
+                <Label htmlFor="enable-ai-faq-auto-reply-switch" className="text-md font-semibold text-slate-800 dark:text-slate-100 block">
+                  Enable AI Auto-Replies for FAQs
+                </Label>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Allow AI Nudge to use the Q&As below to reply automatically.
+                </p>
+              </div>
               <Switch
-                id="enable-ai-faq-auto-reply-switch" // Ensure ID is unique if using 'enable-ai-faq-auto-reply' elsewhere
+                id="enable-ai-faq-auto-reply-switch"
                 checked={formState.enable_ai_faq_auto_reply}
                 onCheckedChange={(checked) => setFormState(prev => ({ ...prev, enable_ai_faq_auto_reply: checked }))}
                 disabled={isSaving || initialLoading}
+                className="shrink-0"
               />
-              <Label htmlFor="enable-ai-faq-auto-reply-switch" className="cursor-pointer text-sm font-medium">
-                Enable AI Auto-Replies for FAQs
-              </Label>
-            </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              When enabled, AI uses the details you provide here. Auto-replies are logged in your inbox.
-            </p>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Business Information for AI</CardTitle>
-            <CardDescription>This information helps AI Nudge answer customer questions accurately and in your brand's voice (for auto-replies).</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div>
-              <Label htmlFor="operating-hours">Operating Hours</Label>
-              <Textarea
-                id="operating-hours"
-                placeholder="e.g., Mon-Fri: 9am-6pm, Sat: 10am-4pm. Closed on Sundays and public holidays."
-                value={formState.operating_hours}
-                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => handleGenericInputChange('operating_hours', e.target.value)}
-                disabled={isSaving || initialLoading}
-                rows={3}
-                className="mt-1 w-full"
-              />
-              <p className="text-xs text-muted-foreground mt-1">Used for questions like "What are your hours?".</p>
-            </div>
-
-            <div>
-              <Label htmlFor="business-address">Business Address</Label>
-              <Input
-                id="business-address"
-                type="text"
-                placeholder="e.g., 123 Main Street, Anytown, CA 90210"
-                value={formState.address}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => handleGenericInputChange('address', e.target.value)}
-                disabled={isSaving || initialLoading}
-                className="mt-1 w-full"
-              />
-              <p className="text-xs text-muted-foreground mt-1">Used for "Where are you located?" inquiries.</p>
-            </div>
-
-            <div>
-              <Label htmlFor="business-website">Website</Label>
-              <Input
-                id="business-website"
-                type="url"
-                placeholder="e.g., https://www.yourbusiness.com"
-                value={formState.website}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => handleGenericInputChange('website', e.target.value)}
-                disabled={isSaving || initialLoading}
-                className="mt-1 w-full"
-              />
-              <p className="text-xs text-muted-foreground mt-1">Provided for website-related questions.</p>
-            </div>
-
-            {/* Optional: <Separator className="my-6" /> */}
-
-            <div className="pt-4"> {/* Added padding-top */}
-              <h3 className="text-md font-semibold mb-1 text-foreground">Custom Questions & Answers</h3>
-              <p className="text-sm text-muted-foreground mb-4">Add other common questions and the specific answers AI Nudge should provide.</p>
-
-              <div className="space-y-4">
-                {formState.custom_faqs.map((faq, index) => (
-                  <Card key={faq.clientId} className="p-4 bg-muted/40 shadow-sm">
-                    <div className="space-y-3">
-                      <div>
-                        <Label htmlFor={`custom-q-${faq.clientId}`} className="text-xs font-medium text-muted-foreground">Customer Asks:</Label>
-                        <Input
-                          id={`custom-q-${faq.clientId}`}
-                          placeholder="Enter customer's question"
-                          value={faq.question}
-                          onChange={(e) => handleCustomFaqChange(faq.clientId, 'question', e.target.value)}
-                          disabled={isSaving || initialLoading}
-                          className="mt-1 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor={`custom-a-${faq.clientId}`} className="text-xs font-medium text-muted-foreground">AI Nudge Should Answer:</Label>
-                        <Textarea
-                          id={`custom-a-${faq.clientId}`}
-                          placeholder="Enter the answer AI should provide"
-                          value={faq.answer}
-                          onChange={(e) => handleCustomFaqChange(faq.clientId, 'answer', e.target.value)}
-                          disabled={isSaving || initialLoading}
-                          rows={2}
-                          className="mt-1 text-sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex justify-end mt-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeCustomFaqPair(faq.clientId)}
-                        disabled={isSaving || initialLoading}
-                        className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10 h-7 px-2"
-                      >
-                        {/* <Trash2 className="h-3 w-3 mr-1" /> Optional: Icon */}
-                        Remove Q&A
-                      </Button>
-                    </div>
-                  </Card>
-                ))}
-                {formState.custom_faqs.length === 0 && (
-                    <p className="text-xs text-muted-foreground text-center py-4 border border-dashed rounded-md">
-                        No custom Q&As added yet. Click "Add Custom Q&A" to get started.
-                    </p>
-                )}
-              </div>
-
-              <Button
-                type="button"
-                variant="secondary" // Or "secondary"
-                size="sm"
-                className="mt-6"
-                onClick={addCustomFaqPair}
-                disabled={isSaving || initialLoading}
-              >
-                {/* <PlusCircle className="mr-2 h-4 w-4" /> Optional: Icon */}
-                Add Custom Q&A
-              </Button>
-            </div>
-          </CardContent>
-          <CardFooter className="border-t pt-6 mt-6"> {/* Added mt-6 for space */}
-            <Button type="submit" disabled={isSaving || initialLoading} className="w-full sm:w-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"> {/* Adjusted gap */}
+            {formState.faqs.map(faqItem => (
+                 <FaqCard
+                    key={faqItem.id}
+                    item={faqItem}
+                    onAnswerChange={handleFaqAnswerChange}
+                    onQuestionChange={faqItem.type === 'custom' ? handleFaqQuestionChange : undefined}
+                    onRemove={faqItem.type === 'custom' ? removeFaqCard : undefined}
+                    isSavingOverall={isSaving || initialLoading}
+                    initialEditing={faqItem.isEditing} 
+                 />
+            ))}
+            <Card 
+              onClick={addCustomFaqCard}
+              className="flex flex-col items-center justify-center text-center p-4 border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-500 dark:hover:border-blue-400 cursor-pointer transition-all duration-200 min-h-[200px] sm:min-h-[240px] bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-xl shadow-sm hover:shadow-md"
+              role="button"
+              tabIndex={0}
+              onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') addCustomFaqCard();}}
+            >
+              <PlusCircle className="h-10 w-10 sm:h-12 sm:w-12 text-slate-400 dark:text-slate-500 mb-2" />
+              <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Add Custom Q&A</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 px-2">Click to define a new question and its answer.</p>
+            </Card>
+          </div>
+          
+          <div className="pt-8 flex justify-center border-t border-slate-200 dark:border-slate-700 mt-10">
+            <Button type="submit" disabled={isSaving || initialLoading} className="w-full md:w-auto text-lg px-10 py-3">
               {isSaving ? 'Saving Autopilot...' : 'Save Autopilot Settings'}
             </Button>
-          </CardFooter>
-        </Card>
-      </form>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
