@@ -3,13 +3,15 @@ import re
 import json
 import logging
 from datetime import datetime, timedelta, time
+from typing import Dict, Any # Ensure Dict and Any are imported
 import pytz
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 import openai
 
-from app.models import Customer, BusinessProfile, RoadmapMessage
+# Assuming Customer, BusinessProfile, RoadmapMessage are correctly imported from app.models
+from app.models import Customer, BusinessProfile, RoadmapMessage # Ensure your models are here
 from app.schemas import RoadmapGenerate, RoadmapResponse, RoadmapMessageResponse
 from app.config import settings
 from app.services.style_service import StyleService
@@ -17,8 +19,9 @@ from app.timezone_utils import get_business_timezone
 
 logger = logging.getLogger(__name__)
 
+# parse_customer_notes function remains unchanged
 def parse_customer_notes(notes: str) -> dict:
-    # ... (parse_customer_notes function for birthday, etc., remains the same)
+    # ... (existing code)
     parsed_info = {}
     if not notes:
         return parsed_info
@@ -65,8 +68,9 @@ def parse_customer_notes(notes: str) -> dict:
                  continue
     return parsed_info
 
+# parse_business_profile_for_campaigns function remains unchanged
 def parse_business_profile_for_campaigns(business_goal: str, primary_services: str) -> dict:
-    # ... (parse_business_profile_for_campaigns function remains the same)
+    # ... (existing code)
     campaign_details = {
         "detected_sales_phrases": [],
         "discounts_mentioned": [],
@@ -91,7 +95,6 @@ def parse_business_profile_for_campaigns(business_goal: str, primary_services: s
     logger.info(f"Parsed Campaign Details from Business Profile: {campaign_details}")
     return campaign_details
 
-
 class AIService:
     def __init__(self, db: Session):
         self.db = db
@@ -100,7 +103,9 @@ class AIService:
             raise ValueError("OpenAI API Key is not configured.")
         self.client = openai.Client(api_key=settings.OPENAI_API_KEY)
 
+    # generate_roadmap method remains unchanged
     async def generate_roadmap(self, data: RoadmapGenerate) -> RoadmapResponse:
+        # ... (existing code)
         try:
             customer = self.db.query(Customer).filter(Customer.id == data.customer_id).first()
             if not customer:
@@ -305,8 +310,8 @@ Output ONLY the JSON object with the 'messages' array.
                 detail=f"An internal server error occurred while generating the roadmap drafts."
             )
 
-    async def generate_sms_response(self, message: str, customer_id: int, business_id: int) -> str:
-        # ... (generate_sms_response method remains the same) ...
+    async def generate_sms_response(self, message: str, customer_id: int, business_id: int) -> Dict[str, Any]: # MODIFIED return type
+        # ... (load customer, business, style_guide, rep_name as before) ...
         customer = self.db.query(Customer).filter(Customer.id == customer_id).first()
         if not customer:
             raise HTTPException(status_code=404, detail="Customer not found")
@@ -320,11 +325,8 @@ Output ONLY the JSON object with the 'messages' array.
         style_guide = style.style_analysis if style and style.style_analysis else {}
         rep_name = business.representative_name or business.business_name
         
-        # AI-driven language detection for one-off replies too
-        # This is a simplified version. For a full system, you might want to make this a helper.
         user_notes_for_reply = customer.interaction_history or ""
         reply_language_instruction = ""
-        # Basic check for language keywords in notes for one-off replies
         if "spanish" in user_notes_for_reply.lower() or "español" in user_notes_for_reply.lower():
             reply_language_instruction = "Please reply in Spanish."
         elif "chinese" in user_notes_for_reply.lower() or "mandarin" in user_notes_for_reply.lower():
@@ -333,17 +335,27 @@ Output ONLY the JSON object with the 'messages' array.
             reply_language_instruction = "Please reply in Portuguese."
         elif "telugu" in user_notes_for_reply.lower() or "telugu" in user_notes_for_reply.lower():
             reply_language_instruction = "Please reply in Telugu."
-        # Add more language detections if needed
         else:
             reply_language_instruction = "Please reply in English."
 
-# --- START: FAQ Context Preparation ---
         faq_context_str = ""
         is_faq_type_request = False 
-        faq_data_dict = {} # Initialize for later use in determining if FAQ was answered
+        faq_data_dict = {} 
 
-        if business.enable_ai_faq_auto_reply and business.structured_faq_data:
-            logger.info(f"FAQ Auto-Reply enabled for Business ID {business.id}. Preparing FAQ data.")
+        # --- MODIFICATION POINT: Check for Business Profile's enable_ai_faq_auto_reply setting ---
+        # This setting should ideally come from business.settings if structured like in other parts,
+        # but your current model snapshot uses business.enable_ai_faq_auto_reply directly.
+        # Let's assume business.enable_ai_faq_auto_reply is the correct attribute from your models.py
+        
+        # Check if FAQ auto-reply is enabled on the BusinessProfile model
+        # The model snapshot provided previously had `business.enable_ai_faq_auto_reply`
+        # If your BusinessProfile model has a `settings` JSON field that holds this, adjust accordingly
+        # e.g., business_settings = business.settings or {}
+        #        enable_faq_autopilot_setting = business_settings.get("enable_faq_autopilot", False)
+        # For this fix, we'll use the direct attribute as per your current `ai_service.py` structure.
+
+        if business.enable_ai_faq_auto_reply and business.structured_faq_data: # Keep this check
+            logger.info(f"FAQ Auto-Reply logic active for Business ID {business.id}.") # Log changed for clarity
             faq_data_dict = business.structured_faq_data 
             
             lower_message = message.lower()
@@ -367,26 +379,29 @@ Output ONLY the JSON object with the 'messages' array.
                 temp_custom_faq_context = "\n\nCustom Q&As available:"
                 for faq_item in custom_faqs:
                     question_text = faq_item.get('question', '').lower()
-                    if question_text and (question_text in lower_message or lower_message in question_text):
-                         is_faq_type_request = True
+                    # Enhanced matching: check if incoming message is IN question or question IN message
+                    if question_text and (question_text in lower_message or lower_message in question_text or any(keyword in lower_message for keyword in question_text.split() if len(keyword)>3)): # simple keyword check
+                         is_faq_type_request = True # It's an FAQ type if any custom question matches
                          custom_faq_match_found = True
                          temp_custom_faq_context += f"\n  - Q: {faq_item.get('question')}\n    A: {faq_item.get('answer')}"
                 if custom_faq_match_found:
                     faq_context_str += temp_custom_faq_context
             
-            if is_faq_type_request:
-                logger.info(f"Potential FAQ request detected. Context prepared: {faq_context_str}")
-            elif business.enable_ai_faq_auto_reply : # If not a direct FAQ but autopilot is on, provide all FAQ data as general context
-                logger.info("Message not a direct FAQ type, but AI Autopilot is ON. Providing all FAQ data for general context.")
+            if is_faq_type_request: # If any FAQ keyword/custom question matched
+                logger.info(f"Potential FAQ request detected. Context prepared for AI: {faq_context_str}")
+            # This 'elif' block was providing all FAQ as general context if autopilot was on but no specific match.
+            # For the goal of "if autopilot is on and we if the incoming question is from FAQ, then respond as autopilot reponse and dont generate AI draft",
+            # we need to ensure that if the AI *does* answer it as FAQ, that's what we act on.
+            # The prompt will guide the AI. If it's not an FAQ it can answer, it shouldn't use the marker.
+            elif business.enable_ai_faq_auto_reply : 
+                logger.info("Message not a direct FAQ type or no specific keywords matched, but AI Autopilot is ON. Providing all FAQ data for general context to AI.")
                 if faq_data_dict.get('address'): faq_context_str += f"\n- Business address: {faq_data_dict.get('address')}"
                 if faq_data_dict.get('operating_hours'): faq_context_str += f"\n- Operating hours: {faq_data_dict.get('operating_hours')}"
                 if faq_data_dict.get('website'): faq_context_str += f"\n- Website: {faq_data_dict.get('website')}"
                 if custom_faqs:
-                    faq_context_str += "\n\nOther potentially relevant Q&As:"
+                    faq_context_str += "\n\nOther potentially relevant Q&As (general context):" # Make it clear this is general context
                     for faq_item in custom_faqs: faq_context_str += f"\n  - Q: {faq_item.get('question')} -> A: {faq_item.get('answer')}"
-        # --- END: FAQ Context Preparation ---
 
-        # --- START: Dynamic Prompt Construction ---
         prompt_parts = [
             f"You are a friendly assistant for {business.business_name}, a {business.industry} business.",
             f"The business owner is {rep_name} and prefers this tone and style (follow it closely):",
@@ -396,57 +411,54 @@ Output ONLY the JSON object with the 'messages' array.
             reply_language_instruction 
         ]
 
-        faq_marker = "##FAQ_ANSWERED##" # Define the marker
+        faq_marker = "##FAQ_ANSWERED##" 
 
-        if business.enable_ai_faq_auto_reply and faq_context_str:
+        if business.enable_ai_faq_auto_reply and faq_context_str: # Only add FAQ context and marker instruction if FAQ autopilot is ON and context exists
             prompt_parts.append(f"\n\nIMPORTANT CONTEXTUAL BUSINESS INFORMATION (for FAQs if applicable):")
             prompt_parts.append(faq_context_str)
+            # Crucial instruction for the AI:
             prompt_parts.append(f"\nIf you use any of the above contextual business information to directly and completely answer the customer's question, append the exact marker '{faq_marker}' to the VERY END of your reply. Otherwise, do NOT append the marker.")
-            prompt_parts.append("If you cannot directly answer, have a natural, helpful conversation or indicate you will get assistance.")
+            prompt_parts.append("If you cannot directly answer with the provided FAQ information, have a natural, helpful conversation or indicate you will get assistance for their specific query. Do not makeup information not in the FAQ context.")
         
         prompt_parts.append(f"\n\nRESPONSE GUIDELINES: Draft a friendly, natural-sounding SMS reply. Keep it under 160 characters. Adhere to the owner's style. Sign off as \"- {rep_name}\".")
-        if not (business.enable_ai_faq_auto_reply and is_faq_type_request):
+        # Avoid promotions if it's an FAQ autopilot scenario unless the FAQ itself is promotional
+        if not (business.enable_ai_faq_auto_reply and is_faq_type_request): # Keep original logic for non-FAQ autopilot
              prompt_parts.append("Avoid promotions unless directly asked or highly relevant to their query.")
 
         prompt = "\n".join(prompt_parts)
         logger.debug(f"generate_sms_response PROMPT for Business ID {business.id}:\n{prompt}")
-        # --- END: Dynamic Prompt Construction -
         
         response = self.client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "system", "content": "You craft helpful and friendly SMS replies."},
+            model="gpt-4o", # Or your preferred model
+            messages=[{"role": "system", "content": "You craft helpful and friendly SMS replies based on provided context and instructions."}, # System prompt can be more generic
                       {"role": "user", "content": prompt}],
-            max_tokens=100
+            max_tokens=100 # Consider if 100 is enough for message + marker
         )
         
-        # --- START: Process OpenAI Response and Determine FAQ ---
-        # --- START: Process OpenAI Response and Check for FAQ Marker ---
         raw_generated_content = response.choices[0].message.content.strip()
         
-        faq_marker = "##FAQ_ANSWERED##" # Must be the same marker defined in the prompt
-        answered_as_faq = False
+        answered_as_faq_by_ai = False # Changed variable name for clarity
         final_content_for_sms = raw_generated_content
 
-        if raw_generated_content.endswith(faq_marker):
-            answered_as_faq = True
-            final_content_for_sms = raw_generated_content[:-len(faq_marker)].strip() # Remove marker from SMS text
-            logger.info(f"AI indicated FAQ was answered. Marker found. Cleaned SMS: '{final_content_for_sms}'")
+        if business.enable_ai_faq_auto_reply and raw_generated_content.endswith(faq_marker): # Check for marker only if autopilot is ON
+            answered_as_faq_by_ai = True
+            final_content_for_sms = raw_generated_content[:-len(faq_marker)].strip() 
+            logger.info(f"AI indicated FAQ was answered (marker found). Business ID: {business.id}. Cleaned SMS: '{final_content_for_sms}'")
         else:
-            logger.info(f"AI did not append FAQ marker. Treating as conversational reply. SMS: '{final_content_for_sms}'")
+            # If marker not found, or if FAQ autopilot is off, it's treated as a general conversational reply / potential draft
+            logger.info(f"AI reply processed. Business ID: {business.id}. SMS: '{final_content_for_sms}'. FAQ Autopilot Engaged: {answered_as_faq_by_ai}")
 
-        # Optional: You can still log if it was an FAQ-type question for your own analytics
-        if is_faq_type_request:
-            logger.info(f"Original question type was determined as FAQ-like for Business ID {business.id}.")
-
-        logger.info(f"🧠 AI reply generated for B:{business.id} C:{customer_id}: '{final_content_for_sms}'. Was FAQ answer (based on marker): {answered_as_faq}")
+        # This is the critical return structure
         return {
-            "text": final_content_for_sms, # Send the cleaned text
-            "is_faq_answer": answered_as_faq,
-            "ai_can_reply_directly": answered_as_faq and business.enable_ai_faq_auto_reply 
+            "text": final_content_for_sms,
+            "is_faq_answer": answered_as_faq_by_ai, # True if AI used FAQ & marker, and autopilot is on
+            # 'ai_can_reply_directly' is essentially answered_as_faq_by_ai in this context
+            # because we only set answered_as_faq_by_ai to True if enable_ai_faq_auto_reply is also true and marker found.
+            "ai_should_reply_directly_as_faq": answered_as_faq_by_ai # New key for clarity
         }
-        # --- END: Process OpenAI Response and Check for FAQ Marker ---
-        # --- END: Process OpenAI Response and Determine FAQ ---
 
+    # analyze_customer_response method remains unchanged
     async def analyze_customer_response(self, customer_id: int, message: str) -> dict:
+        # ... (existing code)
         logger.warning("analyze_customer_response not fully implemented yet.")
         return {"sentiment": "unknown", "next_step": "review_manually"}
