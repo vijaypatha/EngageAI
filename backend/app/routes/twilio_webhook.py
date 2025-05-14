@@ -103,7 +103,7 @@ async def receive_sms(
             customer = Customer(
                 phone=from_number,
                 business_id=business.id,
-                customer_name=f"Inbound Lead ({from_number})", # More generic name
+                customer_name=f"Customer ({from_number})", # More generic name
                 opted_in=False, # Default for new customer; will be updated by consent flow
                 created_at=now_utc_aware,
                 # Ensure other required fields for Customer model have defaults or are handled
