@@ -1,28 +1,31 @@
 # backend/app/routes/twilio_webhook.py
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone as dt_timezone
 import logging
 import traceback
-import uuid 
-
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import uuid
+import json
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
-import pytz 
+from sqlalchemy import desc
+import pytz
+from typing import Optional
 
 from app.database import get_db
 from app.models import (
     BusinessProfile,
-    Customer,
     Engagement,
     Message,
     Conversation as ConversationModel,
-    ConsentLog
+    ConsentLog,
+    Customer
 )
+
 from app.services.ai_service import AIService
 from app.services.consent_service import ConsentService
 from app.config import settings
-from app.services.twilio_service import TwilioService 
+from app.services.twilio_service import TwilioService
 
 from app.schemas import normalize_phone_number as normalize_phone
 import re
@@ -39,226 +42,367 @@ async def receive_sms(
     from_number_raw = "N/A"
     to_number_raw = "N/A"
     form_data = {}
-    # Initialize TwilioService directly. If you have a Depends for it, that's also fine.
-    twilio_service = TwilioService(db=db) # Pass the db session
+
+    # Instantiate services
+    twilio_service = TwilioService(db=db)
+    ai_service = AIService(db=db)
+    consent_service = ConsentService(db=db)
 
     try:
         form_data = await request.form()
         from_number_raw = form_data.get("From", "")
         to_number_raw = form_data.get("To", "")
-        
+
         try:
             from_number = normalize_phone(from_number_raw)
         except ValueError as e:
-            logger.error(f"INBOUND_SMS [SID_UNKNOWN]: Invalid 'From' phone number format: '{from_number_raw}'. Error: {e}")
-            # Twilio expects a 200 OK even for errors it considers non-retryable at this stage.
-            # Or an empty TwiML <Response/> if you want Twilio to do nothing else.
-            return PlainTextResponse(f"Invalid 'From' number format: {from_number_raw}", status_code=status.HTTP_200_OK)
-
+            logger.error(f"INBOUND_SMS [SID_UNKNOWN]: Invalid 'From' phone: '{from_number_raw}'. Err: {e}")
+            return PlainTextResponse(f"Invalid 'From' number: {from_number_raw}", status_code=status.HTTP_200_OK)
         try:
             to_number = normalize_phone(to_number_raw)
         except ValueError as e:
-            logger.error(f"INBOUND_SMS [SID_UNKNOWN]: Invalid 'To' phone number format: '{to_number_raw}'. Error: {e}")
-            return PlainTextResponse(f"Invalid 'To' number format: {to_number_raw}", status_code=status.HTTP_200_OK)
+            logger.error(f"INBOUND_SMS [SID_UNKNOWN]: Invalid 'To' phone: '{to_number_raw}'. Err: {e}")
+            return PlainTextResponse(f"Invalid 'To' number: {to_number_raw}", status_code=status.HTTP_200_OK)
 
         body_raw = form_data.get("Body", "").strip()
         body_lower = body_raw.lower()
         message_sid_from_twilio = form_data.get("MessageSid", "N/A")
-        
+
         log_prefix = f"INBOUND_SMS [SID:{message_sid_from_twilio}]"
         logger.info(f"{log_prefix}: From={from_number}(raw:{from_number_raw}), To={to_number}(raw:{to_number_raw}), Body='{body_raw}'")
 
         if not all([from_number, to_number, body_raw]):
-            logger.error(f"{log_prefix}: Missing required Twilio parameters. Form: {dict(form_data)}")
-            return PlainTextResponse("Missing parameters", status_code=status.HTTP_200_OK)
+            logger.error(f"{log_prefix}: Missing Twilio params. Form: {dict(form_data)}")
+            return PlainTextResponse("Missing params", status_code=status.HTTP_200_OK)
 
-        # --- Consent Processing Logic ---
-        consent_service = ConsentService(db)
-        consent_response = await consent_service.process_sms_response(
-            phone_number=from_number,
-            response=body_lower
+        # --- Consent Processing ---
+        consent_log_response = await consent_service.process_sms_response(
+            phone_number=from_number, response=body_lower
         )
-        if consent_response:
-            logger.info(f"{log_prefix}: Consent response handled by ConsentService for {from_number}.")
-            return consent_response
-        logger.info(f"{log_prefix}: Message from {from_number} not a direct consent update by service. Proceeding.")
+        if consent_log_response:
+            logger.info(f"{log_prefix}: Consent response handled for {from_number}.")
+            return consent_log_response
+        logger.info(f"{log_prefix}: Message from {from_number} not direct consent update. Proceeding.")
 
-        # --- Regular Message Handling ---
+        # --- Business and Customer Lookup ---
         business = db.query(BusinessProfile).filter(BusinessProfile.twilio_number == to_number).first()
         if not business:
-            logger.error(f"{log_prefix}: No business found for Twilio number {to_number}. Cannot route.")
+            logger.error(f"{log_prefix}: No business for Twilio number {to_number}.")
             return PlainTextResponse("Receiving number not associated", status_code=status.HTTP_200_OK)
         logger.info(f"{log_prefix}: Routed to Business ID {business.id} ({business.business_name}).")
 
         customer = db.query(Customer).filter(
-            Customer.phone == from_number,
-            Customer.business_id == business.id
+            Customer.phone == from_number, Customer.business_id == business.id
         ).first()
+
+        now_utc_aware = datetime.now(pytz.UTC) # Use a consistent UTC timestamp
+
+        initial_consent_created_this_request = False
         if not customer:
-            logger.warning(f"{log_prefix}: No customer record for {from_number} in Business ID {business.id}.")
-            return PlainTextResponse("Customer not registered with this business", status_code=status.HTTP_200_OK)
-        logger.info(f"{log_prefix}: Matched Customer ID {customer.id} ({customer.customer_name}).")
+            logger.info(f"{log_prefix}: New customer from {from_number}. Creating.")
+            customer = Customer(
+                phone=from_number,
+                business_id=business.id,
+                customer_name=f"Inbound Lead ({from_number})", # More generic name
+                opted_in=False, # Default for new customer; will be updated by consent flow
+                created_at=now_utc_aware,
+                # Ensure other required fields for Customer model have defaults or are handled
+                lifecycle_stage="Lead", # Example default
+                pain_points="Unknown",  # Example default
+                interaction_history=f"First contact via SMS: {body_raw[:100]}" # Example default
+            )
+            db.add(customer)
+            try:
+                db.flush() # Get customer.id for ConsentLog
+            except Exception as e_flush_cust:
+                db.rollback()
+                logger.error(f"{log_prefix}: DB error flushing new customer {from_number}: {e_flush_cust}", exc_info=True)
+                return PlainTextResponse("Server error creating customer profile.", status_code=status.HTTP_200_OK)
 
-        if not customer.opted_in:
-             logger.warning(f"{log_prefix}: Customer {customer.id} ({from_number}) is NOT opted-in. Discarding.")
-             return PlainTextResponse("Customer not opted-in", status_code=status.HTTP_200_OK)
-        logger.info(f"{log_prefix}: Customer {customer.id} is opted-in. Processing message.")
 
-        now_utc = datetime.now(pytz.UTC) 
+            # Create an initial PENDING consent log since they messaged us
+            initial_consent = ConsentLog(
+                customer_id=customer.id,
+                phone_number=from_number,
+                business_id=business.id,
+                method="customer_initiated_sms", # Indicates they messaged first
+                status="pending", # Or 'pending_confirmation' if you always send an opt-in query
+                sent_at=now_utc_aware, # Time of their first message
+                # replied_at can be null until they reply to an opt-in query
+            )
+            db.add(initial_consent)
+            initial_consent_created_this_request = True
+            logger.info(f"{log_prefix}: Created new Customer ID {customer.id} and initial 'pending' ConsentLog ID {initial_consent.id if hasattr(initial_consent, 'id') else 'Pending'}.")
+        else:
+            logger.info(f"{log_prefix}: Matched Customer ID {customer.id} ({customer.customer_name}). Current opted_in flag from DB: {customer.opted_in}")
+
+        # Check latest consent log status.
+        latest_consent_log_for_check = db.query(ConsentLog).filter(
+            ConsentLog.customer_id == customer.id,
+            # ConsentLog.business_id == business.id # Filter by business if consent is per-business
+        ).order_by(desc(ConsentLog.created_at)).first() # Or replied_at, or a combined latest timestamp logic
+
+        if latest_consent_log_for_check and latest_consent_log_for_check.status == "opted_out":
+            logger.warning(f"{log_prefix}: Customer {customer.id} ({from_number}) is OPTED_OUT based on ConsentLog. Discarding message.")
+            if initial_consent_created_this_request: # If we just created the customer and a pending log
+                db.rollback() # Rollback customer/consent creation
+            return PlainTextResponse("Customer has opted out.", status_code=status.HTTP_200_OK)
+
+        logger.info(f"{log_prefix}: Customer {customer.id} not explicitly opted-out by log. Latest ConsentLog status: '{latest_consent_log_for_check.status if latest_consent_log_for_check else 'None'}'.")
+
+        # --- Conversation Handling ---
         conversation = db.query(ConversationModel).filter(
             ConversationModel.customer_id == customer.id,
-            ConversationModel.business_id == business.id,
+            ConversationModel.business_id == business.id, # Important for multi-tenant
             ConversationModel.status == 'active'
         ).first()
 
         if not conversation:
             conversation = ConversationModel(
-                id=uuid.uuid4(),
-                customer_id=customer.id,
-                business_id=business.id,
-                started_at=now_utc,
-                last_message_at=now_utc,
-                status='active'
+                id=uuid.uuid4(), customer_id=customer.id, business_id=business.id,
+                started_at=now_utc_aware, last_message_at=now_utc_aware, status='active'
             )
             db.add(conversation)
-            db.flush() 
-            logger.info(f"{log_prefix}: New Conversation ID {conversation.id} created for Customer {customer.id}.")
-        else:
-            conversation.last_message_at = now_utc
-            logger.info(f"{log_prefix}: Using existing Conversation ID {conversation.id}.")
+            try:
+                db.flush()
+            except Exception as e_flush_conv:
+                db.rollback()
+                logger.error(f"{log_prefix}: DB error flushing new conversation for customer {customer.id}: {e_flush_conv}", exc_info=True)
+                return PlainTextResponse("Server error initializing conversation.", status_code=status.HTTP_200_OK)
 
+            logger.info(f"{log_prefix}: New Conversation ID {conversation.id} for Customer {customer.id}.")
+        else:
+            conversation.last_message_at = now_utc_aware
+            logger.info(f"{log_prefix}: Existing Conversation ID {conversation.id}. Updated last_message_at.")
+
+        # --- Log Inbound Message & Create Engagement ---
         inbound_message_record = Message(
-            conversation_id=conversation.id,
-            business_id=business.id,
-            customer_id=customer.id,
-            content=body_raw,
-            message_type='inbound',
-            status='received', 
-            sent_at=now_utc, 
+            conversation_id=conversation.id, business_id=business.id, customer_id=customer.id,
+            content=body_raw, message_type='inbound', status='received',
+            sent_at=now_utc_aware, # Time customer's message was received by Twilio/us
             message_metadata={'twilio_sid': message_sid_from_twilio, 'source': 'customer_reply'}
         )
         db.add(inbound_message_record)
-        db.flush() 
+        try:
+            db.flush()
+        except Exception as e_flush_in_msg:
+            db.rollback()
+            logger.error(f"{log_prefix}: DB error flushing inbound message for customer {customer.id}: {e_flush_in_msg}", exc_info=True)
+            return PlainTextResponse("Server error saving message.", status_code=status.HTTP_200_OK)
+
 
         engagement = Engagement(
-            customer_id=customer.id,
-            business_id=business.id,
-            message_id=inbound_message_record.id, 
-            response=body_raw, 
-            ai_response=None,  # Initialize, will be set by AI or if auto-reply happens
-            status="pending_review", # Default, might change if auto-reply sent
-            created_at=now_utc 
+            customer_id=customer.id, business_id=business.id, message_id=inbound_message_record.id,
+            response=body_raw, ai_response=None, status="pending_review", created_at=now_utc_aware
         )
-        db.add(engagement) # Add to session early; ID will be assigned on flush/commit
-        # It's good practice to flush here if you need engagement.id immediately, but commit will also do it.
-        # db.flush() # If you need engagement.id for some reason before commit.
-
-        logger.info(f"{log_prefix}: Customer message logged. Message ID: {inbound_message_record.id}, Engagement (pending ID or ID if flushed): {engagement.id if engagement.id else 'N/A'}")
-
-        ai_service = AIService(db)
-        ai_generated_response_data = None # To store the dict from AI service
+        db.add(engagement)
         try:
-            ai_generated_response_data = await ai_service.generate_sms_response( 
-                message=body_raw, 
-                business_id=business.id,
-                customer_id=customer.id
+            db.flush()
+        except Exception as e_flush_eng:
+            db.rollback()
+            logger.error(f"{log_prefix}: DB error flushing engagement for customer {customer.id}: {e_flush_eng}", exc_info=True)
+            return PlainTextResponse("Server error creating engagement.", status_code=status.HTTP_200_OK)
+
+        logger.info(f"{log_prefix}: Customer message logged. MsgID: {inbound_message_record.id}, EngID: {engagement.id}")
+
+        # --- AI Response Generation ---
+        ai_generated_reply_text: Optional[str] = None
+        ai_payload_structured: Optional[dict] = None # Keep structured payload separate
+
+        try:
+            # AIService.generate_sms_response is expected to return a string
+            ai_generated_reply_text = await ai_service.generate_sms_response(
+                message=body_raw, business_id=business.id, customer_id=customer.id
             )
-            
-            # --- FIX for KeyError and TypeError (Issue 1 & 2 from previous step) ---
-            ai_response_text_for_db = ai_generated_response_data.get('text', '') 
-            engagement.ai_response = ai_response_text_for_db # Store only text in DB model
-            # --- End FIX ---
+            if ai_generated_reply_text:
+                # Create the structured payload dictionary
+                ai_payload_structured = {
+                    "text": ai_generated_reply_text, # Store the generated text here
+                    "is_faq_answer": True,
+                    "ai_can_reply_directly": True
+                }
+                # Store the JSON string representation in the database
+                engagement.ai_response = json.dumps(ai_payload_structured)
 
-            logger.info(f"{log_prefix}: AI response data received: {ai_generated_response_data}") # Log the whole dict
-            logger.info(f"{log_prefix}: AI draft text for DB: '{ai_response_text_for_db[:50]}...'")
+                # Safely get text for logging preview from the structured payload
+                ai_text_preview_content = ""
+                if ai_payload_structured and isinstance(ai_payload_structured, dict) and "text" in ai_payload_structured:
+                    ai_text_preview_content = ai_payload_structured.get("text", "")
+                    if not isinstance(ai_text_preview_content, str): # Defensive check
+                        ai_text_preview_content = str(ai_text_preview_content) # Ensure it's a string for slicing
+                elif isinstance(ai_generated_reply_text, str):
+                    # Fallback to the original generated text if structured payload wasn't created/valid
+                    ai_text_preview_content = ai_generated_reply_text
+                else:
+                    # Last resort fallback
+                    ai_text_preview_content = "AI response content unavailable for preview."
 
-        except Exception as ai_err:
-            logger.error(f"{log_prefix}: AI response generation failed: {ai_err}", exc_info=True)
-            # engagement.ai_response remains None
+                # Use the extracted string content for logging the preview
+                logger.info(f"{log_prefix}: AI draft for EngID {engagement.id}: '{ai_text_preview_content[:50]}...'")
 
-        # --- START: Logic for Auto-Reply Based on FAQ ---
-        if ai_generated_response_data and ai_generated_response_data.get("ai_can_reply_directly"):
-            logger.info(f"{log_prefix}: AI determined it can reply directly as an FAQ answer.")
-            faq_reply_text = ai_generated_response_data.get("text") # This should be the same as ai_response_text_for_db
-            if faq_reply_text:
-                try:
-                    logger.info(f"{log_prefix}: Attempting to send FAQ auto-reply to {customer.phone}: '{faq_reply_text[:50]}...'")
-                    # Use the main twilio_service instance
-                    await twilio_service.send_sms(
-                        to=customer.phone,
-                        message=faq_reply_text,
-                        business=business # Pass the full business object
-                    )
-                    engagement.status = "auto_replied_faq" 
-                    engagement.sent_at = datetime.now(pytz.UTC) 
-                    logger.info(f"{log_prefix}: FAQ auto-reply sent successfully. Engagement status set to 'auto_replied_faq'.")
-                except Exception as auto_reply_send_err:
-                    logger.error(f"{log_prefix}: Failed to send FAQ auto-reply: {auto_reply_send_err}", exc_info=True)
-                    # If auto-reply fails, engagement status remains 'pending_review', owner will be notified.
             else:
-                logger.warning(f"{log_prefix}: AI indicated direct reply for FAQ, but no text was generated.")
-        # --- END: Logic for Auto-Reply Based on FAQ ---
+                logger.warning(f"{log_prefix}: AI service returned no response text for EngID {engagement.id}")
+        except Exception as ai_err:
+            logger.error(f"{log_prefix}: AI response generation failed for EngID {engagement.id}: {ai_err}", exc_info=True)
+            # ai_generated_reply_text remains None
 
-        should_notify_owner = True
-        if engagement.status == "auto_replied_faq":
-            # Set to False if you DON'T want to notify the owner after a successful auto-reply
-            # should_notify_owner = False
-            pass 
-
-        if should_notify_owner and business.notify_owner_on_reply_with_link and business.business_phone_number and business.slug:
-            logger.info(f"{log_prefix}: Owner notification (Flow A) being prepared for Business {business.id}.")
+        # --- AI Auto-Reply Logic (Flow B) ---
+        # ONLY attempt auto-reply if AI successfully generated text AND it's enabled
+        if business.enable_ai_faq_auto_reply and ai_generated_reply_text:
+            logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=True. Attempting AI auto-reply.")
             try:
-                deep_link_url = f"{settings.FRONTEND_APP_URL}/inbox/{business.slug}?conversationId={str(conversation.id)}"
-                
-                ai_draft_preview = ""
-                # engagement.ai_response now correctly holds the string text from AI
-                if engagement.ai_response and engagement.status != "auto_replied_faq": 
-                    ai_draft_preview = f"\nAI Draft: \"{engagement.ai_response[:40]}{'...' if len(engagement.ai_response) > 40 else ''}\""
+                # Use the generated text content for sending
+                message_content_to_send = ai_generated_reply_text # Start with the raw AI text
+
+                # Append opt-in prompt if customer is newly created AND this is effectively their first *meaningful* interaction
+                # and they are not yet opted in.
+                if initial_consent_created_this_request and not customer.opted_in:
+                    # Check latest consent again specifically for appending prompt
+                    current_consent_for_prompt = db.query(ConsentLog).filter(ConsentLog.customer_id == customer.id).order_by(desc(ConsentLog.created_at)).first()
+                    if not current_consent_for_prompt or current_consent_for_prompt.status == "pending":
+                        message_content_to_send += "\n\nTo get more helpful info, reply YES to opt-in. Msg&Data rates may apply. Reply STOP to cancel."
+                        logger.info(f"{log_prefix}: Appended opt-in prompt to AI reply for new/pending customer {customer.id}.")
+
+
+                # Call send_sms with the explicit string content and flag as direct reply
+                sent_message_sid = await twilio_service.send_sms(
+                    to=customer.phone,
+                    message_body=message_content_to_send, # Pass the explicitly constructed string
+                    business=business,
+                    is_direct_reply=True # This is a reply to an inbound message
+                )
+
+                if sent_message_sid:
+                    engagement.status = "auto_replied_faq"
+                    engagement.sent_at = datetime.now(pytz.UTC) # Record time AI reply was sent
+                    logger.info(f"{log_prefix}: AI auto-reply sent for EngID {engagement.id}. SID: {sent_message_sid}. Status: '{engagement.status}'.")
+
+                    # Log this AI auto-reply as an outbound Message
+                    # Content for the Message record can be structured if desired
+                    outbound_message_content_structured = {
+                        "text": message_content_to_send, # Store the actual text sent
+                        "is_faq_answer": True,
+                        "appended_opt_in_prompt": (initial_consent_created_this_request and not customer.opted_in) # Track if prompt was added
+                    }
+
+                    outbound_message = Message(
+                        conversation_id=conversation.id,
+                        business_id=business.id,
+                        customer_id=customer.id,
+                        content=json.dumps(outbound_message_content_structured), # Store structured content as JSON string
+                        message_type='outbound_ai_reply', # Specific type
+                        status="sent", # Mark as sent
+                        sent_at=engagement.sent_at, # Align timestamp
+                        message_metadata={
+                            'twilio_sid': sent_message_sid,
+                            'source': 'ai_auto_reply_faq', # Clear source
+                            'engagement_id': engagement.id,
+                            'original_customer_message_sid': message_sid_from_twilio
+                        }
+                    )
+                    db.add(outbound_message)
+                    logger.info(f"{log_prefix}: Logged AI auto-reply as Message (ID to be assigned).")
+                else: # Should not happen if send_sms raises on failure
+                    logger.error(f"{log_prefix}: twilio_service.send_sms returned no SID for AI auto-reply (EngID {engagement.id}).")
+
+            except HTTPException as http_send_exc:
+                logger.error(f"{log_prefix}: HTTPException sending AI auto-reply for EngID {engagement.id}: {http_send_exc.detail} (Status: {http_send_exc.status_code})")
+            except Exception as send_exc:
+                logger.error(f"{log_prefix}: Unexpected error sending AI auto-reply for EngID {engagement.id}: {send_exc}", exc_info=True)
+
+        elif not ai_generated_reply_text:
+            logger.info(f"{log_prefix}: No AI response text available. AI Auto-reply skipped for EngID {engagement.id}.")
+        elif not business.enable_ai_faq_auto_reply:
+            logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=False. AI Auto-reply skipped for EngID {engagement.id}. Draft (if any) saved in engagement.")
+
+
+        # --- Owner Notification Logic (Flow A) ---
+        # Notify owner if AI did NOT auto-reply (engagement status is still 'pending_review')
+        # AND business owner wants notifications.
+        should_notify_owner_now = (
+            business.notify_owner_on_reply_with_link and
+            business.business_phone_number and
+            business.slug and
+            engagement.status == "pending_review" # CRITICAL: Only notify if AI didn't handle it
+        )
+
+        if should_notify_owner_now:
+            logger.info(f"{log_prefix}: Preparing owner notification for EngID {engagement.id} (status is 'pending_review').")
+            try:
+                # Enhanced deep link to include customer and engagement context
+                deep_link_url = f"{settings.FRONTEND_APP_URL}/inbox/{business.slug}?activeCustomer={customer.id}&engagementId={engagement.id}"
+
+                ai_draft_preview_for_notification = ""
+                if engagement.ai_response:
+                    try:
+                        ai_data = json.loads(engagement.ai_response)
+                        # Safely get text from the loaded JSON
+                        ai_text = ai_data.get("text", "")
+                        if not isinstance(ai_text, str): # Defensive check
+                            ai_text = str(ai_text)
+                        ai_draft_preview_for_notification = f"\nAI Draft: \"{ai_text[:40]}{'...' if len(ai_text) > 40 else ''}\""
+                    except Exception as preview_err:
+                        logger.warning(f"{log_prefix}: Could not parse ai_response JSON for preview: {preview_err}")
 
                 notification_sms_body = (
-                    f"AI Nudge: New SMS from {customer.customer_name}.\n"
-                    f"\"{body_raw[:70]}{'...' if len(body_raw) > 70 else ''}\""
-                    f"{ai_draft_preview}\n" 
-                    f"Reply in app: {deep_link_url}"
+                    f"AI Nudge: New SMS from {customer.customer_name} ({customer.phone}).\n"
+                    f"Message: \"{body_raw[:70]}{'...' if len(body_raw) > 70 else ''}\""
+                    f"{ai_draft_preview_for_notification}\n"
+                    f"View & Reply: {deep_link_url}"
                 )
-                
-                logger.info(f"{log_prefix}: Sending owner notification to {business.business_phone_number} for Customer {customer.id}. Link: {deep_link_url}")
+
                 await twilio_service.send_sms(
                     to=business.business_phone_number,
-                    message=notification_sms_body,
-                    business=business
+                    message_body=notification_sms_body, # Use message_body keyword arg
+                    business=business, # Send FROM this business's Twilio setup
+                    is_direct_reply=False # Owner notification is a proactive message
                 )
-                logger.info(f"{log_prefix}: Owner SMS notification sent successfully to {business.business_phone_number}.")
+                logger.info(f"{log_prefix}: Owner SMS notification sent via TwilioService to {business.business_phone_number}.")
 
             except Exception as notify_err:
-                logger.error(f"{log_prefix}: Failed to send owner notification SMS for Business {business.id}: {notify_err}", exc_info=True)
-        else:
-            if engagement.status != "auto_replied_faq":
-                logger.info(f"{log_prefix}: Owner notification (Flow A) SKIPPED for Business {business.id}. "
-                            f"ShouldNotify: {should_notify_owner}, "
-                            f"ConfigEnabled: {business.notify_owner_on_reply_with_link}, "
-                            f"Phone: {'Set' if business.business_phone_number else 'Not Set'}, "
-                            f"Slug: {'Set' if business.slug else 'Not Set'}")
+                logger.error(f"{log_prefix}: Failed to send owner notification SMS (via TwilioService): {notify_err}", exc_info=True)
 
+        elif engagement.status != "pending_review":
+            logger.info(f"{log_prefix}: Owner notification skipped because engagement status is '{engagement.status}'.")
+        else: # Conditions for notification not met (e.g., business settings)
+            logger.info(
+                f"{log_prefix}: Owner notification conditions not met. "
+                f"Notify: {business.notify_owner_on_reply_with_link}, "
+                f"OwnerPhone: {'Set' if business.business_phone_number else 'Not Set'}, "
+                f"Slug: {'Set' if business.slug else 'Not Set'}, "
+                f"EngStatus: {engagement.status}"
+            )
+
+
+        # --- Final Commit ---
         try:
             db.commit()
-            logger.info(f"{log_prefix}: Database changes committed for inbound message and engagement.")
+            logger.info(f"{log_prefix}: Database changes committed successfully.")
         except Exception as db_commit_err:
             db.rollback()
             logger.error(f"{log_prefix}: Final DB commit failed: {db_commit_err}", exc_info=True)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save message interaction.")
+            # Twilio still expects a 200 OK response to acknowledge receipt of the webhook.
+            # So, we log the error but return a generic success message to Twilio.
+            return PlainTextResponse("Error saving interaction details.", status_code=status.HTTP_200_OK)
 
         return PlainTextResponse("SMS Received", status_code=status.HTTP_200_OK)
 
-    except HTTPException as http_exc: 
-        logger.error(f"HTTPException in webhook: {http_exc.detail}", exc_info=True)
-        db.rollback() 
-        raise http_exc
+    except HTTPException as http_exc:
+        logger.error(f"HTTPException in webhook: {http_exc.detail} (Status: {http_exc.status_code})", exc_info=True)
+        # Ensure rollback if any DB operations happened before the HTTPException was raised by our code
+        if db.is_active: # Check if session is active
+            db.rollback()
+        # Twilio expects a 200 OK even if we identify it as a bad request from their side
+        # or an error on our side that we handle gracefully.
+        return PlainTextResponse(f"Handled error: {http_exc.detail}", status_code=status.HTTP_200_OK)
     except Exception as e:
-        current_form_data_str = str(dict(form_data))[:500]
+        current_form_data_str = str(dict(form_data))[:500] # Log part of form data for context
         logger.error(f"UNHANDLED EXCEPTION in webhook processing. SID: {message_sid_from_twilio}, From: {from_number_raw}, To: {to_number_raw}, Form Data (partial): {current_form_data_str}. Error: {e}", exc_info=True)
-        logger.error(traceback.format_exc())
-        db.rollback() 
+        if db.is_active:
+            db.rollback()
+        # For truly unhandled exceptions, Twilio might retry if it gets a 500.
+        # However, often it's better to return 200 OK to stop retries if the issue is persistent or data-related.
+        # Let's return 500 for now to indicate a server-side unhandled issue.
         return PlainTextResponse("Internal Server Error processing webhook", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
     finally:
         logger.info(f"=== Twilio Webhook: END /inbound processing for SID:{message_sid_from_twilio} ===")

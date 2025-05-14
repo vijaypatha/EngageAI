@@ -6,7 +6,16 @@ from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP
 from app.database import Base
 import datetime
 import uuid
-import json # Keep if used by your @property
+import json
+import enum
+
+# --- ADD THE OptInStatus ENUM DEFINITION ---
+class OptInStatus(str, enum.Enum):
+    PENDING = "pending"
+    OPTED_IN = "opted_in"
+    OPTED_OUT = "opted_out"
+    NOT_SET = "not_set" # Or a suitable default
+# --- END ENUM DEFINITION ---
 
 def utc_now():
     return datetime.datetime.utcnow()
@@ -74,6 +83,7 @@ class Customer(Base): # YOUR ORIGINAL, just ensure back_populates are correct
     business_id = Column(Integer, ForeignKey("business_profiles.id"))
     timezone = Column(String, nullable=True)
     opted_in = Column(Boolean, default=False)
+    sms_opt_in_status = Column(String, default=OptInStatus.NOT_SET, nullable=False)
     is_generating_roadmap = Column(Boolean, default=False)
     last_generation_attempt = Column(DateTime, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), default=utc_now)

@@ -16,31 +16,31 @@ interface CustomerSummary {
   consent_updated?: string | null;
   message_count: number;
   messages: BackendMessage[];
-  content?: string; 
-  sent_time?: string; 
+  content?: string;
+  sent_time?: string;
 }
 
 interface BackendMessage {
-  id: string | number; 
+  id: string | number;
   type: "sent" | "customer" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message"; // Added more types from backend
-  content: string;
-  status?: string; 
+  content: any; // Allow content to be object or string initially
+  status?: string;
   scheduled_time?: string | null;
   sent_time?: string | null;
   source?: string; // Added source from backend
-  customer_id: number; 
+  customer_id: number;
   is_hidden?: boolean;
-  response?: string; 
+  response?: string;
 }
 
 type TimelineEntry = {
-  id: string | number; 
+  id: string | number;
   type: "customer" | "sent" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message"; // Matched BackendMessage
   content: string;
-  timestamp: string | null; 
+  timestamp: string | null;
   customer_id: number;
   is_hidden?: boolean;
-  status?: string; 
+  status?: string;
   source?: string; // Added source here as well
 };
 
@@ -73,13 +73,37 @@ export default function InboxPage() {
   const fetchAndSetCustomerSummaries = async (bId: number) => {
     const res = await apiClient.get(`/review/full-customer-history?business_id=${bId}`);
     const customerDataArray: CustomerSummary[] = res.data || [];
-    
+
     const summariesWithPreview = customerDataArray.map(cs => {
-        const lastMsgArray = cs.messages?.filter(m => m.type === 'sent' || m.type === 'customer').sort((a,b) => new Date(b.sent_time || b.scheduled_time || 0).getTime() - new Date(a.sent_time || a.scheduled_time || 0).getTime());
-        const lastMsg = lastMsgArray && lastMsgArray.length > 0 ? lastMsgArray[0] : null;
+        // First, ensure messages exist and are an array
+        const validMessages = Array.isArray(cs.messages) ? cs.messages : [];
+        const lastMsgArray = validMessages
+            .filter(m => m.type === 'sent' || m.type === 'customer')
+            .sort((a,b) => new Date(b.sent_time || b.scheduled_time || 0).getTime() - new Date(a.sent_time || a.scheduled_time || 0).getTime());
+        const lastMsg = lastMsgArray.length > 0 ? lastMsgArray[0] : null;
+
+        // Content preview logic
+        let previewContent = "";
+        if (lastMsg?.content) {
+            if (typeof lastMsg.content === 'string') {
+                try {
+                    const parsed = JSON.parse(lastMsg.content);
+                    if (parsed && typeof parsed.text === 'string') {
+                        previewContent = parsed.text;
+                    } else {
+                        previewContent = lastMsg.content;
+                    }
+                } catch (e) {
+                    previewContent = lastMsg.content;
+                }
+            } else if (typeof lastMsg.content === 'object' && lastMsg.content !== null && typeof (lastMsg.content as any).text === 'string') {
+                previewContent = (lastMsg.content as any).text;
+            }
+        }
+
         return {
           ...cs,
-          content: lastMsg?.content.slice(0,30) + (lastMsg?.content && lastMsg.content.length > 30 ? "..." : ""),
+          content: previewContent.slice(0,30) + (previewContent.length > 30 ? "..." : ""),
           sent_time: lastMsg?.sent_time || lastMsg?.scheduled_time || cs.consent_updated || "1970-01-01T00:00:00.000Z"
         }
       });
@@ -87,10 +111,10 @@ export default function InboxPage() {
     summariesWithPreview.sort((a,b) => {
         const timeA = a.sent_time ? new Date(a.sent_time).getTime() : 0;
         const timeB = b.sent_time ? new Date(b.sent_time).getTime() : 0;
-        return timeB - timeA; 
+        return timeB - timeA;
     });
     setCustomerSummaries(summariesWithPreview);
-    return summariesWithPreview; 
+    return summariesWithPreview;
   };
 
   useEffect(() => {
@@ -127,14 +151,14 @@ export default function InboxPage() {
   }, [business_name]);
 
   useEffect(() => {
-    if (!businessId ) return; 
+    if (!businessId ) return;
     const interval = setInterval(async () => {
       try {
         await fetchAndSetCustomerSummaries(businessId);
       } catch (error) {
         // silent fail for polling
       }
-    }, 7000); 
+    }, 7000);
     return () => clearInterval(interval);
   }, [businessId]);
 
@@ -144,13 +168,51 @@ export default function InboxPage() {
 
     if (currentCustomerData && Array.isArray(currentCustomerData.messages)) {
       newTimelineEntries = currentCustomerData.messages
-        .filter(msg => !msg.is_hidden) 
+        .filter(msg => !msg.is_hidden)
         .map((msg: BackendMessage): TimelineEntry | null => {
           if (!msg.type || typeof msg.id === 'undefined') return null;
+
+          // --- FIX 1: MODIFIED CONTENT PARSING START ---
+          let processedContent = "";
+          if (typeof msg.content === 'string') {
+            try {
+              const parsedJson = JSON.parse(msg.content);
+              // Check for nested text structure: {"text": {"text": "..."}}
+              if (parsedJson && typeof parsedJson === 'object' && parsedJson.text && typeof parsedJson.text === 'object' && typeof parsedJson.text.text === 'string') {
+                  processedContent = parsedJson.text.text; // Extract the deeply nested text
+              } else if (parsedJson && typeof parsedJson.text === 'string') {
+                  // Handle the simpler {"text": "..."} structure
+                  processedContent = parsedJson.text;
+              } else {
+                // It's a string, but not the JSON structure we expect, or no 'text' field. Use as is.
+                processedContent = msg.content;
+              }
+            } catch (e) {
+              // Not a valid JSON string, use as is
+              processedContent = msg.content;
+            }
+          } else if (typeof msg.content === 'object' && msg.content !== null) {
+            // It's already an object, try to access 'text' property
+            // Also check for the nested structure if it's already an object
+            if (typeof (msg.content as any).text === 'object' && typeof (msg.content as any).text.text === 'string') {
+                 processedContent = (msg.content as any).text.text; // Extract deeply nested text from object
+            } else if (typeof (msg.content as any).text === 'string') {
+              processedContent = (msg.content as any).text; // Extract simple text from object
+            } else {
+              // Object doesn't have 'text' (or it's not a string/nested object), or it's not a string. Stringify for display.
+              processedContent = JSON.stringify(msg.content);
+            }
+          } else if (msg.type === "customer" && msg.response) {
+            // Fallback for customer messages if content is missing but response exists
+             processedContent = msg.response;
+          }
+          // --- FIX 1: MODIFIED CONTENT PARSING END ---
+
+
           return {
             id: String(msg.id),
             type: msg.type as TimelineEntry['type'],
-            content: msg.content || (msg.type === 'customer' && msg.response) || "",
+            content: processedContent, // Use the processed content
             timestamp: msg.sent_time || msg.scheduled_time || null,
             customer_id: currentCustomerData.customer_id,
             is_hidden: msg.is_hidden || false,
@@ -165,9 +227,9 @@ export default function InboxPage() {
         const validTimeA = timeA !== null && !isNaN(timeA) ? timeA : null;
         const validTimeB = timeB !== null && !isNaN(timeB) ? timeB : null;
         if (validTimeA === null && validTimeB === null) return String(a.id).localeCompare(String(b.id));
-        if (validTimeA === null) return 1; 
+        if (validTimeA === null) return 1;
         if (validTimeB === null) return -1;
-        return validTimeA - validTimeB; 
+        return validTimeA - validTimeB;
       });
     }
     setTimelineEntries(newTimelineEntries);
@@ -179,7 +241,7 @@ export default function InboxPage() {
     setIsSending(true);
     setSendError(null);
     const isSendingDraft = selectedDraftId != null && activeCustomerId;
-    const targetCustomerId = activeCustomerId; 
+    const targetCustomerId = activeCustomerId;
     if (!targetCustomerId) {
         setSendError("No active customer selected.");
         setIsSending(false);
@@ -189,7 +251,7 @@ export default function InboxPage() {
       if (isSendingDraft && selectedDraftId) {
         let numericIdToSend: number;
         if (typeof selectedDraftId === 'string') {
-          const match = selectedDraftId.match(/\d+$/); 
+          const match = selectedDraftId.match(/\d+$/);
           if (match) {
             numericIdToSend = parseInt(match[0], 10);
           } else {
@@ -198,7 +260,7 @@ export default function InboxPage() {
             setIsSending(false);
             return;
           }
-        } else { 
+        } else {
           numericIdToSend = selectedDraftId;
         }
         await apiClient.put(`/engagement-workflow/reply/${numericIdToSend}/send`, { updated_content: messageToSend });
@@ -215,7 +277,7 @@ export default function InboxPage() {
       const status = response?.status;
       const detail = response?.data?.detail || err.message || "An error occurred.";
       setSendError(`Failed to send: ${detail}. Status: ${status || 'N/A'}`);
-      if ((status === 409 || status === 404) && businessId) { 
+      if ((status === 409 || status === 404) && businessId) {
         await fetchAndSetCustomerSummaries(businessId);
       }
     } finally {
@@ -227,7 +289,7 @@ export default function InboxPage() {
     // Ensure we only allow editing actual drafts
     if (draft.type === 'ai_draft' && draft.source === 'ai_draft_suggestion' && draft.customer_id === activeCustomerId) {
       setSelectedDraftId(draft.id);
-      setNewMessage(draft.content);
+      setNewMessage(draft.content); // This will now be the processed string content
       if (inputRef.current) inputRef.current.focus();
     }
   };
@@ -255,10 +317,10 @@ export default function InboxPage() {
         alert("Cannot delete draft: ID is not a valid number after parsing.");
         return;
     }
-    
+
     // Check if the entry is actually a deletable draft before confirming
     const entryToDelete = timelineEntries.find(e => e.id === draftTimelineEntryId);
-    if (!(entryToDelete && entryToDelete.type === 'ai_draft' && entryToDelete.source === 'ai_draft_suggestion')) {
+    if (!(entryToDelete && entryToDelete.type === 'ai_draft' && entryToDelete.source === 'ai_draft_suggestion')) { // Changed to 'ai_draft_suggestion' for consistency if this is the intended source for drafts
         alert("This message is not a draft and cannot be deleted this way.");
         return;
     }
@@ -266,22 +328,22 @@ export default function InboxPage() {
     if (window.confirm("Delete this draft? This action cannot be undone.")) {
       try {
         await apiClient.delete(`/engagement-workflow/${numericDraftId}`);
-        setTimelineEntries((prev) => prev.filter((e) => e.id !== draftTimelineEntryId)); 
+        setTimelineEntries((prev) => prev.filter((e) => e.id !== draftTimelineEntryId));
         if (selectedDraftId === draftTimelineEntryId) {
           setNewMessage("");
           setSelectedDraftId(null);
         }
         if (businessId) {
-            await fetchAndSetCustomerSummaries(businessId); 
+            await fetchAndSetCustomerSummaries(businessId);
         }
       } catch (err: any) {
         console.error("[InboxPage] ❌ API call to delete draft failed:", err);
         const errorDetail = err.response?.data?.detail || err.message || "An unknown error occurred.";
-        alert(`Failed to delete draft: ${errorDetail}`); 
+        alert(`Failed to delete draft: ${errorDetail}`);
       }
     }
   };
-  
+
   const currentCustomer = useMemo(() => {
     return customerSummaries.find(cs => cs.customer_id === activeCustomerId);
   }, [customerSummaries, activeCustomerId]);
@@ -290,7 +352,7 @@ export default function InboxPage() {
     return <div className="h-screen flex items-center justify-center bg-[#0B0E1C] text-white text-lg">Loading Inbox... <span className="animate-pulse">⏳</span></div>;
   }
 
-  if (fetchError && !customerSummaries.length) { 
+  if (fetchError && !customerSummaries.length) {
     return <div className="h-screen flex flex-col items-center justify-center bg-[#0B0E1C] text-red-400 p-4 text-center">
         <AlertCircle className="w-12 h-12 mb-3 text-red-500"/>
         <p className="text-xl font-semibold">Oops! Something went wrong.</p>
@@ -301,7 +363,6 @@ export default function InboxPage() {
 
   return (
     <div className="h-screen flex md:flex-row flex-col bg-[#0B0E1C]">
-      {/* Mobile Drawer Button and Aside (Contact List) - No changes needed here */}
       <div className="md:hidden flex items-center justify-between p-4 bg-[#1A1D2D] border-b border-[#2A2F45]">
         <h1 className="text-xl font-semibold text-white">Inbox</h1>
         <button
@@ -318,7 +379,7 @@ export default function InboxPage() {
         "md:relative fixed inset-0 z-30 md:z-auto",
         "transition-transform duration-300 ease-in-out",
         showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0",
-        "flex flex-col h-full" 
+        "flex flex-col h-full"
       )}>
         <div className="flex justify-between items-center p-4 border-b border-[#2A2F45]">
           <h2 className="text-xl font-semibold text-white">{showMobileDrawer ? "Contacts" : "Inbox"}</h2>
@@ -334,16 +395,12 @@ export default function InboxPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {/* ... customerSummaries mapping ... no changes needed here for this specific issue ... */}
           {customerSummaries.length === 0 && !isLoading && (
             <p className="p-4 text-gray-400 text-center">No conversations yet. Add contacts to begin.</p>
           )}
-          {customerSummaries.map((cs) => { 
-            const lastMessage = cs.messages && cs.messages.length > 0 ? 
-                                cs.messages.filter(m => m.type === 'sent' || m.type === 'customer')
-                                .sort((a,b) => new Date(b.sent_time || b.scheduled_time || "1970-01-01T00:00:00.000Z").getTime() - new Date(a.sent_time || a.scheduled_time || "1970-01-01T00:00:00.000Z").getTime())[0] 
-                                : null;
-            const previewText = lastMessage ? (lastMessage.content.slice(0, 30) + (lastMessage.content.length > 30 ? "..." : "")) : "No recent messages";
+          {customerSummaries.map((cs) => {
+            // The previewText logic in fetchAndSetCustomerSummaries already handles content parsing
+            const previewText = cs.content || "No recent messages";
             return (
                 <div
                 key={cs.customer_id}
@@ -384,7 +441,6 @@ export default function InboxPage() {
       <main className="flex-1 flex flex-col h-[calc(100vh-4rem)] md:h-screen">
         {currentCustomer ? (
           <>
-            {/* Header with Customer Name and Opt-in status - No changes needed here */}
             <div className="bg-[#1A1D2D] border-b border-[#2A2F45] p-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
@@ -401,22 +457,18 @@ export default function InboxPage() {
                 </div>
               </div>
             </div>
-            
+
             <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-2">
               {timelineEntries.map((entry, index) => {
-                // --- MODIFICATION START ---
-                // Determine if the entry is a draft that should show edit/delete
-                // An entry is a draft if its type is 'ai_draft' AND its source indicates it's a suggestion
-                const isActualDraft = entry.type === "ai_draft" && entry.source === "ai_draft_suggestion";
-                // Messages sent by the business (manual, scheduled, or autopilot FAQ)
+                const isActualDraft = entry.type === "ai_draft" && entry.source === "ai_draft_suggestion"; // Assuming 'ai_draft_suggestion' for actual drafts
                 const isSentByBusiness = entry.type === "sent";
-                // --- MODIFICATION END ---
 
                 return (
+                  // --- FIX 2: MODIFIED MESSAGE BUBBLE RENDERING START ---
                   <div
-                    key={`${entry.type}-${entry.id}-${index}`}
+                    key={`${entry.type}-${entry.id}-${index}`} // Consider using just entry.id if unique enough
                     className={clsx(
-                        "flex flex-col w-full mb-1", 
+                        "flex flex-col w-full mb-1", // mb-1 provides spacing between distinct bubbles
                         entry.type === "customer" ? "items-start" : "items-end")}
                   >
                     { (index === 0 || (entry.timestamp && timelineEntries[index-1]?.timestamp && new Date(entry.timestamp).toDateString() !== new Date(timelineEntries[index-1].timestamp!).toDateString())) && entry.timestamp && (
@@ -425,40 +477,35 @@ export default function InboxPage() {
                           </div>
                       )}
                     <div className={clsx(
-                      "max-w-[80%] md:max-w-[70%] px-3.5 py-2 rounded-2xl shadow", 
-                      entry.type === "customer" ? "bg-gradient-to-r from-emerald-500 to-blue-500 text-white rounded-br-none" :
-                      isSentByBusiness ? "bg-[#242842] text-white rounded-bl-none" : // Style for all business sent messages
-                      isActualDraft ? "bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white rounded-bl-none" : // Style for drafts
-                      "bg-[#242842] text-white rounded-bl-none" // Fallback style for other business messages
+                      "max-w-[80%] md:max-w-[70%] px-3.5 py-2 rounded-2xl shadow", // rounded-2xl applies roundness to all corners
+                      entry.type === "customer" ? "bg-gradient-to-r from-emerald-500 to-blue-500 text-white" : // Removed rounded-br-none
+                      isSentByBusiness ? "bg-[#242842] text-white" : // Removed rounded-bl-none
+                      isActualDraft ? "bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white" : // Removed rounded-bl-none
+                      "bg-[#242842] text-white" // Removed rounded-bl-none
                     )}>
-                      {/* --- MODIFICATION START --- */}
-                      {isActualDraft && ( 
+                      {isActualDraft && (
                         <div className="text-xs font-semibold mb-1 text-purple-200">💡 Draft Reply</div>
                       )}
-                      {/* --- MODIFICATION END --- */}
                       <div className="whitespace-pre-wrap break-words text-sm">{entry.content}</div>
-                      
+
                       {(entry.type === "sent" || entry.type === "customer") && entry.timestamp && (
                         <div className={clsx(
                           "text-xs mt-1.5 flex items-center gap-1",
-                          entry.type === "customer" ? "text-gray-200/70 justify-start" : "text-gray-400/70 justify-end", 
+                          entry.type === "customer" ? "text-gray-200/70 justify-start" : "text-gray-400/70 justify-end",
                         )}>
                           <Clock className="w-2.5 h-2.5" />
                           <span>
                             {new Date(entry.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
                           </span>
-                          {/* --- MODIFICATION: Show Check for all "sent" types, including autopilot --- */}
-                          {isSentByBusiness && entry.status === "sent" && ( // Simpler check if type is already "sent"
+                          {isSentByBusiness && entry.status === "sent" && (
                             <Check className="w-3.5 h-3.5 text-sky-400 ml-0.5" />
                           )}
-                          {/* If you have a "delivered" status from Twilio callbacks, you could show CheckCheck here */}
-                          {isSentByBusiness && entry.status === "auto_replied_faq" && ( // Specifically for autopilot
-                            <CheckCheck className="w-3.5 h-3.5 text-emerald-400 ml-0.5" /> // Different icon or color for autopilot
+                          {isSentByBusiness && entry.status === "auto_replied_faq" && (
+                            <CheckCheck className="w-3.5 h-3.5 text-emerald-400 ml-0.5" />
                           )}
                         </div>
                       )}
-                      {/* --- MODIFICATION START --- */}
-                      {isActualDraft && ( 
+                      {isActualDraft && (
                         <div className="mt-2 flex items-center gap-3 border-t border-white/10 pt-2">
                           <button
                             onClick={() => handleEditDraft(entry)}
@@ -476,9 +523,9 @@ export default function InboxPage() {
                           </button>
                         </div>
                       )}
-                      {/* --- MODIFICATION END --- */}
                     </div>
                   </div>
+                  // --- FIX 2: MODIFIED MESSAGE BUBBLE RENDERING END ---
                 )
               })}
                {timelineEntries.length === 0 && (
@@ -486,7 +533,6 @@ export default function InboxPage() {
                 )}
             </div>
 
-            {/* Message Input Area - No changes needed here for this specific issue */}
             <div className="bg-[#1A1D2D] border-t border-[#2A2F45] p-4">
               {!currentCustomer.opted_in && (
                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-4 py-3 mb-3 gap-2">

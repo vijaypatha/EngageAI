@@ -80,7 +80,11 @@ class BusinessProfileBase(BaseModel):
     def _validate_bp_base_timezone(cls, v: Optional[str]):
         return validate_timezone_str(v)
 
-class BusinessProfileCreate(BusinessProfileBase): pass
+class BusinessProfileCreate(BusinessProfileBase):
+    twilio_number: Optional[str] = None
+    twilio_sid: Optional[str] = None
+    messaging_service_sid: Optional[str] = None
+    
 class BusinessProfileUpdate(BaseModel):
     business_name: Optional[str] = None; industry: Optional[str] = None
     business_goal: Optional[str] = None; primary_services: Optional[str] = None

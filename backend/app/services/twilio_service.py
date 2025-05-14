@@ -4,6 +4,7 @@
 from datetime import datetime, timezone
 import logging
 from typing import Dict, List, Optional
+import json # Import json to handle structured message bodies
 
 from fastapi import status
 from fastapi.exceptions import HTTPException
@@ -13,8 +14,9 @@ from twilio.base.exceptions import TwilioRestException
 
 
 from app.config import settings
-from app.database import SessionLocal # Keep SessionLocal if it's used by send_sms_via_twilio
-from app.models import BusinessProfile, Customer, Message
+from app.database import SessionLocal
+from app.models import BusinessProfile, Customer, Message, OptInStatus
+
 
 
 # Configure logging
@@ -108,7 +110,7 @@ class TwilioService:
             if not messaging_service_sid:
                 logger.error("purchase_and_assign_number_to_business: TWILIO_DEFAULT_MESSAGING_SERVICE_SID is not set in settings.")
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Default messaging service not configured.")
-            
+
             try:
                 self.client.messaging.services(messaging_service_sid).phone_numbers.create(
                     phone_number_sid=purchase_result.get('sid')
@@ -177,137 +179,206 @@ class TwilioService:
     # SMS Sending Methods
     # ------------------------------
 
-    async def send_sms(self, to: str, message: str, business: BusinessProfile) -> str:
-        """
-        Sends an SMS message via Twilio, using the business's messaging service SID
-        and specific 'From' number.
-        """
-        logger.info(f"Starting send_sms to={to} for business_id={business.id if business else 'unknown'} using From: {business.twilio_number if business else 'N/A'} and MS SID: {business.messaging_service_sid if business else 'N/A'}")
-        try:
-            if not all([
-                settings.TWILIO_ACCOUNT_SID,
-                settings.TWILIO_AUTH_TOKEN
-            ]):
-                logger.error(f"❌ send_sms failed: Missing Twilio account credentials.")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="SMS provider account is not configured."
-                )
+    async def send_sms(
+        self,
+        to: str,
+        message_body: str, # This parameter should ideally always be a string
+        business: BusinessProfile,
+        customer: Optional[Customer] = None,
+        is_direct_reply: bool = False # Flag if this is a direct reply to a customer's message
+    ) -> str:
+        log_prefix = f"[TwilioService.send_sms BIZ:{business.id} TO:{to}]"
 
-            # The messaging_service_sid is shared but should be present on the business profile.
+        # Safely get text content for logging preview
+        log_message_content = message_body
+        if isinstance(message_body, dict) and "text" in message_body:
+            log_message_content = message_body["text"]
+        elif not isinstance(message_body, str):
+            # Fallback for logging if it's unexpectedly not string or dict with 'text'
+            log_message_content = str(message_body)
+
+        # Use the safe logging variable for the log preview line
+        logger.info(f"{log_prefix} Attempting to send. Direct reply: {is_direct_reply}. Body: '{log_message_content[:50]}...'")
+
+
+        if not customer:
+            customer = self.db.query(Customer).filter(
+                Customer.phone == to,
+                Customer.business_id == business.id
+            ).first()
+
+        if not customer:
+            logger.error(f"{log_prefix} Customer not found for phone {to} and business ID {business.id}. Cannot send.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not registered with this business.")
+
+        # Consent check logic
+        # Direct replies (is_direct_reply=True) are allowed even if customer is not fully opted-in.
+        # Proactive messages (is_direct_reply=False) require OPTED_IN status.
+        if customer.sms_opt_in_status == OptInStatus.OPTED_OUT:
+            logger.warning(f"{log_prefix} Customer {customer.id} is OPTED_OUT. Message blocked. (Direct Reply: {is_direct_reply})")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot send message: Customer has opted out.")
+
+        if not is_direct_reply and customer.sms_opt_in_status != OptInStatus.OPTED_IN:
+             logger.warning(
+                 f"{log_prefix} Attempted to send PROACTIVE SMS to customer {customer.id} "
+                 f"with status '{customer.sms_opt_in_status}'. Message blocked."
+             )
+             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot send message: Customer has not opted in for proactive messages.")
+
+
+        try:
+            if not self.client:
+                logger.error(f"{log_prefix} Twilio client not initialized.")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SMS provider client not initialized.")
+
             if not business.messaging_service_sid:
-                logger.error(f"❌ send_sms failed: Missing messaging_service_sid for business_id={business.id}")
+                logger.error(f"{log_prefix} Missing messaging_service_sid for business_id={business.id}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="SMS Messaging Service is not configured for this business."
                 )
 
-            # This is the business's specific phone number that is part of the Messaging Service.
             if not business.twilio_number:
-                logger.error(f"❌ send_sms failed: Missing sender phone number (twilio_number) for business_id={business.id}")
+                logger.error(f"{log_prefix} Missing sender phone number (twilio_number) for business_id={business.id}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Sender phone number not configured for this business."
                 )
 
+            # Defensive check: Ensure message_body is a string before sending to Twilio
+            actual_twilio_message_body = message_body
+            if isinstance(message_body, dict) and "text" in message_body:
+                actual_twilio_message_body = message_body["text"]
+            elif not isinstance(message_body, str):
+                # If somehow not a string or expected dict structure, forcefully convert
+                logger.warning(f"{log_prefix} message_body is not a string or expected dict (type: {type(message_body)}). Attempting str() conversion.")
+                actual_twilio_message_body = str(message_body)
+
+
+            logger.info(f"{log_prefix} Sending SMS from {business.twilio_number} via MSID {business.messaging_service_sid}.")
             twilio_msg = self.client.messages.create(
                 to=to,
-                messaging_service_sid=business.messaging_service_sid, # The shared Messaging Service SID
-                from_=business.twilio_number,                         # The specific 'From' number for this business
-                body=message
+                messaging_service_sid=business.messaging_service_sid,
+                from_=business.twilio_number, # Use the business's Twilio number as 'From'
+                body=actual_twilio_message_body # Use the potentially converted string for Twilio
             )
-            logger.info(f"📤 Sent SMS to {to} from {business.twilio_number} via MS {business.messaging_service_sid}. SID: {twilio_msg.sid}")
+            logger.info(f"{log_prefix} SMS sent successfully. SID: {twilio_msg.sid}")
             return twilio_msg.sid
-        except HTTPException as http_exc: # Re-raise HTTPExceptions from checks
+        except HTTPException as http_exc:
             raise http_exc
-        except TwilioRestException as e: # Catch Twilio specific errors
-            logger.error(f"❌ Twilio API error sending SMS to {to} for business_id={business.id} from {business.twilio_number}: {e.status} - {e.msg}", exc_info=True)
+        except TwilioRestException as e:
+            logger.error(f"{log_prefix} Twilio API error: {e.status} - {e.msg}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE if e.status >= 500 else status.HTTP_400_BAD_REQUEST,
-                detail=f"Twilio error: {e.msg}"
+                detail=f"SMS provider error: {e.msg}"
             )
-        except Exception as e: # Catch other unexpected errors
-            logger.error(f"❌ Unexpected error in send_sms to {to} for business_id={business.id} from {business.twilio_number}: {str(e)}", exc_info=True)
+        except Exception as e:
+            logger.error(f"{log_prefix} Unexpected error: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to send SMS due to an unexpected error: {str(e)}"
             )
 
+
+    # In class TwilioService:
     async def send_scheduled_message(self, message_id: int):
-        logger.info(f"Starting send_scheduled_message for message_id={message_id}")
-        try:
-            message = self.db.query(Message).filter(
-                Message.id == message_id,
-                Message.message_type == 'scheduled' # Ensure it's a type we intend to send this way
-            ).first()
+        log_prefix = f"[TwilioService.send_scheduled_message MSG_ID:{message_id}]"
+        logger.info(f"{log_prefix} Processing.")
 
-            if not message:
-                logger.warning(f"send_scheduled_message: Message ID {message_id} not found or not of type 'scheduled'.")
-                return False # Or raise error, depending on desired strictness
+        db_message_to_send = self.db.query(Message).filter(Message.id == message_id).first()
 
-            customer = self.db.query(Customer).filter(Customer.id == message.customer_id).first()
-            if not customer or not customer.phone:
-                logger.warning(f"send_scheduled_message: Customer or customer phone not found for Message ID {message_id} (Customer ID {message.customer_id}).")
-                # Optionally update message status to failed here
-                return False
+        if not db_message_to_send:
+            logger.warning(f"{log_prefix} Message not found.")
+            return False # Or raise error
 
-            business = self.db.query(BusinessProfile).filter(BusinessProfile.id == message.business_id).first()
-            if not business:
-                logger.warning(f"send_scheduled_message: Business not found for Message ID {message_id} (Business ID {message.business_id}).")
-                # Optionally update message status to failed here
-                return False
+        # Safely get content from message record (it might be JSON string from structured content)
+        message_content = db_message_to_send.content
+        if isinstance(message_content, str):
+            try:
+                # If it's a JSON string, try to parse and get the 'text'
+                parsed_content = json.loads(message_content)
+                if isinstance(parsed_content, dict) and "text" in parsed_content:
+                    message_content = parsed_content["text"]
+                # else, it's a string but not structured JSON, use as is
+            except json.JSONDecodeError:
+                # Not JSON, just use the plain string content
+                pass # message_content is already the string
 
-            now_utc = datetime.now(timezone.utc)
-            # Ensure scheduled_time is timezone-aware if comparing with now_utc
-            scheduled_time_aware = message.scheduled_time
-            if scheduled_time_aware and scheduled_time_aware.tzinfo is None: # If naive, assume UTC (adjust if it's local)
-                scheduled_time_aware = scheduled_time_aware.replace(tzinfo=timezone.utc)
+        if not isinstance(message_content, str):
+             # If after parsing/checks it's still not a string, convert for sending
+             logger.warning(f"{log_prefix} Message content from DB is not a string (type: {type(message_content)}). Attempting str() conversion.")
+             message_content = str(message_content)
 
-            if scheduled_time_aware and scheduled_time_aware > now_utc:
-                logger.info(f"⏱️ Not time yet to send Message ID {message_id} (Scheduled: {scheduled_time_aware}, Now: {now_utc}).")
-                return False # Not an error, just not time yet. Celery ETA handles this.
+        if db_message_to_send.status not in ["scheduled", "pending_retry"]: # Check if it's eligible
+            logger.info(f"{log_prefix} Message status is '{db_message_to_send.status}', not eligible for sending.")
+            return False
 
-            # Crucial: Re-check opt-in status right before sending
-            if not customer.opted_in:
-                logger.warning(f"send_scheduled_message: Customer {customer.id} is opted out. Skipping send for Message ID {message_id}.")
-                message.status = "failed" # Or a specific status like 'skipped_opt_out'
-                message.message_metadata = {**(message.message_metadata or {}), 'failure_reason': 'Customer opted out before send'}
-                self.db.commit()
-                return False
-
-
-            logger.info(f"  Attempting to send Message ID {message_id} via self.send_sms...")
-            sid = await self.send_sms(customer.phone, message.content, business)
-            # self.send_sms will raise an exception if Twilio submission fails.
-
-            # Update message status on successful submission via self.send_sms
-            message.status = "sent"
-            message.sent_at = datetime.now(timezone.utc) # Record send attempt time
-            # sid is already logged by self.send_sms, but can add to metadata if desired
-            message.message_metadata = {**(message.message_metadata or {}), 'twilio_message_sid': sid, 'last_send_attempt': message.sent_at.isoformat()}
+        customer = self.db.query(Customer).filter(Customer.id == db_message_to_send.customer_id).first()
+        if not customer or not customer.phone:
+            logger.warning(f"{log_prefix} Customer or customer phone not found (CustID: {db_message_to_send.customer_id}).")
+            db_message_to_send.status = "failed"
+            db_message_to_send.message_metadata = {**(db_message_to_send.message_metadata or {}), 'failure_reason': 'Customer or phone not found'}
             self.db.commit()
+            return False
 
-            logger.info(f"✅ Message ID {message_id} processed and marked as 'sent'. SID: {sid}")
+        business = self.db.query(BusinessProfile).filter(BusinessProfile.id == db_message_to_send.business_id).first()
+        if not business:
+            logger.warning(f"{log_prefix} Business not found (BizID: {db_message_to_send.business_id}).")
+            db_message_to_send.status = "failed"
+            db_message_to_send.message_metadata = {**(db_message_to_send.message_metadata or {}), 'failure_reason': 'Business not found'}
+            self.db.commit()
+            return False
+
+        # The self.send_sms method will now handle all opt-in checks.
+        # Scheduled messages are proactive, so is_direct_reply=False.
+        try:
+            logger.info(f"{log_prefix} Calling self.send_sms to {customer.phone} for CustID {customer.id}.")
+            sid = await self.send_sms(
+                to=customer.phone,
+                message_body=message_content, # Pass the extracted/converted string content
+                business=business,
+                customer=customer,
+                is_direct_reply=False # Scheduled messages are proactive
+            )
+
+            db_message_to_send.status = "sent"
+            db_message_to_send.sent_at = datetime.now(timezone.utc)
+            db_message_to_send.message_metadata = {
+                **(db_message_to_send.message_metadata or {}),
+                'twilio_message_sid': sid,
+                'last_send_attempt': db_message_to_send.sent_at.isoformat()
+            }
+            self.db.commit()
+            logger.info(f"{log_prefix} Successfully processed and marked as 'sent'. SID: {sid}")
             return True
 
-        except HTTPException as http_exc: # Catch HTTP exceptions from self.send_sms
-            logger.error(f"❌ send_scheduled_message HTTP error for message_id={message_id}: {http_exc.detail}", exc_info=True)
-            # Mark message as failed if an HTTP error occurs during the send_sms call
-            if message_id: # If we have a message_id
-                msg_to_fail = self.db.query(Message).filter(Message.id == message_id).first()
-                if msg_to_fail and msg_to_fail.status == "scheduled": # Avoid overwriting other terminal states
-                    msg_to_fail.status = "failed"
-                    msg_to_fail.message_metadata = {**(msg_to_fail.message_metadata or {}), 'failure_reason': f"Send error: {http_exc.detail}"}
-                    self.db.commit()
+        except HTTPException as http_exc:
+            logger.error(f"{log_prefix} Send error (HTTPException): {http_exc.detail}")
+            # Update message status based on the HTTP Exception details if needed, e.g., opt-out/forbidden
+            failure_reason = f"Send error: {http_exc.detail}"
+            if http_exc.status_code == status.HTTP_403_FORBIDDEN:
+                 failure_reason = "Customer opt-out or not opted-in for proactive messages."
+
+            if db_message_to_send.status in ["scheduled", "pending_retry"]:
+                db_message_to_send.status = "failed"
+                db_message_to_send.message_metadata = {
+                    **(db_message_to_send.message_metadata or {}),
+                    'failure_reason': failure_reason,
+                    'last_send_attempt': datetime.now(timezone.utc).isoformat()
+                }
+                self.db.commit()
             return False # Indicate failure
+
         except Exception as e:
-            logger.error(f"❌ send_scheduled_message unexpected error processing message_id={message_id}: {str(e)}", exc_info=True)
-            if message_id: # If we have a message_id
-                msg_to_fail = self.db.query(Message).filter(Message.id == message_id).first()
-                if msg_to_fail and msg_to_fail.status == "scheduled":
-                    msg_to_fail.status = "failed"
-                    msg_to_fail.message_metadata = {**(msg_to_fail.message_metadata or {}), 'failure_reason': f"Unexpected processing error: {str(e)}"}
-                    self.db.commit()
+            logger.error(f"{log_prefix} Unexpected error: {str(e)}", exc_info=True)
+            if db_message_to_send.status in ["scheduled", "pending_retry"]:
+                db_message_to_send.status = "failed"
+                db_message_to_send.message_metadata = {
+                    **(db_message_to_send.message_metadata or {}),
+                    'failure_reason': f"Unexpected processing error: {str(e)}",
+                    'last_send_attempt': datetime.now(timezone.utc).isoformat()
+                }
+                self.db.commit()
             return False # Indicate failure
 
     # ------------------------------
@@ -318,8 +389,8 @@ class TwilioService:
         logger.info(f"Starting send_otp to phone_number={phone_number}")
         try:
             if not all([
-                settings.TWILIO_ACCOUNT_SID, 
-                settings.TWILIO_AUTH_TOKEN, 
+                settings.TWILIO_ACCOUNT_SID,
+                settings.TWILIO_AUTH_TOKEN,
                 settings.TWILIO_SUPPORT_MESSAGING_SERVICE_SID # Crucial for OTP
             ]):
                 logger.error(f"❌ send_otp failed: Missing Twilio credentials or support messaging service SID.")
@@ -353,6 +424,8 @@ class TwilioService:
             )
 
 
+# Standalone function for backward compatibility or direct calls.
+# Uses TwilioService internally.
 async def send_sms_via_twilio(to: str, message: str, business: BusinessProfile) -> str:
     """
     Standalone function to send SMS via Twilio for backward compatibility or direct calls.
@@ -362,7 +435,8 @@ async def send_sms_via_twilio(to: str, message: str, business: BusinessProfile) 
     try:
         db = SessionLocal()
         service = TwilioService(db) # Pass the new session to the service
-        return await service.send_sms(to, message, business)
+        # Assuming standalone calls like this are NOT direct replies to customer inbound SMS
+        return await service.send_sms(to=to, message_body=message, business=business, is_direct_reply=False)
     # No need to catch exceptions here if service.send_sms handles them and raises HTTPExceptions
     finally:
         if db:
