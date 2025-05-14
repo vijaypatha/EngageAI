@@ -659,24 +659,37 @@ export default function InboxPage() {
               </p>
             </div>
 
-            <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#0B0E1C]">
+            <div ref={chatContainerRef} className="flex flex-col flex-1 overflow-y-auto p-4 space-y-3 bg-[#0B0E1C]">
               {timelineEntries.map((entry) => (
                 <div
-                  key={entry.id}
-                  data-message-id={entry.id}
-                  className={clsx(
-                    "p-3 rounded-lg max-w-[70%] break-words text-sm shadow",
-                    {
-                      "bg-[#2A2F45] text-white self-start mr-auto": entry.type === "customer",
-                      "bg-blue-600 text-white self-end ml-auto": entry.type === "sent" || entry.type === "outbound_ai_reply",
-                      "bg-yellow-500 text-black self-end ml-auto": entry.type === "ai_draft",
-                      "bg-gray-500 text-white self-end ml-auto": entry.type === "scheduled" || entry.type === "scheduled_pending",
-                      "bg-red-700 text-white self-end ml-auto": entry.type === "failed_to_send",
-                      "bg-purple-600 text-white self-start mr-auto": entry.type === "unknown_business_message",
-                    },
-                    "flex flex-col"
-                  )}
-                >
+                key={entry.id}
+                data-message-id={entry.id}
+                className={clsx(
+                  "p-3 rounded-lg max-w-[70%] break-words text-sm shadow",
+                  "flex flex-col", // Handles internal layout of the bubble (text over timestamp)
+
+                  // Alignment classes - applied based on condition
+                  (entry.type === "customer" || entry.type === "unknown_business_message") && "self-start mr-auto",
+                  (
+                    entry.type === "sent" ||
+                    entry.type === "outbound_ai_reply" ||
+                    entry.type === "ai_draft" ||
+                    entry.type === "scheduled" ||
+                    entry.type === "scheduled_pending" ||
+                    entry.type === "failed_to_send"
+                  ) && "self-end ml-auto",
+
+                  // Background and text color classes - applied as an object
+                  {
+                    "bg-[#2A2F45] text-white": entry.type === "customer",
+                    "bg-blue-600 text-white": entry.type === "sent" || entry.type === "outbound_ai_reply",
+                    "bg-yellow-500 text-black": entry.type === "ai_draft",
+                    "bg-gray-500 text-white": entry.type === "scheduled" || entry.type === "scheduled_pending",
+                    "bg-red-700 text-white": entry.type === "failed_to_send",
+                    "bg-purple-600 text-white": entry.type === "unknown_business_message",
+                  }
+                )}
+              >
                   <p className="whitespace-pre-wrap">{entry.content}</p>
                   {entry.timestamp && (
                     <span className="text-xs text-gray-300 mt-1 self-end opacity-80">
