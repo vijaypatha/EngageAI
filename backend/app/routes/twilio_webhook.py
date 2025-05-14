@@ -103,7 +103,7 @@ async def receive_sms(
             customer = Customer(
                 phone=from_number,
                 business_id=business.id,
-                customer_name=f"Customer ({from_number})", # More generic name
+                customer_name=f"Inbound Lead ({from_number})", # More generic name
                 opted_in=False, # Default for new customer; will be updated by consent flow
                 created_at=now_utc_aware,
                 # Ensure other required fields for Customer model have defaults or are handled
@@ -136,6 +136,7 @@ async def receive_sms(
         else:
             logger.info(f"{log_prefix}: Matched Customer ID {customer.id} ({customer.customer_name}). Current opted_in flag from DB: {customer.opted_in}")
 
+
         # Check latest consent log status.
         latest_consent_log_for_check = db.query(ConsentLog).filter(
             ConsentLog.customer_id == customer.id,
@@ -149,6 +150,7 @@ async def receive_sms(
             return PlainTextResponse("Customer has opted out.", status_code=status.HTTP_200_OK)
 
         logger.info(f"{log_prefix}: Customer {customer.id} not explicitly opted-out by log. Latest ConsentLog status: '{latest_consent_log_for_check.status if latest_consent_log_for_check else 'None'}'.")
+
 
         # --- Conversation Handling ---
         conversation = db.query(ConversationModel).filter(
@@ -206,53 +208,62 @@ async def receive_sms(
         logger.info(f"{log_prefix}: Customer message logged. MsgID: {inbound_message_record.id}, EngID: {engagement.id}")
 
         # --- AI Response Generation ---
-        ai_generated_reply_text: Optional[str] = None
-        ai_payload_structured: Optional[dict] = None # Keep structured payload separate
+        ai_generated_reply_raw = None # Variable to hold the raw output from AI service
+        ai_generated_reply_text: Optional[str] = None # Variable to hold just the string content
 
         try:
-            # AIService.generate_sms_response is expected to return a string
-            ai_generated_reply_text = await ai_service.generate_sms_response(
+            # AIService.generate_sms_response might return a string or a structured object/dict
+            ai_generated_reply_raw = await ai_service.generate_sms_response(
                 message=body_raw, business_id=business.id, customer_id=customer.id
             )
+
+            # Safely extract the string content from the raw AI response
+            if isinstance(ai_generated_reply_raw, dict) and "text" in ai_generated_reply_raw:
+                ai_generated_reply_text = ai_generated_reply_raw.get("text", "")
+                if not isinstance(ai_generated_reply_text, str): # Defensive check
+                     ai_generated_reply_text = str(ai_generated_reply_text)
+            elif isinstance(ai_generated_reply_raw, str):
+                ai_generated_reply_text = ai_generated_reply_raw
+            else:
+                logger.warning(f"{log_prefix}: AI service returned unexpected type: {type(ai_generated_reply_raw)}. Value: {str(ai_generated_reply_raw)[:100]}")
+                ai_generated_reply_text = str(ai_generated_reply_raw) # Attempt conversion as fallback
+
+
+            ai_payload_structured: Optional[dict] = None
             if ai_generated_reply_text:
-                # Create the structured payload dictionary
+                # Create the structured payload dictionary using the extracted string
+                # Ensure the correct flags are carried over if the AI service provides them in the raw output
+                is_faq_answer = ai_generated_reply_raw.get("is_faq_answer", False) if isinstance(ai_generated_reply_raw, dict) else True # Default to True if AI generates text
+                ai_can_reply_directly = ai_generated_reply_raw.get("ai_can_reply_directly", False) if isinstance(ai_generated_reply_raw, dict) else True # Default to True if AI generates text
+
                 ai_payload_structured = {
-                    "text": ai_generated_reply_text, # Store the generated text here
-                    "is_faq_answer": True,
-                    "ai_can_reply_directly": True
+                    "text": ai_generated_reply_text, # Use the guaranteed string content here
+                    "is_faq_answer": is_faq_answer,
+                    "ai_can_reply_directly": ai_can_reply_directly
                 }
                 # Store the JSON string representation in the database
                 engagement.ai_response = json.dumps(ai_payload_structured)
 
-                # Safely get text for logging preview from the structured payload
-                ai_text_preview_content = ""
-                if ai_payload_structured and isinstance(ai_payload_structured, dict) and "text" in ai_payload_structured:
-                    ai_text_preview_content = ai_payload_structured.get("text", "")
-                    if not isinstance(ai_text_preview_content, str): # Defensive check
-                        ai_text_preview_content = str(ai_text_preview_content) # Ensure it's a string for slicing
-                elif isinstance(ai_generated_reply_text, str):
-                    # Fallback to the original generated text if structured payload wasn't created/valid
-                    ai_text_preview_content = ai_generated_reply_text
-                else:
-                    # Last resort fallback
-                    ai_text_preview_content = "AI response content unavailable for preview."
-
                 # Use the extracted string content for logging the preview
-                logger.info(f"{log_prefix}: AI draft for EngID {engagement.id}: '{ai_text_preview_content[:50]}...'")
+                # Ensure ai_generated_reply_text is treated as string for slicing
+                logger.info(f"{log_prefix}: AI draft for EngID {engagement.id}: '{str(ai_generated_reply_text)[:50]}...'")
+
 
             else:
-                logger.warning(f"{log_prefix}: AI service returned no response text for EngID {engagement.id}")
+                logger.warning(f"{log_prefix}: AI service returned no usable response text for EngID {engagement.id}")
         except Exception as ai_err:
             logger.error(f"{log_prefix}: AI response generation failed for EngID {engagement.id}: {ai_err}", exc_info=True)
             # ai_generated_reply_text remains None
 
         # --- AI Auto-Reply Logic (Flow B) ---
-        # ONLY attempt auto-reply if AI successfully generated text AND it's enabled
-        if business.enable_ai_faq_auto_reply and ai_generated_reply_text:
-            logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=True. Attempting AI auto-reply.")
+        # ONLY attempt auto-reply if AI successfully generated text AND it's enabled AND AI indicated it can reply directly
+        can_auto_reply = ai_payload_structured.get("ai_can_reply_directly", False) if isinstance(ai_payload_structured, dict) else False
+
+        if business.enable_ai_faq_auto_reply and ai_generated_reply_text and can_auto_reply:
+            logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=True and AI indicates direct reply is possible. Attempting AI auto-reply.")
             try:
                 # Use the generated text content for sending
-                message_content_to_send = ai_generated_reply_text # Start with the raw AI text
+                message_content_to_send = ai_generated_reply_text # Start with the raw AI text (now guaranteed string)
 
                 # Append opt-in prompt if customer is newly created AND this is effectively their first *meaningful* interaction
                 # and they are not yet opted in.
@@ -260,7 +271,7 @@ async def receive_sms(
                     # Check latest consent again specifically for appending prompt
                     current_consent_for_prompt = db.query(ConsentLog).filter(ConsentLog.customer_id == customer.id).order_by(desc(ConsentLog.created_at)).first()
                     if not current_consent_for_prompt or current_consent_for_prompt.status == "pending":
-                        message_content_to_send += "\n\nTo get more helpful info, reply YES to opt-in. Msg&Data rates may apply. Reply STOP to cancel."
+                        message_content_to_send += "\n\nWant to stay in the loop? Reply YES to stay in touch. ❤️ Msg&Data rates may apply. Reply STOP to cancel."
                         logger.info(f"{log_prefix}: Appended opt-in prompt to AI reply for new/pending customer {customer.id}.")
 
 
@@ -269,21 +280,24 @@ async def receive_sms(
                     to=customer.phone,
                     message_body=message_content_to_send, # Pass the explicitly constructed string
                     business=business,
+                    customer=customer, # Pass customer object for opt-in check inside service
                     is_direct_reply=True # This is a reply to an inbound message
                 )
 
                 if sent_message_sid:
-                    engagement.status = "auto_replied_faq"
+                    engagement.status = "auto_replied_faq" # Status indicates auto-reply happened
                     engagement.sent_at = datetime.now(pytz.UTC) # Record time AI reply was sent
                     logger.info(f"{log_prefix}: AI auto-reply sent for EngID {engagement.id}. SID: {sent_message_sid}. Status: '{engagement.status}'.")
 
                     # Log this AI auto-reply as an outbound Message
-                    # Content for the Message record can be structured if desired
+                    # Content for the Message record can be structured as before, using the correct string content
                     outbound_message_content_structured = {
-                        "text": message_content_to_send, # Store the actual text sent
-                        "is_faq_answer": True,
+                        "text": message_content_to_send, # Store the actual text sent (guaranteed string)
+                        "is_faq_answer": ai_payload_structured.get("is_faq_answer", False) if isinstance(ai_payload_structured, dict) else False, # Get flag from payload
+                        "ai_can_reply_directly": ai_payload_structured.get("ai_can_reply_directly", False) if isinstance(ai_payload_structured, dict) else False, # Get flag from payload
                         "appended_opt_in_prompt": (initial_consent_created_this_request and not customer.opted_in) # Track if prompt was added
                     }
+
 
                     outbound_message = Message(
                         conversation_id=conversation.id,
@@ -310,6 +324,9 @@ async def receive_sms(
             except Exception as send_exc:
                 logger.error(f"{log_prefix}: Unexpected error sending AI auto-reply for EngID {engagement.id}: {send_exc}", exc_info=True)
 
+        # Added elif to log why auto-reply didn't happen if AI generated text but couldn't reply directly
+        elif business.enable_ai_faq_auto_reply and ai_generated_reply_text and not can_auto_reply:
+             logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=True, AI generated text, but AI indicated it cannot reply directly. AI Auto-reply skipped for EngID {engagement.id}.")
         elif not ai_generated_reply_text:
             logger.info(f"{log_prefix}: No AI response text available. AI Auto-reply skipped for EngID {engagement.id}.")
         elif not business.enable_ai_faq_auto_reply:
