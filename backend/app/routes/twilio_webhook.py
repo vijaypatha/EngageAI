@@ -265,14 +265,16 @@ async def receive_sms(
                 # Use the generated text content for sending
                 message_content_to_send = ai_generated_reply_text # Start with the raw AI text (now guaranteed string)
 
-                # Append opt-in prompt if customer is newly created AND this is effectively their first *meaningful* interaction
-                # and they are not yet opted in.
-                if initial_consent_created_this_request and not customer.opted_in:
-                    # Check latest consent again specifically for appending prompt
-                    current_consent_for_prompt = db.query(ConsentLog).filter(ConsentLog.customer_id == customer.id).order_by(desc(ConsentLog.created_at)).first()
-                    if not current_consent_for_prompt or current_consent_for_prompt.status == "pending":
-                        message_content_to_send += "\n\nWant to stay in the loop? Reply YES to stay in touch. ❤️ Msg&Data rates may apply. Reply STOP to cancel."
-                        logger.info(f"{log_prefix}: Appended opt-in prompt to AI reply for new/pending customer {customer.id}.")
+                # Append opt-in prompt if customer is NOT opted in and the latest consent status is pending (or non-existent)
+                # --- START MODIFICATION ---
+                is_customer_pending_opt_in = not customer.opted_in and (
+                    not latest_consent_log_for_check or latest_consent_log_for_check.status == "pending"
+                )
+                if is_customer_pending_opt_in:
+                    # Check latest consent again specifically for appending prompt - Removed this redundant query here
+                    message_content_to_send += "\n\nWant to stay in the loop? Reply YES to stay in touch. ❤️ Msg&Data rates may apply. Reply STOP to cancel."
+                    logger.info(f"{log_prefix}: Appended opt-in prompt to AI reply for pending customer {customer.id}.")
+                # --- END MODIFICATION ---
 
 
                 # Call send_sms with the explicit string content and flag as direct reply
@@ -295,7 +297,7 @@ async def receive_sms(
                         "text": message_content_to_send, # Store the actual text sent (guaranteed string)
                         "is_faq_answer": ai_payload_structured.get("is_faq_answer", False) if isinstance(ai_payload_structured, dict) else False, # Get flag from payload
                         "ai_can_reply_directly": ai_payload_structured.get("ai_can_reply_directly", False) if isinstance(ai_payload_structured, dict) else False, # Get flag from payload
-                        "appended_opt_in_prompt": (initial_consent_created_this_request and not customer.opted_in) # Track if prompt was added
+                        "appended_opt_in_prompt": is_customer_pending_opt_in # Track if prompt was added based on the condition
                     }
 
 
@@ -326,7 +328,7 @@ async def receive_sms(
 
         # Added elif to log why auto-reply didn't happen if AI generated text but couldn't reply directly
         elif business.enable_ai_faq_auto_reply and ai_generated_reply_text and not can_auto_reply:
-             logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=True, AI generated text, but AI indicated it cannot reply directly. AI Auto-reply skipped for EngID {engagement.id}.")
+             logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=True, AI generated text, but AI indicated it cannot reply directly. AI Auto-reply skipped for EngID {engagement.id}. Draft (if any) saved in engagement.")
         elif not ai_generated_reply_text:
             logger.info(f"{log_prefix}: No AI response text available. AI Auto-reply skipped for EngID {engagement.id}.")
         elif not business.enable_ai_faq_auto_reply:
@@ -368,6 +370,7 @@ async def receive_sms(
                     f"View & Reply: {deep_link_url}"
                 )
 
+                # Note: is_direct_reply=False means this is a proactive message subject to full opt-in checks
                 await twilio_service.send_sms(
                     to=business.business_phone_number,
                     message_body=notification_sms_body, # Use message_body keyword arg

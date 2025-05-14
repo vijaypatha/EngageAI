@@ -2,10 +2,11 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { apiClient } from "@/lib/api";
-import { Clock, Send, MessageSquare, Check, AlertCircle, Trash2, Edit3, CheckCheck } from "lucide-react";
+import { Clock, Send, MessageSquare, Check, AlertCircle, Trash2, Edit3, CheckCheck, User, Phone, MessageCircle } from "lucide-react";
 import clsx from "clsx";
+import { format, isValid, parseISO } from 'date-fns';
 
 interface CustomerSummary {
   customer_id: number;
@@ -22,30 +23,64 @@ interface CustomerSummary {
 
 interface BackendMessage {
   id: string | number;
-  type: "sent" | "customer" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message"; // Added more types from backend
-  content: any; // Allow content to be object or string initially
+  type: "sent" | "customer" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
+  content: any;
   status?: string;
   scheduled_time?: string | null;
   sent_time?: string | null;
-  source?: string; // Added source from backend
+  source?: string;
   customer_id: number;
   is_hidden?: boolean;
   response?: string;
+  ai_response?: string;
 }
 
 type TimelineEntry = {
   id: string | number;
-  type: "customer" | "sent" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message"; // Matched BackendMessage
+  type: "customer" | "sent" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
   content: string;
   timestamp: string | null;
   customer_id: number;
   is_hidden?: boolean;
   status?: string;
-  source?: string; // Added source here as well
+  source?: string;
+  is_faq_answer?: boolean;
+  appended_opt_in_prompt?: boolean;
+};
+
+const formatDate = (dateString: string | null | undefined): string => {
+  if (!dateString) return "";
+  const date = parseISO(dateString);
+  if (!isValid(date)) return "Invalid date";
+  try {
+    const now = new Date();
+    if (format(date, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd')) {
+      return format(date, "p");
+    }
+    if (now.getTime() - date.getTime() < 7 * 24 * 60 * 60 * 1000) {
+      return format(date, "eee");
+    }
+    return format(date, "MMM d");
+  } catch (e) {
+    console.error("Error formatting date:", dateString, e);
+    return "Invalid date";
+  }
+};
+
+const formatMessageTimestamp = (dateString: string | null | undefined): string => {
+  if (!dateString) return "";
+  const date = parseISO(dateString);
+  if (!isValid(date)) return "";
+  try {
+    return format(date, "MMM d, p");
+  } catch (e) {
+    return "";
+  }
 };
 
 export default function InboxPage() {
-  const { business_name } = useParams<{business_name: string}>();
+  const { business_name } = useParams<{ business_name: string }>();
+  const searchParams = useSearchParams();
   const [customerSummaries, setCustomerSummaries] = useState<CustomerSummary[]>([]);
   const [activeCustomerId, setActiveCustomerId] = useState<number | null>(null);
   const [newMessage, setNewMessage] = useState("");
@@ -61,60 +96,77 @@ export default function InboxPage() {
   const [lastSeenMap, setLastSeenMap] = useState<Record<number, string>>({});
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
 
-  const chatContainerRef = useRef<null | HTMLDivElement>(null);
-  const inputRef = useRef<null | HTMLInputElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-    }
+    requestAnimationFrame(() => {
+      if (chatContainerRef.current) {
+        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      }
+    });
   }, [timelineEntries]);
 
   const fetchAndSetCustomerSummaries = async (bId: number) => {
-    const res = await apiClient.get(`/review/full-customer-history?business_id=${bId}`);
-    const customerDataArray: CustomerSummary[] = res.data || [];
+    try {
+      const res = await apiClient.get(`/review/full-customer-history?business_id=${bId}`);
+      const customerDataArray: CustomerSummary[] = res.data || [];
 
-    const summariesWithPreview = customerDataArray.map(cs => {
-        // First, ensure messages exist and are an array
+      const summariesWithPreview = customerDataArray.map(cs => {
         const validMessages = Array.isArray(cs.messages) ? cs.messages : [];
         const lastMsgArray = validMessages
-            .filter(m => m.type === 'sent' || m.type === 'customer')
-            .sort((a,b) => new Date(b.sent_time || b.scheduled_time || 0).getTime() - new Date(a.sent_time || a.scheduled_time || 0).getTime());
+          .filter(m => ['sent', 'customer', 'outbound_ai_reply', 'scheduled', 'scheduled_pending'].includes(m.type) && !m.is_hidden)
+          .sort((a, b) => {
+            const timeA = new Date(a.sent_time || a.scheduled_time || 0).getTime();
+            const timeB = new Date(b.sent_time || b.scheduled_time || 0).getTime();
+            return timeB - timeA;
+          });
         const lastMsg = lastMsgArray.length > 0 ? lastMsgArray[0] : null;
 
-        // Content preview logic
         let previewContent = "";
         if (lastMsg?.content) {
-            if (typeof lastMsg.content === 'string') {
-                try {
-                    const parsed = JSON.parse(lastMsg.content);
-                    if (parsed && typeof parsed.text === 'string') {
-                        previewContent = parsed.text;
-                    } else {
-                        previewContent = lastMsg.content;
-                    }
-                } catch (e) {
-                    previewContent = lastMsg.content;
-                }
-            } else if (typeof lastMsg.content === 'object' && lastMsg.content !== null && typeof (lastMsg.content as any).text === 'string') {
-                previewContent = (lastMsg.content as any).text;
+          if (typeof lastMsg.content === 'string') {
+            try {
+              const parsed = JSON.parse(lastMsg.content);
+              if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
+                previewContent = parsed.text;
+              } else {
+                previewContent = lastMsg.content;
+              }
+            } catch (e) {
+              previewContent = lastMsg.content;
             }
+          } else if (typeof lastMsg.content === 'object' && lastMsg.content !== null) {
+            if (typeof (lastMsg.content as any).text === 'string') {
+              previewContent = (lastMsg.content as any).text;
+            } else {
+              previewContent = JSON.stringify(lastMsg.content);
+            }
+          }
+        } else if (lastMsg?.response && lastMsg.type === 'customer') {
+          previewContent = lastMsg.response;
         }
 
         return {
           ...cs,
-          content: previewContent.slice(0,30) + (previewContent.length > 30 ? "..." : ""),
+          content: previewContent.slice(0, 40) + (previewContent.length > 40 ? "..." : ""),
           sent_time: lastMsg?.sent_time || lastMsg?.scheduled_time || cs.consent_updated || "1970-01-01T00:00:00.000Z"
         }
       });
 
-    summariesWithPreview.sort((a,b) => {
-        const timeA = a.sent_time ? new Date(a.sent_time).getTime() : 0;
-        const timeB = b.sent_time ? new Date(b.sent_time).getTime() : 0;
-        return timeB - timeA;
-    });
-    setCustomerSummaries(summariesWithPreview);
-    return summariesWithPreview;
+      summariesWithPreview.sort((a, b) => {
+        const timeA = new Date(a.sent_time).getTime();
+        const timeB = new Date(b.sent_time).getTime();
+        const validTimeA = isNaN(timeA) ? 0 : timeA;
+        const validTimeB = isNaN(timeB) ? 0 : timeB;
+        return validTimeB - validTimeA;
+      });
+      setCustomerSummaries(summariesWithPreview);
+      return summariesWithPreview;
+    } catch (error) {
+      console.error("Failed to fetch customer summaries:", error);
+      throw error;
+    }
   };
 
   useEffect(() => {
@@ -128,13 +180,25 @@ export default function InboxPage() {
       setFetchError(null);
       try {
         const bizRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
-        const id = bizRes.data.business_id;
+        const id = bizRes.data?.business_id;
         setBusinessId(id);
 
         if (id) {
           const initialSummaries = await fetchAndSetCustomerSummaries(id);
-          if (initialSummaries.length > 0 && initialSummaries[0].customer_id){
+          const urlCustomerIdString = searchParams.get('activeCustomer');
+
+          if (urlCustomerIdString) {
+            const urlCustomerId = parseInt(urlCustomerIdString, 10);
+            const customerExists = initialSummaries.some(cs => cs.customer_id === urlCustomerId);
+            if (customerExists) {
+              setActiveCustomerId(urlCustomerId);
+            } else if (initialSummaries.length > 0 && initialSummaries[0].customer_id) {
               setActiveCustomerId(initialSummaries[0].customer_id);
+            } else {
+              setActiveCustomerId(null);
+            }
+          } else if (initialSummaries.length > 0 && initialSummaries[0].customer_id) {
+            setActiveCustomerId(initialSummaries[0].customer_id);
           } else {
             setActiveCustomerId(null);
           }
@@ -148,18 +212,20 @@ export default function InboxPage() {
       }
     };
     initialize();
-  }, [business_name]);
+  }, [business_name, searchParams]);
 
   useEffect(() => {
-    if (!businessId ) return;
-    const interval = setInterval(async () => {
+    if (!businessId) return;
+    const intervalId = setInterval(async () => {
       try {
-        await fetchAndSetCustomerSummaries(businessId);
+        if (businessId && document.visibilityState === 'visible') {
+          await fetchAndSetCustomerSummaries(businessId);
+        }
       } catch (error) {
-        // silent fail for polling
+        console.error("Polling failed:", error);
       }
-    }, 7000);
-    return () => clearInterval(interval);
+    }, 5000);
+    return () => clearInterval(intervalId);
   }, [businessId]);
 
   useEffect(() => {
@@ -168,116 +234,217 @@ export default function InboxPage() {
 
     if (currentCustomerData && Array.isArray(currentCustomerData.messages)) {
       newTimelineEntries = currentCustomerData.messages
-        .filter(msg => !msg.is_hidden)
+        .filter(msg => !msg.is_hidden && !(msg.type === 'ai_draft' && msg.source === 'ai_draft_suggestion'))
         .map((msg: BackendMessage): TimelineEntry | null => {
           if (!msg.type || typeof msg.id === 'undefined') return null;
 
-          // --- FIX 1: MODIFIED CONTENT PARSING START ---
           let processedContent = "";
+          let isFaqAnswer = false;
+          let appendedOptInPrompt = false;
+
           if (typeof msg.content === 'string') {
             try {
               const parsedJson = JSON.parse(msg.content);
-              // Check for nested text structure: {"text": {"text": "..."}}
-              if (parsedJson && typeof parsedJson === 'object' && parsedJson.text && typeof parsedJson.text === 'object' && typeof parsedJson.text.text === 'string') {
-                  processedContent = parsedJson.text.text; // Extract the deeply nested text
-              } else if (parsedJson && typeof parsedJson.text === 'string') {
-                  // Handle the simpler {"text": "..."} structure
+              if (parsedJson && typeof parsedJson === 'object') {
+                if (typeof parsedJson.text === 'string') {
                   processedContent = parsedJson.text;
+                  isFaqAnswer = !!parsedJson.is_faq_answer;
+                  appendedOptInPrompt = !!parsedJson.appended_opt_in_prompt;
+                }
+                else if (parsedJson.text && typeof parsedJson.text === 'object' && typeof (parsedJson.text as any).text === 'string') {
+                  processedContent = (parsedJson.text as any).text;
+                } else {
+                  processedContent = msg.content;
+                }
               } else {
-                // It's a string, but not the JSON structure we expect, or no 'text' field. Use as is.
                 processedContent = msg.content;
               }
             } catch (e) {
-              // Not a valid JSON string, use as is
               processedContent = msg.content;
             }
           } else if (typeof msg.content === 'object' && msg.content !== null) {
-            // It's already an object, try to access 'text' property
-            // Also check for the nested structure if it's already an object
-            if (typeof (msg.content as any).text === 'object' && typeof (msg.content as any).text.text === 'string') {
-                 processedContent = (msg.content as any).text.text; // Extract deeply nested text from object
-            } else if (typeof (msg.content as any).text === 'string') {
-              processedContent = (msg.content as any).text; // Extract simple text from object
-            } else {
-              // Object doesn't have 'text' (or it's not a string/nested object), or it's not a string. Stringify for display.
+            if (typeof (msg.content as any).text === 'string') {
+              processedContent = (msg.content as any).text;
+              isFaqAnswer = !!(msg.content as any).is_faq_answer;
+              appendedOptInPrompt = !!(msg.content as any).appended_opt_in_prompt;
+            }
+            else if (typeof (msg.content as any).text === 'object' && typeof (msg.content as any).text.text === 'string') {
+              processedContent = (msg.content as any).text.text;
+            }
+            else {
               processedContent = JSON.stringify(msg.content);
             }
           } else if (msg.type === "customer" && msg.response) {
-            // Fallback for customer messages if content is missing but response exists
-             processedContent = msg.response;
+            processedContent = msg.response;
+          } else {
+            processedContent = "[No content]";
           }
-          // --- FIX 1: MODIFIED CONTENT PARSING END ---
-
 
           return {
             id: String(msg.id),
             type: msg.type as TimelineEntry['type'],
-            content: processedContent, // Use the processed content
+            content: processedContent,
             timestamp: msg.sent_time || msg.scheduled_time || null,
             customer_id: currentCustomerData.customer_id,
             is_hidden: msg.is_hidden || false,
             status: msg.status,
-            source: msg.source // Ensure source is mapped
+            source: msg.source,
+            is_faq_answer: isFaqAnswer,
+            appended_opt_in_prompt: appendedOptInPrompt,
           };
         }).filter(Boolean) as TimelineEntry[];
 
-      newTimelineEntries.sort((a, b) => {
-        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : null;
-        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : null;
-        const validTimeA = timeA !== null && !isNaN(timeA) ? timeA : null;
-        const validTimeB = timeB !== null && !isNaN(timeB) ? timeB : null;
-        if (validTimeA === null && validTimeB === null) return String(a.id).localeCompare(String(b.id));
-        if (validTimeA === null) return 1;
-        if (validTimeB === null) return -1;
+
+      const aiDraftEntries: TimelineEntry[] = (currentCustomerData.messages || [])
+        .filter(msg => msg.type === 'ai_draft' && msg.source === 'ai_draft_suggestion' && !msg.is_hidden)
+        .map((msg: BackendMessage): TimelineEntry | null => {
+          if (typeof msg.id === 'undefined') return null;
+
+          let draftContent = "";
+          if (typeof msg.content === 'string') {
+            try {
+              const parsed = JSON.parse(msg.content);
+              if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
+                draftContent = parsed.text;
+              } else {
+                draftContent = msg.content;
+              }
+            } catch (e) {
+              draftContent = msg.content;
+            }
+          } else if (typeof msg.content === 'object' && msg.content !== null && typeof (msg.content as any).text === 'string') {
+            draftContent = (msg.content as any).text;
+          } else if (msg.ai_response) {
+            draftContent = msg.ai_response;
+          } else if (msg.response) {
+            draftContent = msg.response;
+          } else {
+            draftContent = "Error loading draft content.";
+          }
+
+          return {
+            id: `eng-ai-${msg.id}`,
+            type: 'ai_draft',
+            content: draftContent,
+            timestamp: msg.scheduled_time || msg.sent_time || null,
+            customer_id: currentCustomerData.customer_id,
+            is_hidden: false,
+            status: msg.status,
+            source: msg.source || 'ai_draft_suggestion',
+          }
+        }).filter(Boolean) as TimelineEntry[];
+
+
+      const combinedTimelineEntries = [...newTimelineEntries, ...aiDraftEntries];
+
+      // Explicitly type the sort callback parameters and return type
+      combinedTimelineEntries.sort((a: TimelineEntry, b: TimelineEntry): number => {
+        const timeNumA = a.timestamp ? parseISO(a.timestamp).getTime() : NaN;
+        const timeNumB = b.timestamp ? parseISO(b.timestamp).getTime() : NaN;
+
+        const validTimeA = !isNaN(timeNumA) ? timeNumA : (a.type === 'ai_draft' ? Infinity : 0);
+        const validTimeB = !isNaN(timeNumB) ? timeNumB : (b.type === 'ai_draft' ? Infinity : 0);
+
+        if (validTimeA === Infinity && validTimeB === Infinity) {
+          if (a.id != null && b.id != null) {
+            const idAAsString = a.id.toString();
+            const idBAsString = b.id.toString();
+            return idAAsString.localeCompare(idBAsString);
+          }
+          return 0;
+        }
+        if (validTimeA === Infinity) return 1;
+        if (validTimeB === Infinity) return -1;
+
+        if (validTimeA === 0 && validTimeB === 0) {
+          if (a.id != null && b.id != null) {
+            const idAAsString = a.id.toString();
+            const idBAsString = b.id.toString();
+            return idAAsString.localeCompare(idBAsString);
+          }
+          return 0;
+        }
+        if (validTimeA === 0) return -1;
+        if (validTimeB === 0) return 1;
+
         return validTimeA - validTimeB;
       });
+
+      setTimelineEntries(combinedTimelineEntries);
     }
-    setTimelineEntries(newTimelineEntries);
   }, [customerSummaries, activeCustomerId]);
+
+
+  useEffect(() => {
+    setNewMessage("");
+    setSelectedDraftId(null);
+    if (activeCustomerId && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [activeCustomerId]);
 
   const handleSendMessage = async () => {
     const messageToSend = newMessage.trim();
     if (!messageToSend || isSending) return;
+
+    const currentCust = customerSummaries.find(cs => cs.customer_id === activeCustomerId);
+    if (currentCust && !currentCust.opted_in && currentCust.consent_status !== 'pending_opt_in') {
+      setSendError(`Cannot send message: ${currentCust.customer_name} has not opted in.`);
+      return;
+    }
+
     setIsSending(true);
     setSendError(null);
-    const isSendingDraft = selectedDraftId != null && activeCustomerId;
+    const isSendingDraft = selectedDraftId != null;
     const targetCustomerId = activeCustomerId;
     if (!targetCustomerId) {
-        setSendError("No active customer selected.");
-        setIsSending(false);
-        return;
+      setSendError("No active customer selected.");
+      setIsSending(false);
+      return;
     }
+
     try {
       if (isSendingDraft && selectedDraftId) {
         let numericIdToSend: number;
-        if (typeof selectedDraftId === 'string') {
-          const match = selectedDraftId.match(/\d+$/);
-          if (match) {
-            numericIdToSend = parseInt(match[0], 10);
-          } else {
-            console.error("Could not parse numeric ID from selectedDraftId:", selectedDraftId);
-            setSendError("Error: Could not identify the draft to send.");
-            setIsSending(false);
-            return;
-          }
-        } else {
+        if (typeof selectedDraftId === 'string' && selectedDraftId.startsWith('eng-ai-')) {
+          numericIdToSend = parseInt(selectedDraftId.replace('eng-ai-', ''), 10);
+        } else if (typeof selectedDraftId === 'number') {
           numericIdToSend = selectedDraftId;
+        } else {
+          setSendError("Error: Could not identify the draft to send.");
+          setIsSending(false);
+          return;
+        }
+
+        if (isNaN(numericIdToSend)) {
+          setSendError("Error: Invalid draft ID.");
+          setIsSending(false);
+          return;
         }
         await apiClient.put(`/engagement-workflow/reply/${numericIdToSend}/send`, { updated_content: messageToSend });
+
       } else {
         await apiClient.post(`/conversations/customer/${targetCustomerId}/reply`, { message: messageToSend });
       }
+
       setNewMessage("");
       setSelectedDraftId(null);
-      if (inputRef.current) inputRef.current.focus();
+      setTimeout(() => {
+        if (chatContainerRef.current) {
+          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+        }
+        if (inputRef.current) inputRef.current.focus();
+      }, 0);
+
       if (businessId) await fetchAndSetCustomerSummaries(businessId);
       setLastSeenMap(prev => ({ ...prev, [targetCustomerId]: new Date().toISOString() }));
+
     } catch (err: any) {
       const response = err?.response;
       const status = response?.status;
       const detail = response?.data?.detail || err.message || "An error occurred.";
       setSendError(`Failed to send: ${detail}. Status: ${status || 'N/A'}`);
-      if ((status === 409 || status === 404) && businessId) {
+      if ((status === 403 || status === 409 || status === 404) && businessId) {
         await fetchAndSetCustomerSummaries(businessId);
       }
     } finally {
@@ -286,43 +453,45 @@ export default function InboxPage() {
   };
 
   const handleEditDraft = (draft: TimelineEntry) => {
-    // Ensure we only allow editing actual drafts
-    if (draft.type === 'ai_draft' && draft.source === 'ai_draft_suggestion' && draft.customer_id === activeCustomerId) {
+    if (draft.type === 'ai_draft' && draft.customer_id === activeCustomerId) {
       setSelectedDraftId(draft.id);
-      setNewMessage(draft.content); // This will now be the processed string content
-      if (inputRef.current) inputRef.current.focus();
+      setNewMessage(draft.content);
+      setTimeout(() => {
+        if (chatContainerRef.current) {
+          const draftElement = chatContainerRef.current.querySelector(`[data-message-id="${draft.id}"]`);
+          if (draftElement) {
+            draftElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+        if (inputRef.current) inputRef.current.focus();
+      }, 0);
+    } else {
+      console.warn("Attempted to edit a non-draft message or for a non-active customer:", draft);
     }
   };
 
   const handleDeleteDraft = async (draftTimelineEntryId: string | number) => {
     let numericDraftId: number;
 
-    if (typeof draftTimelineEntryId === 'string') {
-      if (draftTimelineEntryId.startsWith('eng-ai-')) {
-        numericDraftId = parseInt(draftTimelineEntryId.replace('eng-ai-', ''), 10);
-      } else {
-        const match = draftTimelineEntryId.match(/\d+$/);
-        numericDraftId = match ? parseInt(match[0], 10) : NaN;
-      }
+    if (typeof draftTimelineEntryId === 'string' && draftTimelineEntryId.startsWith('eng-ai-')) {
+      numericDraftId = parseInt(draftTimelineEntryId.replace('eng-ai-', ''), 10);
     } else if (typeof draftTimelineEntryId === 'number') {
       numericDraftId = draftTimelineEntryId;
-    } else {
-      console.error("[InboxPage] Invalid draft ID format for deletion:", draftTimelineEntryId);
+    }
+    else {
       alert("Cannot delete draft: Invalid ID format.");
       return;
     }
 
     if (isNaN(numericDraftId)) {
-        console.error("[InboxPage] Could not parse a valid numeric ID from draft ID:", draftTimelineEntryId);
-        alert("Cannot delete draft: ID is not a valid number after parsing.");
-        return;
+      alert("Cannot delete draft: ID is not a valid number after parsing.");
+      return;
     }
 
-    // Check if the entry is actually a deletable draft before confirming
     const entryToDelete = timelineEntries.find(e => e.id === draftTimelineEntryId);
-    if (!(entryToDelete && entryToDelete.type === 'ai_draft' && entryToDelete.source === 'ai_draft_suggestion')) { // Changed to 'ai_draft_suggestion' for consistency if this is the intended source for drafts
-        alert("This message is not a draft and cannot be deleted this way.");
-        return;
+    if (!(entryToDelete && entryToDelete.type === 'ai_draft')) {
+      alert("This message is not a draft and cannot be deleted this way.");
+      return;
     }
 
     if (window.confirm("Delete this draft? This action cannot be undone.")) {
@@ -333,11 +502,7 @@ export default function InboxPage() {
           setNewMessage("");
           setSelectedDraftId(null);
         }
-        if (businessId) {
-            await fetchAndSetCustomerSummaries(businessId);
-        }
       } catch (err: any) {
-        console.error("[InboxPage] ❌ API call to delete draft failed:", err);
         const errorDetail = err.response?.data?.detail || err.message || "An unknown error occurred.";
         alert(`Failed to delete draft: ${errorDetail}`);
       }
@@ -348,22 +513,53 @@ export default function InboxPage() {
     return customerSummaries.find(cs => cs.customer_id === activeCustomerId);
   }, [customerSummaries, activeCustomerId]);
 
-  if (isLoading && !customerSummaries.length) {
+  useEffect(() => {
+    if (customerSummaries.length > 0 && !activeCustomerId) {
+      const urlCustomerIdString = searchParams.get('activeCustomer');
+      if (urlCustomerIdString) {
+        const urlCustomerId = parseInt(urlCustomerIdString, 10);
+        const customerExists = customerSummaries.some(cs => cs.customer_id === urlCustomerId);
+        if (customerExists) {
+          setActiveCustomerId(urlCustomerId);
+        } else {
+          setActiveCustomerId(customerSummaries[0].customer_id);
+        }
+      } else {
+        setActiveCustomerId(customerSummaries[0].customer_id);
+      }
+    }
+    if (activeCustomerId && searchParams.get('activeCustomer') === String(activeCustomerId)) {
+      const urlEngagementId = searchParams.get('engagementId');
+      if (urlEngagementId && chatContainerRef.current) {
+        const engagementElement = chatContainerRef.current.querySelector(`[data-message-id="${urlEngagementId}"], [data-message-id="eng-ai-${urlEngagementId}"]`);
+        if (engagementElement) {
+          setTimeout(() => {
+            engagementElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 200);
+        }
+      }
+    }
+
+  }, [customerSummaries, searchParams, activeCustomerId]);
+
+
+  if (isLoading && customerSummaries.length === 0) {
     return <div className="h-screen flex items-center justify-center bg-[#0B0E1C] text-white text-lg">Loading Inbox... <span className="animate-pulse">⏳</span></div>;
   }
 
-  if (fetchError && !customerSummaries.length) {
+  if (fetchError && customerSummaries.length === 0) {
     return <div className="h-screen flex flex-col items-center justify-center bg-[#0B0E1C] text-red-400 p-4 text-center">
-        <AlertCircle className="w-12 h-12 mb-3 text-red-500"/>
-        <p className="text-xl font-semibold">Oops! Something went wrong.</p>
-        <p className="text-sm mt-1">{fetchError}</p>
-        <p className="text-xs mt-3">Please try refreshing the page. If the problem persists, contact support.</p>
+      <AlertCircle className="w-12 h-12 mb-3 text-red-500" />
+      <p className="text-xl font-semibold">Oops! Something went wrong.</p>
+      <p className="text-sm mt-1">{fetchError}</p>
+      <p className="text-xs mt-3">Please try refreshing the page. If the problem persists, contact support.</p>
     </div>;
   }
 
+
   return (
     <div className="h-screen flex md:flex-row flex-col bg-[#0B0E1C]">
-      <div className="md:hidden flex items-center justify-between p-4 bg-[#1A1D2D] border-b border-[#2A2F45]">
+      <div className="md:hidden flex items-center justify-between p-4 bg-[#1A1D2D] border-b border-[#2A2F45] shrink-0">
         <h1 className="text-xl font-semibold text-white">Inbox</h1>
         <button
           onClick={() => setShowMobileDrawer(!showMobileDrawer)}
@@ -379,9 +575,10 @@ export default function InboxPage() {
         "md:relative fixed inset-0 z-30 md:z-auto",
         "transition-transform duration-300 ease-in-out",
         showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0",
-        "flex flex-col h-full"
+        "flex flex-col h-full",
+        "overflow-y-auto"
       )}>
-        <div className="flex justify-between items-center p-4 border-b border-[#2A2F45]">
+        <div className="flex justify-between items-center p-4 border-b border-[#2A2F45] shrink-0">
           <h2 className="text-xl font-semibold text-white">{showMobileDrawer ? "Contacts" : "Inbox"}</h2>
           {showMobileDrawer && (
             <button
@@ -396,204 +593,171 @@ export default function InboxPage() {
 
         <div className="flex-1 overflow-y-auto">
           {customerSummaries.length === 0 && !isLoading && (
-            <p className="p-4 text-gray-400 text-center">No conversations yet. Add contacts to begin.</p>
+            <p className="p-4 text-gray-400 text-center">No conversations yet.</p>
           )}
           {customerSummaries.map((cs) => {
-            // The previewText logic in fetchAndSetCustomerSummaries already handles content parsing
             const previewText = cs.content || "No recent messages";
+            const customerLastSeenString = lastSeenMap[cs.customer_id];
+            const messageTimestampString = cs.sent_time;
+
+            let isUnread = false;
+            if (messageTimestampString && cs.messages && cs.messages.length > 0) {
+              const messageDate = parseISO(messageTimestampString);
+              if (isValid(messageDate)) {
+                const lastSeenDate = customerLastSeenString ? parseISO(customerLastSeenString) : null;
+                if (!lastSeenDate || !isValid(lastSeenDate) || messageDate.getTime() > lastSeenDate.getTime()) {
+                  isUnread = true;
+                }
+              }
+            }
+            if (cs.customer_id === activeCustomerId) {
+              isUnread = false;
+            }
+
             return (
-                <div
+              <button
                 key={cs.customer_id}
                 onClick={() => {
-                    setActiveCustomerId(cs.customer_id);
-                    setSelectedDraftId(null);
-                    setNewMessage("");
-                    setLastSeenMap(prev => ({ ...prev, [cs.customer_id]: new Date().toISOString() }));
-                    if (showMobileDrawer) setShowMobileDrawer(false);
+                  setActiveCustomerId(cs.customer_id);
+                  setShowMobileDrawer(false);
+                  setLastSeenMap(prev => ({ ...prev, [cs.customer_id]: new Date().toISOString() }));
                 }}
                 className={clsx(
-                    "p-4 cursor-pointer border-b border-[#2A2F45] last:border-b-0",
-                    "hover:bg-[#242842] transition-colors",
-                    cs.customer_id === activeCustomerId && "bg-[#242842]"
+                  "w-full text-left p-3 hover:bg-[#242842] transition-colors border-b border-[#2A2F45]",
+                  activeCustomerId === cs.customer_id ? "bg-[#2A2F45] ring-2 ring-blue-500" : "bg-transparent",
                 )}
-                >
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
-                    {cs.customer_name?.[0]?.toUpperCase() || '?'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                        <span className="font-medium text-white truncate">
-                        {cs.customer_name || 'Unknown Customer'}
-                        </span>
-                    </div>
-                    <p className="text-sm text-gray-400 truncate">
-                        {previewText}
-                    </p>
-                    </div>
+              >
+                <div className="flex justify-between items-center">
+                  <h3 className={clsx("text-sm text-white truncate", isUnread ? "font-semibold" : "font-medium")}>
+                    {cs.customer_name || "Unknown Customer"}
+                  </h3>
+                  {cs.sent_time && (
+                    <span className={clsx("text-xs whitespace-nowrap ml-2", isUnread ? "text-blue-400" : "text-gray-400")}>
+                      {formatDate(cs.sent_time)}
+                    </span>
+                  )}
                 </div>
-                </div>
+                <p className={clsx("text-xs truncate mt-1", isUnread ? "text-gray-200" : "text-gray-400")}>
+                  {previewText}
+                </p>
+              </button>
             );
-            })}
+          })}
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col h-[calc(100vh-4rem)] md:h-screen">
-        {currentCustomer ? (
+      <main className="flex-1 flex flex-col bg-[#0F1221] h-full md:h-auto md:min-h-0">
+        {activeCustomerId && currentCustomer ? (
           <>
-            <div className="bg-[#1A1D2D] border-b border-[#2A2F45] p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-white font-medium">
-                  {currentCustomer.customer_name[0]?.toUpperCase() || '?'}
-                </div>
-                <div>
-                  <h1 className="text-lg font-semibold text-white">{currentCustomer.customer_name}</h1>
-                  <span className={clsx(
-                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
-                    currentCustomer.opted_in ? "bg-emerald-400/10 text-emerald-400" : "bg-red-400/10 text-red-400"
-                  )}>
-                    {currentCustomer.opted_in ? <><Check className="w-3 h-3" /> Opted In</> : <><AlertCircle className="w-3 h-3" /> Not Opted In</>}
-                  </span>
-                </div>
-              </div>
+            <div className="p-4 bg-[#1A1D2D] border-b border-[#2A2F45] shrink-0">
+              <h3 className="text-lg font-semibold text-white">{currentCustomer.customer_name}</h3>
+              <p className="text-xs text-gray-400">{currentCustomer.phone} -
+                <span className={clsx("ml-1", currentCustomer.opted_in ? "text-green-400" : "text-red-400")}>
+                  {currentCustomer.consent_status === 'pending_opt_in' ? 'Pending Opt-In' : (currentCustomer.opted_in ? 'Opted-In' : 'Opted-Out')}
+                </span>
+                {currentCustomer.consent_updated && <span className="ml-2"> (Updated: {formatDate(currentCustomer.consent_updated)})</span>}
+              </p>
             </div>
 
-            <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-2">
-              {timelineEntries.map((entry, index) => {
-                const isActualDraft = entry.type === "ai_draft" && entry.source === "ai_draft_suggestion"; // Assuming 'ai_draft_suggestion' for actual drafts
-                const isSentByBusiness = entry.type === "sent";
+            <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#0B0E1C]">
+              {timelineEntries.map((entry) => (
+                <div
+                  key={entry.id}
+                  data-message-id={entry.id}
+                  className={clsx(
+                    "p-3 rounded-lg max-w-[70%] break-words text-sm shadow",
+                    {
+                      "bg-[#2A2F45] text-white self-start mr-auto": entry.type === "customer",
+                      "bg-blue-600 text-white self-end ml-auto": entry.type === "sent" || entry.type === "outbound_ai_reply",
+                      "bg-yellow-500 text-black self-end ml-auto": entry.type === "ai_draft",
+                      "bg-gray-500 text-white self-end ml-auto": entry.type === "scheduled" || entry.type === "scheduled_pending",
+                      "bg-red-700 text-white self-end ml-auto": entry.type === "failed_to_send",
+                      "bg-purple-600 text-white self-start mr-auto": entry.type === "unknown_business_message",
+                    },
+                    "flex flex-col"
+                  )}
+                >
+                  <p className="whitespace-pre-wrap">{entry.content}</p>
+                  {entry.timestamp && (
+                    <span className="text-xs text-gray-300 mt-1 self-end opacity-80">
+                      {formatMessageTimestamp(entry.timestamp)}
+                      {entry.type === 'sent' && entry.status === 'delivered' && <CheckCheck className="inline-block w-4 h-4 ml-1 text-green-300" />}
+                      {entry.type === 'sent' && (entry.status === 'sent' || entry.status === 'accepted') && <Check className="inline-block w-4 h-4 ml-1 text-gray-300" />}
+                      {entry.type === 'sent' && entry.status === 'queued' && <Clock className="inline-block w-3 h-3 ml-1 text-gray-300" />}
+                      {(entry.type === 'scheduled' || entry.type === 'scheduled_pending') && <Clock className="inline-block w-3 h-3 ml-1" />}
+                      {entry.type === 'failed_to_send' && <AlertCircle className="inline-block w-3 h-3 ml-1 text-red-300" />}
+                    </span>
+                  )}
 
-                return (
-                  // --- FIX 2: MODIFIED MESSAGE BUBBLE RENDERING START ---
-                  <div
-                    key={`${entry.type}-${entry.id}-${index}`} // Consider using just entry.id if unique enough
-                    className={clsx(
-                        "flex flex-col w-full mb-1", // mb-1 provides spacing between distinct bubbles
-                        entry.type === "customer" ? "items-start" : "items-end")}
-                  >
-                    { (index === 0 || (entry.timestamp && timelineEntries[index-1]?.timestamp && new Date(entry.timestamp).toDateString() !== new Date(timelineEntries[index-1].timestamp!).toDateString())) && entry.timestamp && (
-                          <div className="text-xs text-gray-500 my-3 self-center px-2 py-0.5 bg-[#1A1D2D] border border-[#2A2F45] rounded-full">
-                             {new Date(entry.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-                          </div>
-                      )}
-                    <div className={clsx(
-                      "max-w-[80%] md:max-w-[70%] px-3.5 py-2 rounded-2xl shadow", // rounded-2xl applies roundness to all corners
-                      entry.type === "customer" ? "bg-gradient-to-r from-emerald-500 to-blue-500 text-white" : // Removed rounded-br-none
-                      isSentByBusiness ? "bg-[#242842] text-white" : // Removed rounded-bl-none
-                      isActualDraft ? "bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white" : // Removed rounded-bl-none
-                      "bg-[#242842] text-white" // Removed rounded-bl-none
-                    )}>
-                      {isActualDraft && (
-                        <div className="text-xs font-semibold mb-1 text-purple-200">💡 Draft Reply</div>
-                      )}
-                      <div className="whitespace-pre-wrap break-words text-sm">{entry.content}</div>
+                  {entry.is_faq_answer && <p className="text-xs text-blue-300 mt-1 italic self-start"> (Auto-reply: FAQ)</p>}
+                  {entry.appended_opt_in_prompt && <p className="text-xs text-gray-400 mt-1 italic self-start"> (Opt-in prompt included)</p>}
 
-                      {(entry.type === "sent" || entry.type === "customer") && entry.timestamp && (
-                        <div className={clsx(
-                          "text-xs mt-1.5 flex items-center gap-1",
-                          entry.type === "customer" ? "text-gray-200/70 justify-start" : "text-gray-400/70 justify-end",
-                        )}>
-                          <Clock className="w-2.5 h-2.5" />
-                          <span>
-                            {new Date(entry.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
-                          </span>
-                          {isSentByBusiness && entry.status === "sent" && (
-                            <Check className="w-3.5 h-3.5 text-sky-400 ml-0.5" />
-                          )}
-                          {isSentByBusiness && entry.status === "auto_replied_faq" && (
-                            <CheckCheck className="w-3.5 h-3.5 text-emerald-400 ml-0.5" />
-                          )}
-                        </div>
-                      )}
-                      {isActualDraft && (
-                        <div className="mt-2 flex items-center gap-3 border-t border-white/10 pt-2">
-                          <button
-                            onClick={() => handleEditDraft(entry)}
-                            className="text-xs font-medium text-purple-200 hover:text-white flex items-center gap-1 transition-colors p-1 hover:bg-white/10 rounded"
-                            aria-label="Edit draft"
-                          >
-                            <Edit3 className="w-3 h-3" /> Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteDraft(entry.id)}
-                            className="text-xs font-medium text-purple-200 hover:text-white flex items-center gap-1 transition-colors p-1 hover:bg-white/10 rounded"
-                            aria-label="Delete draft"
-                          >
-                            <Trash2 className="w-3 h-3" /> Delete
-                          </button>
-                        </div>
-                      )}
+
+                  {entry.type === "ai_draft" && entry.customer_id === activeCustomerId && (
+                    <div className="flex gap-2 mt-2 self-end">
+                      <button
+                        onClick={() => handleEditDraft(entry)}
+                        className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors"
+                        title="Edit Draft"
+                      >
+                        <Edit3 size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteDraft(entry.id)}
+                        className="p-1.5 bg-red-800 hover:bg-red-700 rounded text-white transition-colors"
+                        title="Delete Draft"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                  </div>
-                  // --- FIX 2: MODIFIED MESSAGE BUBBLE RENDERING END ---
-                )
-              })}
-               {timelineEntries.length === 0 && (
-                    <div className="text-center text-gray-400 py-10">No messages in this conversation yet.</div>
-                )}
+                  )}
+                </div>
+              ))}
             </div>
 
-            <div className="bg-[#1A1D2D] border-t border-[#2A2F45] p-4">
-              {!currentCustomer.opted_in && (
-                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg px-4 py-3 mb-3 gap-2">
-                    <div className="flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 shrink-0" />
-                        <span className="text-sm">Messaging blocked: Customer has not opted in.</span>
-                    </div>
-                    <button
-                        onClick={async () => {
-                        if (!activeCustomerId) return;
-                        try {
-                            await apiClient.post(`/consent/resend-optin/${activeCustomerId}`);
-                            alert("A new opt-in request has been sent to the customer.");
-                        } catch (err) {
-                            alert("Failed to resend opt-in request. Please try again.");
-                        }
-                        }}
-                        className="w-full sm:w-auto bg-[#242842] hover:bg-[#2A2F45] text-white text-xs px-3 py-1.5 rounded-md transition-colors whitespace-nowrap"
-                    >
-                        💌 Request Opt-In
-                    </button>
-                </div>
-              )}
-              <div className="flex gap-2">
+            <div className="p-4 bg-[#1A1D2D] border-t border-[#2A2F45] shrink-0">
+              {sendError && <p className="text-xs text-red-400 mb-2">{sendError}</p>}
+              <div className="flex items-center gap-2">
                 <input
                   ref={inputRef}
+                  type="text"
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyPress={(e) => { if (e.key === 'Enter' && !isSending && newMessage.trim() && currentCustomer.opted_in) handleSendMessage(); }}
-                  placeholder={currentCustomer.opted_in ? "Type your message..." : "Customer not opted in"}
-                  className="flex-1 bg-[#242842] border border-[#2A2F45] px-4 py-3 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all text-sm"
-                  disabled={!currentCustomer.opted_in || isSending}
+                  onKeyPress={(e) => e.key === "Enter" && !isSending && handleSendMessage()}
+                  placeholder={selectedDraftId ? "Edit draft..." : "Type a message..."}
+                  className="flex-1 p-2 bg-[#2A2F45] border border-[#3B3F58] rounded-lg text-white placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  disabled={isSending || (!currentCustomer?.opted_in && currentCustomer?.consent_status !== 'pending_opt_in')}
                 />
                 <button
                   onClick={handleSendMessage}
-                  disabled={isSending || !newMessage.trim() || !currentCustomer.opted_in}
-                  className={clsx(
-                    "p-3 rounded-lg transition-all duration-200",
-                    "bg-gradient-to-r from-emerald-500 to-blue-500 hover:opacity-90",
-                    (isSending || !newMessage.trim() || !currentCustomer.opted_in) && "opacity-50 cursor-not-allowed",
-                    isSending && "animate-pulse"
-                  )}
-                  aria-label="Send message"
+                  disabled={isSending || (!newMessage.trim() && !selectedDraftId) || (!currentCustomer?.opted_in && currentCustomer?.consent_status !== 'pending_opt_in')}
+                  className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white disabled:opacity-50 transition-colors"
                 >
-                  <Send className="w-5 h-5 text-white" />
+                  {isSending ? <Clock className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
                 </button>
               </div>
-              {sendError && (
-                <div className="text-xs text-red-400 mt-2 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> {sendError}
-                </div>
+              {selectedDraftId && (
+                <button
+                  onClick={() => { setNewMessage(""); setSelectedDraftId(null); if (inputRef.current) inputRef.current.focus(); }}
+                  className="text-xs text-gray-400 hover:text-gray-200 mt-1"
+                >
+                  Cancel edit
+                </button>
+              )}
+              {!currentCustomer?.opted_in && currentCustomer?.consent_status !== 'pending_opt_in' && (
+                <p className="text-xs text-red-400 mt-1">
+                  Cannot send messages. Customer has not opted in.
+                </p>
               )}
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-500 p-8 text-center">
-            <MessageSquare className="w-16 h-16 mb-4 opacity-50" />
-            <p className="text-xl font-semibold">Select a conversation</p>
-            <p className="text-sm mt-1">Choose a contact from the list to see your message history.</p>
-            {customerSummaries.length === 0 && !isLoading && (
-                 <p className="text-sm mt-2">No contacts found. Add contacts from the "Contacts" page to begin.</p>
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-4">
+            <MessageCircle className="w-16 h-16 mb-4 text-gray-500" />
+            <p className="text-lg">Select a conversation</p>
+            <p className="text-sm">Choose a customer from the list to view messages.</p>
+            {customerSummaries.length === 0 && !isLoading && !fetchError && (
+              <p className="text-sm mt-2">No conversations to display.</p>
             )}
           </div>
         )}
