@@ -1,12 +1,14 @@
 # backend/app/routes/customer_routes.py
 
 # --- Standard Imports ---
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session, joinedload # Added joinedload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, func, desc # Added func
 from datetime import datetime
 from typing import Optional, List
+from app import schemas, models, auth # Make sure models is imported
+
 import logging
 
 # --- Pydantic Imports ---
@@ -59,64 +61,84 @@ def get_consent_service(db: Session = Depends(get_db)) -> ConsentService:
     """Dependency injector for ConsentService."""
     return ConsentService(db)
 
-
-# === Existing Customer CRUD Routes ===
-
-# --- Route to create a new customer ---
-@router.post("/", response_model=Customer)
-async def create_customer( # Keep async if needed for consent_service call
-    customer: CustomerCreate,
-    db: Session = Depends(get_db),
-    consent_service: ConsentService = Depends(get_consent_service)
+@router.post("/", response_model=schemas.Customer, status_code=status.HTTP_201_CREATED)
+async def create_customer(
+    customer_data: schemas.CustomerCreate, # customer_data contains business_id
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+    # Removed: current_business_schema: schemas.BusinessProfile = Depends(auth.get_current_user)
+    # If you use get_consent_service dependency:
+    # consent_service_dependency: ConsentService = Depends(get_consent_service)
 ):
-    """
-    Creates a new customer record and triggers the double opt-in SMS process.
-    """
-    # ... (Keep your full implementation for create_customer as provided before) ...
-    logger.info(f"Received request to create customer: {customer.customer_name} ({customer.phone}) for business {customer.business_id}")
-    existing_customer = db.query(CustomerModel).filter(
-         CustomerModel.phone == customer.phone,
-         CustomerModel.business_id == customer.business_id
+    logger.info(f"Received request to create customer: {customer_data.customer_name} ({customer_data.phone}) for business {customer_data.business_id}")
+
+    # --- MODIFICATION: Fetch BusinessProfile using business_id from payload ---
+    business_profile = db.query(models.BusinessProfile).filter(models.BusinessProfile.id == customer_data.business_id).first()
+    if not business_profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Business with ID {customer_data.business_id} not found."
+        )
+    # --- END MODIFICATION ---
+
+    existing_customer = db.query(models.Customer).filter(
+        models.Customer.phone == customer_data.phone,
+        models.Customer.business_id == customer_data.business_id # Use business_id from payload
     ).first()
+
     if existing_customer:
-         logger.warning(f"Attempt to create duplicate customer phone {customer.phone} for business {customer.business_id}")
-         raise HTTPException(
-             status_code=status.HTTP_409_CONFLICT,
-             detail="Customer with this phone number already exists for this business."
-         )
-    db_customer = CustomerModel(**customer.model_dump())
-    if db_customer.opted_in is None:
-        db_customer.opted_in = False
+        logger.warning(f"Customer with phone {customer_data.phone} already exists for business {customer_data.business_id}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Customer with this phone number already exists for this business."
+        )
+
+    # business_id from customer_data is used here implicitly by **customer_data.model_dump()
+    # or explicitly if models.Customer requires it separately.
+    # Assuming schemas.CustomerCreate includes business_id and models.Customer accepts it.
+    db_customer_dict = customer_data.model_dump()
+    # Ensure business_id from the payload is used if it's not already part of the model_dump for model creation
+    if 'business_id' not in db_customer_dict:
+         db_customer_dict['business_id'] = customer_data.business_id
+    
+    db_customer = models.Customer(**db_customer_dict)
+    
+    if not hasattr(db_customer, 'sms_opt_in_status') or db_customer.sms_opt_in_status is None:
+        db_customer.sms_opt_in_status = models.OptInStatus.NOT_SET.value
+
     db.add(db_customer)
     try:
         db.commit()
         db.refresh(db_customer)
         logger.info(f"Customer created successfully (ID: {db_customer.id}) for business {db_customer.business_id}")
+    except IntegrityError as e:
+        db.rollback()
+        logger.error(f"Database integrity error creating customer for business {db_customer.business_id}: {e}", exc_info=True)
+        if "unique constraint" in str(e).lower() or "duplicate key" in str(e).lower():
+             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A customer with this phone number might already exist or another unique field conflicts.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save customer due to a database issue.")
     except Exception as e:
         db.rollback()
-        logger.error(f"Database error creating customer {customer.phone} for business {customer.business_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to save customer record.")
-    try:
-        logger.info(f"Attempting to send double opt-in SMS to customer ID: {db_customer.id} (Phone: {db_customer.phone}) for Business ID: {db_customer.business_id}")
-        optin_result = await consent_service.send_double_optin_sms(
-            customer_id=db_customer.id,
-            business_id=db_customer.business_id
-        )
-        if optin_result and optin_result.get("success"):
-             logger.info(f"Successfully initiated double opt-in process for customer {db_customer.id}. Message SID: {optin_result.get('message_sid')}")
-        else:
-             error_msg = optin_result.get('message', 'Unknown reason') if isinstance(optin_result, dict) else 'Unknown error structure'
-             logger.error(f"Failed to send double opt-in SMS for customer {db_customer.id}: {error_msg}")
-    except Exception as e:
-        logger.error(f"Unexpected error triggering double opt-in SMS for customer {db_customer.id}: {e}", exc_info=True)
-    # --- Ensure tags are loaded if needed for response (usually empty for new customer) ---
-    # Force load tags or rely on the fact they will be empty
-    db.refresh(db_customer, attribute_names=['tags']) # Explicitly load if needed
-    customer_response = Customer.from_orm(db_customer)
-    # Ensure tags attribute exists, default to empty list if not loaded
-    if not hasattr(customer_response, 'tags'):
-        customer_response.tags = []
-    return customer_response
+        logger.error(f"Database error creating customer {customer_data.phone} for business {db_customer.business_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save customer record.")
+
+    # --- Conditional Double Opt-In using fetched business_profile ---
+    if business_profile.twilio_number and business_profile.messaging_service_sid:
+        logger.info(f"Business {business_profile.id} is configured for SMS. Attempting to send double opt-in SMS to customer ID: {db_customer.id} (Phone: {db_customer.phone})")
+        consent_service = ConsentService(db) # Instantiate service locally
+        try:
+            background_tasks.add_task(
+                consent_service.send_double_optin_sms,
+                customer_id=db_customer.id,
+                business_id=business_profile.id # Use ID from fetched business_profile
+            )
+        except Exception as e:
+            logger.error(f"Failed to schedule double opt-in SMS for customer {db_customer.id}: {e}", exc_info=True)
+    else:
+        logger.info(f"Business {business_profile.id} is NOT fully configured for SMS (missing twilio_number or messaging_service_sid). Skipping automatic double opt-in for customer {db_customer.id}.")
+    
+    return db_customer # FastAPI will convert models.Customer to schemas.Customer
+
 
 
 # --- Route to get a list of all customers (paginated) ---
