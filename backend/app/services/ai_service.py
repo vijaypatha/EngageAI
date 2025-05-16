@@ -238,7 +238,7 @@ Output ONLY the JSON object with the 'messages' array.
             logger.info(f"ℹ️ Processing {len(ai_message_list)} DRAFT messages using Business Timezone: {business_tz_str}")
 
             for idx, msg_data in enumerate(ai_message_list):
-                if not isinstance(msg_data, dict) or not all(k in msg_data for k in ["message", "days_from_today", "purpose"]):
+                if not isinstance(msg_data, dict) or not all(k in msg_data for k in ["content", "days_from_today", "purpose"]):
                     logger.warning(f"⚠️ Skipping invalid draft message item at index {idx}: {msg_data}")
                     continue
                 try:
@@ -256,7 +256,7 @@ Output ONLY the JSON object with the 'messages' array.
                     logger.error(f"❌ Error calculating scheduled time for draft (days_from_today='{msg_data.get('days_from_today')}', index={idx}): {e}. Falling back.")
                     base_time = datetime.utcnow()
                     scheduled_time_utc = base_time + timedelta(days=int(msg_data.get("days_from_today", idx + 1)))
-                message_content = str(msg_data.get("message", ""))[:160]
+                message_content = str(msg_data.get("content", ""))[:160]
                 roadmap_draft = RoadmapMessage(
                     customer_id=customer.id,
                     business_id=business.id,

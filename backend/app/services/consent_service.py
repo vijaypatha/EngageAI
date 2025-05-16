@@ -47,8 +47,9 @@ class ConsentService:
 
             sid = await self.twilio_service.send_sms(
                 to=customer.phone,
-                message=message_content,
-                business=business
+                message_body=message_content,
+                business=business,
+                is_direct_reply=True
             )
 
             if not sid:
@@ -248,7 +249,10 @@ class ConsentService:
             )
 
             sid = await self.twilio_service.send_sms(
-                to=phone_number, message=message_content, business=business
+                to=phone_number, 
+                message_body=message_content, 
+                business=business,
+                is_direct_reply=True
             )
 
             if not sid:

@@ -52,6 +52,7 @@ class MessageStatusEnum(str, enum.Enum):
     APPROVED = "approved"
     REJECTED_DRAFT = "rejected_draft" # if a draft is rejected by owner
     MANUALLY_SENT = "manually_sent" # if owner edits and sends a draft
+    DRAFT = "draft"
 # --- END MODIFICATION: Define proper Enums ---
 
 
