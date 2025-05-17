@@ -102,9 +102,14 @@ export default function LandingPage() {
               {/* Logo shine effect applied. */}
             </div>
           </div>
-          <p className="text-xl md:text-2xl lg:text-3xl text-gray-300 mb-12 leading-relaxed max-w-2xl mx-auto font-medium">
-          Smart Guidance, Stronger Connections. <br className="hidden sm:block" />
-          AI Nudge delivers timely, personal SMS—automated in <span className="text-gradient">your authentic style</span>.
+          {/* Main Tagline - First Sentence */}
+          <h2 className="text-2xl md:text-3xl lg:text-4xl text-gray-100 mb-4 leading-tight max-w-3xl mx-auto font-semibold">
+            Client Engagement, Back to Basics. <span className="whitespace-nowrap">Powered by AI.</span>
+          </h2>
+
+          {/* Sub-Tagline - Second Sentence */}
+          <p className="text-lg md:text-xl lg:text-2xl text-gray-400 mb-12 leading-relaxed max-w-2xl mx-auto">
+            AI Nudge delivers timely, personal SMS—automated in <span className="text-gradient">your authentic style</span>.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
             <Link href="/onboarding" passHref>
