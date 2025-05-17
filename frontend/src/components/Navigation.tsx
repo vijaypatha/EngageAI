@@ -356,8 +356,8 @@ export function Navigation() {
                   <Image
                     src="/AI Nudge Logo.png"
                     alt="AI Nudge Logo"
-                    width={130} // Adjust as needed for the "More" menu
-                    height={26}
+                    width={180} // Adjust as needed for the "More" menu
+                    height={36}
                   />
                 </Link>
               </div>

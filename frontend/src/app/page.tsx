@@ -188,7 +188,7 @@ export default function LandingPage() {
           <p className="mt-16 md:mt-20 text-xl md:text-2xl text-center text-gray-300 font-medium max-w-3xl mx-auto leading-relaxed">
             AI Nudge <span className="text-gradient">learns your style</span>,
             sounds like <span className="text-gradient">you</span>,
-            and connects with <span className="text-gradient">them</span>.
+            and connects with your <span className="text-gradient">customers</span>.
           </p>
         </div>
       </section>
