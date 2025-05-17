@@ -16,6 +16,10 @@ from twilio.base.exceptions import TwilioRestException
 from app.config import settings
 from app.database import SessionLocal
 from app.models import BusinessProfile, Customer, Message, OptInStatus
+from app.models import BusinessProfile as BusinessProfileModel, Customer as CustomerModel, ConsentLog as ConsentLogModel, OptInStatus # Make sure OptInStatus is imported from models
+from app.schemas import normalize_phone_number # Ensure this is imported from schemas
+from app.config import settings # Ensure settings is imported
+from sqlalchemy import desc 
 
 
 
@@ -182,101 +186,150 @@ class TwilioService:
     async def send_sms(
         self,
         to: str,
-        message_body: str, # This parameter should ideally always be a string
-        business: BusinessProfile,
-        customer: Optional[Customer] = None,
-        is_direct_reply: bool = False # Flag if this is a direct reply to a customer's message
-    ) -> str:
+        message_body: str,
+        business: BusinessProfileModel,
+        customer: Optional[CustomerModel] = None,
+        is_direct_reply: bool = False,
+        is_owner_notification: bool = False # ADDED THIS NEW PARAMETER
+    ) -> Optional[str]: # Return type is Optional[str] for the SID or None on failure
+        db = self.db 
         log_prefix = f"[TwilioService.send_sms BIZ:{business.id} TO:{to}]"
 
-        # Safely get text content for logging preview
-        log_message_content = message_body
-        if isinstance(message_body, dict) and "text" in message_body:
-            log_message_content = message_body["text"]
-        elif not isinstance(message_body, str):
-            # Fallback for logging if it's unexpectedly not string or dict with 'text'
-            log_message_content = str(message_body)
-
-        # Use the safe logging variable for the log preview line
-        logger.info(f"{log_prefix} Attempting to send. Direct reply: {is_direct_reply}. Body: '{log_message_content[:50]}...'")
-
-
-        if not customer:
-            customer = self.db.query(Customer).filter(
-                Customer.phone == to,
-                Customer.business_id == business.id
-            ).first()
-
-        if not customer:
-            logger.error(f"{log_prefix} Customer not found for phone {to} and business ID {business.id}. Cannot send.")
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not registered with this business.")
-
-        # Consent check logic
-        # Direct replies (is_direct_reply=True) are allowed even if customer is not fully opted-in.
-        # Proactive messages (is_direct_reply=False) require OPTED_IN status.
-        if customer.sms_opt_in_status == OptInStatus.OPTED_OUT:
-            logger.warning(f"{log_prefix} Customer {customer.id} is OPTED_OUT. Message blocked. (Direct Reply: {is_direct_reply})")
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot send message: Customer has opted out.")
-
-        if not is_direct_reply and customer.sms_opt_in_status != OptInStatus.OPTED_IN:
-             logger.warning(
-                 f"{log_prefix} Attempted to send PROACTIVE SMS to customer {customer.id} "
-                 f"with status '{customer.sms_opt_in_status}'. Message blocked."
-             )
-             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot send message: Customer has not opted in for proactive messages.")
+        if not to or not message_body:
+            logger.error(f"{log_prefix} 'to' and 'message_body' are required.")
+            # Consider raising an exception or returning a more specific error indicator
+            # For now, returning None as per the function's signature.
+            raise ValueError("'to' and 'message_body' are required for send_sms")
 
 
         try:
-            if not self.client:
-                logger.error(f"{log_prefix} Twilio client not initialized.")
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SMS provider client not initialized.")
+            normalized_to_phone = normalize_phone_number(to)
+        except ValueError as e:
+            logger.error(f"{log_prefix} Invalid 'to' phone number: {to}. Error: {e}")
+            raise ValueError(f"Invalid 'to' phone number: {to}")
 
-            if not business.messaging_service_sid:
-                logger.error(f"{log_prefix} Missing messaging_service_sid for business_id={business.id}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="SMS Messaging Service is not configured for this business."
+
+        # Determine which messaging service SID to use
+        # If the business has its own Twilio number (meaning it went through onboarding step 5),
+        # it should also have a messaging_service_sid set (which is the default one for now).
+        # If it's an OTP or system message (like owner notification not tied to a specific business twilio_number),
+        # it might use settings.TWILIO_SUPPORT_MESSAGING_SERVICE_SID.
+        # For now, we assume 'business.messaging_service_sid' should be used if available.
+        
+        messaging_service_sid_to_use = business.messaging_service_sid
+        from_number_to_use = business.twilio_number
+
+        if is_owner_notification:
+            # Owner notifications should ideally use a consistent, recognizable number/service if different
+            # from the main business engagement MSID. For now, assume it uses the business's primary MSID or a global one.
+            # If you have a specific SUPPORT_MESSAGING_SERVICE_SID for these, use it.
+            if settings.TWILIO_SUPPORT_MESSAGING_SERVICE_SID: # Check if a dedicated support/notification MSID exists
+                 messaging_service_sid_to_use = settings.TWILIO_SUPPORT_MESSAGING_SERVICE_SID
+                 # For owner notifications sent via a general support MSID, 'from_' might be omitted (Twilio picks from pool)
+                 # or you might have a specific 'from' number for support.
+                 # If using the business's MSID for owner notifications, from_number_to_use remains business.twilio_number
+                 logger.info(f"{log_prefix} Owner notification will use TWILIO_SUPPORT_MESSAGING_SERVICE_SID: {messaging_service_sid_to_use}")
+            elif not messaging_service_sid_to_use: # Fallback if business has no MSID and no support MSID
+                 logger.error(f"{log_prefix} No MessagingService SID available for owner notification (business or support).")
+                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Messaging service not configured for notifications.")
+            # If from_number_to_use is None when using support MSID, Twilio will pick a number from that service's pool.
+            # This is okay for OTPs/notifications.
+            if messaging_service_sid_to_use == settings.TWILIO_SUPPORT_MESSAGING_SERVICE_SID:
+                from_number_to_use = None # Let Twilio pick from the Support MSID pool
+
+        elif not messaging_service_sid_to_use:
+            logger.error(f"{log_prefix} No MessagingService SID configured for business {business.id}.")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Business messaging service not configured.")
+        
+        if not is_owner_notification and not from_number_to_use : # Regular messages require a from number
+            logger.error(f"{log_prefix} No 'From' number (business.twilio_number) configured for business {business.id} for regular SMS.")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Business sender number not configured.")
+
+
+        # Safely get text content for logging preview
+        log_message_body_preview = message_body
+        if isinstance(message_body, dict) and "text" in message_body: # Should not happen if webhook cleans it
+            log_message_body_preview = message_body["text"]
+        elif not isinstance(message_body, str):
+            log_message_body_preview = str(message_body)
+        
+        logger.info(
+            f"{log_prefix} Final check before Twilio. To: {normalized_to_phone}, "
+            f"From: {from_number_to_use if from_number_to_use else 'MSID Pool'}, MSID: {messaging_service_sid_to_use}, "
+            f"OwnerNotify: {is_owner_notification}, DirectReply: {is_direct_reply}. "
+            f"Body: '{log_message_body_preview[:100]}...'"
+        )
+
+        # --- MODIFIED CONSENT CHECK ---
+        if not is_owner_notification: # Skip consent checks for owner notifications
+            target_customer_for_consent_check = customer
+            if not target_customer_for_consent_check and not is_direct_reply:
+                target_customer_for_consent_check = db.query(CustomerModel).filter(
+                    CustomerModel.phone == normalized_to_phone,
+                    CustomerModel.business_id == business.id
+                ).first()
+
+            if target_customer_for_consent_check:
+                # Using sms_opt_in_status from Customer model which should be authoritative
+                customer_consent_status = target_customer_for_consent_check.sms_opt_in_status
+
+                if customer_consent_status == OptInStatus.OPTED_OUT.value:
+                    logger.warning(
+                        f"{log_prefix} Attempted to send SMS to OPTED_OUT customer "
+                        f"{target_customer_for_consent_check.id}. Message blocked."
+                    )
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot send message: Customer has opted out.")
+
+                if not is_direct_reply and customer_consent_status != OptInStatus.OPTED_IN.value:
+                    logger.warning(
+                        f"{log_prefix} Attempted to send PROACTIVE SMS to customer "
+                        f"{target_customer_for_consent_check.id} with status '{customer_consent_status}'. Message blocked."
+                    )
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot send message: Customer has not opted in for proactive messages.")
+            
+            elif not is_direct_reply: # Proactive message to a number not in this business's customer list
+                logger.warning(
+                    f"{log_prefix} Attempted to send PROACTIVE SMS to an unknown/non-customer number "
+                    f"'{normalized_to_phone}' for business {business.id}. Message blocked."
                 )
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot send proactive message: Recipient is not an opted-in customer of this business.")
+        # --- END OF MODIFIED CONSENT CHECK ---
 
-            if not business.twilio_number:
-                logger.error(f"{log_prefix} Missing sender phone number (twilio_number) for business_id={business.id}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Sender phone number not configured for this business."
-                )
-
-            # Defensive check: Ensure message_body is a string before sending to Twilio
+        try:
+            # Ensure actual_twilio_message_body is a string
             actual_twilio_message_body = message_body
-            if isinstance(message_body, dict) and "text" in message_body:
-                actual_twilio_message_body = message_body["text"]
-            elif not isinstance(message_body, str):
-                # If somehow not a string or expected dict structure, forcefully convert
-                logger.warning(f"{log_prefix} message_body is not a string or expected dict (type: {type(message_body)}). Attempting str() conversion.")
-                actual_twilio_message_body = str(message_body)
+            if not isinstance(message_body, str):
+                 logger.warning(f"{log_prefix} message_body is not a string (type: {type(message_body)}). Attempting str().")
+                 actual_twilio_message_body = str(message_body)
 
-
-            logger.info(f"{log_prefix} Sending SMS from {business.twilio_number} via MSID {business.messaging_service_sid}.")
-            twilio_msg = self.client.messages.create(
-                to=to,
-                messaging_service_sid=business.messaging_service_sid,
-                from_=business.twilio_number, # Use the business's Twilio number as 'From'
-                body=actual_twilio_message_body # Use the potentially converted string for Twilio
-            )
-            logger.info(f"{log_prefix} SMS sent successfully. SID: {twilio_msg.sid}")
+            create_params = {
+                'to': normalized_to_phone,
+                'messaging_service_sid': messaging_service_sid_to_use,
+                'body': actual_twilio_message_body
+            }
+            if from_number_to_use: # Only add 'from_' if it's specified (e.g., not for support MSID pool)
+                create_params['from_'] = from_number_to_use
+            
+            twilio_msg = self.client.messages.create(**create_params)
+            
+            logger.info(f"{log_prefix} SMS sent via Twilio. SID: {twilio_msg.sid}, Status: {twilio_msg.status}")
             return twilio_msg.sid
-        except HTTPException as http_exc:
-            raise http_exc
+        
         except TwilioRestException as e:
             logger.error(f"{log_prefix} Twilio API error: {e.status} - {e.msg}", exc_info=True)
+            if e.code == 21610: # Opted-out recipient
+                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Twilio error: Recipient {normalized_to_phone} has opted out or is blocked.")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE if e.status >= 500 else status.HTTP_400_BAD_REQUEST,
                 detail=f"SMS provider error: {e.msg}"
             )
-        except Exception as e:
-            logger.error(f"{log_prefix} Unexpected error: {str(e)}", exc_info=True)
+        except HTTPException as http_exc: # Re-raise HTTPExceptions we've raised intentionally
+            raise http_exc
+        except Exception as e: # Catch any other unexpected error during the send
+            logger.error(f"{log_prefix} Unexpected error sending SMS: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to send SMS due to an unexpected error: {str(e)}"
+                detail=f"Failed to send SMS due to an unexpected internal error: {str(e)}"
             )
 
 
