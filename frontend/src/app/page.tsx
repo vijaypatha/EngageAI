@@ -1,7 +1,25 @@
+// frontend/src/app/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
+import { ArrowRight, Target, Users, ListChecks, CalendarCheck, Smile, Zap, Heart, MapPin, Route, CheckSquare, Bot, MessageCircleHeart  } from "lucide-react"; // Added Heart
+
+// Define a type for your testimonial data for better structure
+interface Testimonial {
+  name: string;
+  title: string;
+  img: string;
+  quote: string;
+}
+
+// Define a type for "How it works" steps
+interface HowItWorksStep {
+  icon: React.ElementType;
+  title: string;
+  description: string;
+}
 
 export default function LandingPage() {
   const [mounted, setMounted] = useState(false);
@@ -10,116 +28,220 @@ export default function LandingPage() {
     setMounted(true);
   }, []);
 
+  const howItWorksSteps: HowItWorksStep[] = [
+    { icon: Target, title: "1. Define Your Goals", description: "Clearly set what you want to achieve with client communication." },
+    { icon: Users, title: "2. Add Your Contacts", description: "Easily import or manually add your client information and key notes." },
+    { icon: ListChecks, title: "3. Create Nudge Plans", description: "Our AI helps craft personalized, multi-step message sequences." },
+    { icon: CalendarCheck, title: "4. Review & Schedule", description: "Approve AI-drafted messages and let the autopilot take over." },
+    { icon: Smile, title: "5. Build Connections", description: "Forge lasting relationships with timely, thoughtful, and personal nudges." },
+    { icon: Zap, title: "6. Send Instant Nudges", description: "Quickly send targeted one-off messages for announcements or offers." },
+  ];
+
+  const testimonials: Testimonial[] = [
+    {
+      name: "Dr. Eliza Stone",
+      title: "CareBridge Therapy",
+      img: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=300&h=300&q=80",
+      quote: "AI Nudge lets me stay in touch with clients in a way that feels authentic and saves me so much time. It's a game-changer for my practice."
+    },
+    {
+      name: "Marcus Bell",
+      title: "Bell Financial Planning",
+      img: "https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=300&h=300&q=80",
+      quote: "The reminders and check-ins are so personalized, they look like I wrote them myself. It builds incredible trust and keeps clients engaged."
+    },
+    {
+      name: "Sofia Tran",
+      title: "Red Rose Yoga Studio",
+      img: "https://images.unsplash.com/photo-1607746882042-944635dfe10e?auto=format&fit=crop&w=300&h=300&q=80",
+      quote: "I can focus on teaching and providing care to my students. AI Nudge handles the follow-ups with kindness and clarity, keeping everyone informed."
+    },
+    {
+      name: "Reggie Scott",
+      title: "Scott & Co. Realty",
+      img: "https://images.unsplash.com/photo-1573497491208-6b1acb260507?auto=format&fit=crop&w=300&h=300&q=80",
+      quote: "While I'm focused on closing deals for one client, AI Nudge is effortlessly connecting with all my other prospects and past clients. That's real ROI."
+    }
+  ];
+
   return (
     <main
       className={`min-h-screen w-full flex flex-col justify-start transition-opacity duration-1000 ${
         mounted ? "opacity-100" : "opacity-0"
-      } bg-gradient-to-b from-black via-gray-900 to-gray-800`}
+      } bg-gradient-to-b from-black via-gray-900 to-gray-800 text-gray-200`} // Base text color
     >
-      <div className="w-full px-4 sm:px-6 lg:px-12 py-20 space-y-16">
-        {/* Hero Section */}
-        <div className="text-center">
-          <h1 className="text-5xl md:text-6xl font-extrabold mb-6 tracking-tight">
-            Welcome to <span className="text-gradient">AI Nudge</span> 👋
-          </h1>
-
-          <p className="text-xl text-gray-300 mb-8 max-w-xl mx-auto leading-relaxed">
-            Keep your clients close with timely, personal SMS nudges — in your style, on autopilot.
-          </p>
-
-          <h3 className="text-3xl md:text-4xl font-extrabold mb-6 mt-20 tracking-tight">
-            <span className="text-gradient">How it works</span> 
-          </h3>
-
-
-          <p className="text-lg text-gray-300 mb-10 max-w-xl mx-auto leading-relaxed">
-            🎯 Set goals → 🤝 Add contacts → 🤖 Create Nudge Plans <br />
-            ✅ Review and Schedule → 🎉 Keep your clients close
-          </p>
-
-          <Link href="/onboarding" passHref>
-            <div className="inline-block btn-primary mt-17 text-lg">
-              🚀 Try It Free — No Login Needed
+      {/* Hero Section */}
+      <section className="w-full bg-nudge-gradient flex flex-col items-center justify-center py-28 md:py-36 lg:py-48 text-center min-h-[75vh] md:min-h-[65vh] px-4">
+        <div className="max-w-4xl mx-auto">
+        <div className="flex justify-center mb-10 md:mb-12">
+            <div className="relative overflow-hidden group rounded-lg"> {/* Added rounded-lg if logo has rounded corners and you want shine to respect that */}
+              <Image
+                src="/AI Nudge Logo.png"
+                alt="AI Nudge Logo"
+                width={800}
+                height={160}
+                priority
+                className="block drop-shadow-2xl max-w-full h-auto" // 'block' can sometimes help with layout
+              />
+              {/* The Shine Element Overlay */}
+              <div
+                className="absolute inset-0 w-full h-full 
+                           animate-logo-shine 
+                           bg-gradient-to-r from-transparent via-white/10 to-transparent
+                           opacity-75 group-hover:opacity-90 transition-opacity duration-300"
+                // NOTES:
+                // 'animate-logo-shine' applies the keyframes.
+                // 'inset-0' makes this overlay exactly cover the parent (which is the Image's effective space).
+                // 'from-transparent via-white/10 to-transparent': Soft white shine (10% opacity).
+                //    Adjust via-white/XX for intensity. e.g., via-white/5 for very subtle, via-white/20 for more noticeable.
+                //    You can also use your brand colors: e.g., via-emerald-400/10
+                // The keyframes will move this gradient from left to right.
+                // The 'overflow-hidden' on the parent div is CRITICAL to clip the shine
+                // so it only appears over the area of the logo.
+              ></div>
+              {/* Logo shine effect applied. */}
             </div>
-          </Link>
-
-          <p className="mt-6 text-gray-400 text-sm">
+          </div>
+          <p className="text-xl md:text-2xl lg:text-3xl text-gray-300 mb-12 leading-relaxed max-w-2xl mx-auto font-medium">
+          Smart Guidance, Stronger Connections. <br className="hidden sm:block" />
+          AI Nudge delivers timely, personal SMS—automated in <span className="text-gradient">your authentic style</span>.
+          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
+            <Link href="/onboarding" passHref>
+              <button className="btn-primary text-lg md:text-xl px-10 py-4 transform transition-all duration-300 ease-in-out hover:scale-105 hover:shadow-glow focus:outline-none focus:ring-4 focus:ring-emerald-500/60 w-full sm:w-auto font-semibold">
+                🚀 Try It Free — No Login Needed
+              </button>
+            </Link>
+            {/* Example for a secondary button - uncomment and style if needed
+            <Link href="#how-it-works" passHref>
+              <button className="text-gray-300 hover:text-white font-medium py-4 px-10 rounded-lg transition-colors border-2 border-gray-700 hover:border-gray-500 w-full sm:w-auto flex items-center justify-center text-lg md:text-xl">
+                Learn How <ArrowRight className="inline-block ml-2 w-5 h-5" />
+              </button>
+            </Link>
+            */}
+          </div>
+          <p className="mt-12 text-gray-400 text-base">
             Already using AI Nudge?{" "}
             <Link href="/auth/login" passHref>
-              <span className="underline text-blue-400 hover:text-blue-300 cursor-pointer">
+              <span className="underline text-blue-400 hover:text-blue-300 transition-colors cursor-pointer font-medium">
                 Log in here
               </span>
             </Link>
           </p>
         </div>
+      </section>
 
-        {/* Testimonials Section */}
-        <div className="text-center">
-          <h2 className="text-4xl font-bold mb-6">
-            Small Businesses <span className="text-red-500">❤️</span> AI Nudge
-          </h2>
-          <p className="text-xl text-gray-300 mb-12 max-w-2xl mx-auto">
-            From therapists to financial advisors, our users trust AI Nudge to keep client relationships strong and personal.
+      {/* AI Nudge is Your GPS Section */}
+      <section id="how-it-works-gps" className="py-16 md:py-28 bg-gray-900">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-14 md:mb-20">
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight text-white">
+              AI Nudge is your GPS for <span className="text-gradient">Staying Top-of-Mind</span>
+            </h2>
+            <p className="mt-5 text-lg md:text-xl text-gray-400 max-w-2xl mx-auto">
+              Navigate client engagement effortlessly. We guide you every step of the way.
+            </p>
+          </div>
+
+          {/* GPS Steps */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 lg:gap-10">
+            {/* Step 1: Set Destination */}
+            <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-primary/50">
+              <div className="p-4 bg-gradient-to-br from-red-500/10 via-pink-500/10 to-orange-500/10 rounded-full mb-6">
+                <MapPin className="w-10 h-10 text-red-400" />
+              </div>
+              <h3 className="text-xl font-semibold text-white mb-3">Step 1: Set Destination</h3>
+              <p className="text-base text-gray-400 flex-grow leading-relaxed">
+                Define your client engagement goals, teach AI Nudge your unique communication style, and add your contacts.
+              </p>
+            </div>
+
+            {/* Step 2: See the Route */}
+            <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-secondary/50">
+              <div className="p-4 bg-gradient-to-br from-blue-500/10 via-sky-500/10 to-cyan-500/10 rounded-full mb-6">
+                <Route className="w-10 h-10 text-blue-400" />
+              </div>
+              <h3 className="text-xl font-semibold text-white mb-3">Step 2: See The Route</h3>
+              <p className="text-base text-gray-400 flex-grow leading-relaxed">
+                Our AI drafts personalized nudges in your voice, precisely mapped to achieve your engagement goals.
+              </p>
+            </div>
+
+            {/* Step 3: Follow or Adjust */}
+            <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-emerald-500/50">
+              <div className="p-4 bg-gradient-to-br from-emerald-500/10 via-green-500/10 to-teal-500/10 rounded-full mb-6">
+                <CheckSquare className="w-10 h-10 text-emerald-400" />
+              </div>
+              <h3 className="text-xl font-semibold text-white mb-3">Step 3: Follow or Adjust</h3>
+              <p className="text-base text-gray-400 flex-grow leading-relaxed">
+                Review the AI-generated engagement plan. Let it run automatically, or easily make adjustments as needed.
+              </p>
+            </div>
+          </div>
+
+          {/* Sub-tagline for the GPS analogy */}
+          <p className="mt-16 md:mt-20 text-xl md:text-2xl text-center text-gray-300 font-medium max-w-3xl mx-auto leading-relaxed">
+            AI Nudge <span className="text-gradient">learns your style</span>,
+            sounds like <span className="text-gradient">you</span>,
+            and connects with <span className="text-gradient">them</span>.
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[
-              {
-                name: "Dr. Eliza Stone",
-                title: "CareBridge Therapy",
-                img: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=300&h=300&q=80",
-                quote: "AI Nudge lets me stay in touch with clients in a way that feels authentic."
-              },
-              {
-                name: "Marcus Bell",
-                title: "Bell Financial",
-                img: "https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=300&h=300&q=80",
-                quote: "The reminders and check-ins look like I wrote them myself — it builds trust."
-              },
-              {
-                name: "Sofia Tran",
-                title: "Red Rose Yoga",
-                img: "https://images.unsplash.com/photo-1607746882042-944635dfe10e?auto=format&fit=crop&w=300&h=300&q=80",
-                quote: "I can focus on care — AI Nudge follows up with kindness and clarity."
-              },
-              {
-                name: "Reggie Scott",
-                title: "Scott Realty",
-                img: "https://images.unsplash.com/photo-1573497491208-6b1acb260507?auto=format&fit=crop&w=300&h=300&q=80",
-                quote: "AI Nudge focuses on ALL my clients while I can only work with one or two clients in a day. That's real ROI."
-              }
-            ].map((person, i) => (
-              <div key={i} className="card p-6 text-center group hover:scale-[1.02] transition-all duration-300">
-                <img src={person.img} alt={person.name} className="w-24 h-24 rounded-full mx-auto mb-4 object-cover border-4 border-white/10" />
-                <p className="font-semibold text-lg text-white">{person.name}</p>
-                <p className="text-sm text-gray-400 mb-4">{person.title}</p>
-                <p className="text-sm italic text-gray-300">"{person.quote}"</p>
+        </div>
+      </section>
+
+      {/* Testimonials Section */}
+      <section className="py-16 md:py-28 bg-dark-lighter">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-14 md:mb-20">
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4 text-white">
+              Small Businesses <Heart className="inline-block w-10 h-10 text-red-500 animate-pulse fill-current" /> AI Nudge
+            </h2>
+            <p className="mt-5 text-lg md:text-xl text-gray-400 max-w-2xl mx-auto">
+              See how professionals like you build stronger, more personal client connections.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10">
+            {testimonials.map((person, i) => (
+              <div key={i} className="card p-6 md:p-8 text-center group hover:shadow-glow transition-all duration-300 flex flex-col items-center rounded-xl">
+                <Image src={person.img} alt={person.name} width={100} height={100} className="rounded-full mx-auto mb-6 object-cover border-4 border-white/20 shadow-lg" />
+                <h3 className="font-semibold text-xl text-white mb-1">{person.name}</h3>
+                <p className="text-sm text-gray-400 mb-5">{person.title}</p>
+                <p className="text-md italic text-gray-300 leading-relaxed">"{person.quote}"</p>
               </div>
             ))}
           </div>
         </div>
+      </section>
 
-        {/* Footer */}
-        <footer className="text-sm text-center space-y-6 border-t border-white/10 pt-12">
-          <div className="space-y-2">
-            <p className="font-semibold text-white text-base">AI Nudge</p>
-            <p className="text-gray-400">Made with ❤️ in St. George, UT</p>
-            <a href="mailto:support@ainudge.app" className="text-blue-400 hover:text-blue-300 underline">
-              support@ainudge.app
-            </a>
+      {/* Footer */}
+      <footer className="text-base text-center space-y-8 border-t border-white/10 pt-16 pb-12 bg-black">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-center mb-6">
+            <Image
+              src="/AI Nudge Logo.png"
+              alt="AI Nudge Footer Logo"
+              width={220} // Slightly larger footer logo
+              height={44}
+            />
+          </div>
+          <p className="text-gray-400">Small Nudges. Smart Guidance. Stronger Connections.</p>
+          <p className="text-gray-400">Lovingly crafted in St. George, UT</p>
+          <a href="mailto:support@ainudge.app" className="text-blue-400 hover:text-blue-300 underline transition-colors text-lg">
+            support@ainudge.app
+          </a>
+
+          <div className="mt-10 space-x-6 font-medium">
+            <Link href="/terms" className="text-gray-400 hover:text-white underline transition-colors">Terms of Service</Link>
+            <Link href="/privacy" className="text-gray-400 hover:text-white underline transition-colors">Privacy Policy</Link>
           </div>
 
-          <div className="space-x-6 font-medium">
-            <Link href="/terms" className="text-gray-400 hover:text-white underline">Terms of Service</Link>
-            <Link href="/privacy" className="text-gray-400 hover:text-white underline">Privacy Policy</Link>
+          <div className="mt-10 space-y-2 text-gray-500 text-xs max-w-2xl mx-auto">
+            <p className="italic">Registered A2P 10DLC Messaging Provider (USA) · Fully compliant with carrier guidelines.</p>
+            <p className="italic">All messages include opt-out language. Reply STOP to unsubscribe. Standard message rates may apply. Message frequency varies.</p>
+            <p className="mt-3">Message and data rates may apply. Carriers are not liable for delayed or undelivered messages.</p>
+            <p className="mt-8 text-gray-400">&copy; {new Date().getFullYear()} AI Nudge. All rights reserved.</p>
           </div>
-
-          <div className="space-y-2 text-gray-500 text-sm max-w-2xl mx-auto">
-            <p className="italic">Registered A2P 10DLC Messaging Provider (USA) · Fully compliant with carrier guidelines</p>
-            <p className="italic">All messages include opt-out language · Reply STOP to unsubscribe. Standard message rates may apply. Message frequency varies.</p>
-            <p className="text-xs mt-4">Message and data rates may apply. Carriers are not liable for delayed or undelivered messages.</p>
-          </div>
-        </footer>
-      </div>
+        </div>
+      </footer>
     </main>
   );
 }

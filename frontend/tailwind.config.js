@@ -25,7 +25,8 @@ module.exports = {
       animation: {
         'float': 'float 3s ease-in-out infinite',
         'gradient-x': 'gradient-x 3s ease infinite',
-        'shimmer': 'shimmer 2s infinite',
+        'pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite', // For the heart icon
+        'logo-shine': 'logo-shine 3s ease-in-out infinite', // Refined shimmer
       },
       keyframes: {
         float: {
@@ -40,14 +41,19 @@ module.exports = {
             'background-position': '0 0',
           },
         },
-        shimmer: {
-          '100%': {
-            transform: 'translateX(200%)',
-          },
-        }
+        pulse: { // For the heart icon
+          '0%, 100%': { opacity: 1, transform: 'scale(1)' },
+          '50%': { opacity: .7, transform: 'scale(1.1)' },
+        },
+        'logo-shine': { // Refined shimmer keyframes
+          '0%': { transform: 'translateX(-100%) skewX(-20deg)' }, // Start off-screen, skewed
+          '50%': { transform: 'translateX(100%) skewX(-20deg)' }, // Sweep across
+          '100%': { transform: 'translateX(200%) skewX(-20deg)' },// Ensure it fully exits
+        },
       },
       boxShadow: {
         'glow': '0 0 20px rgba(34, 197, 94, 0.2)',
+        'xl': '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
       },
     },
   },

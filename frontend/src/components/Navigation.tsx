@@ -3,6 +3,7 @@
 
 import { useParams, usePathname } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Users,
   CalendarCheck,
@@ -170,12 +171,13 @@ export function Navigation() {
       <nav className="fixed left-0 top-0 bottom-0 hidden md:flex flex-col w-64 bg-[#131625] border-r border-gray-700/50 z-[40]">
         <div className="p-6 border-b border-gray-700/30">
           <Link href={`/dashboard/${business_name}`} className="flex items-center space-x-2 group">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-emerald-400 group-hover:text-emerald-300 transition-colors">
-                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span className="text-xl font-semibold text-white group-hover:text-gray-200 transition-colors">AI Nudge</span>
+          <Image
+              src="/AI Nudge Logo.png" // Assuming the logo is in frontend/public/
+              alt="AI Nudge Logo"
+              width={150} // Adjust width as needed for the sidebar
+              height={30}  // Adjust height as needed, ensure it maintains aspect ratio
+              priority
+            />
           </Link>
         </div>
 
@@ -284,7 +286,20 @@ export function Navigation() {
               { name: "Plans", href: `/all-engagement-plans/${business_name}`, icon: CalendarCheck },
               { name: "Instant", href: `/instant-nudge/${business_name}`, icon: Zap },
               { name: "Inbox", href: `/inbox/${business_name}`, icon: MessageSquare },
-              { name: "Dashboard", href: `/dashboard/${business_name}`, icon: BarChart },
+              {
+                name: "LogoToDashboard", // A unique name for the key
+                href: `/dashboard/${business_name}`, // Link destination
+                icon: () => ( // Render function for the icon
+                  <Image
+                    src="/AI Nudge Logo.png"
+                    alt="AI Nudge Dashboard"
+                    width={60}  // Adjust for compact mobile view
+                    height={12} // Adjust for compact mobile view
+                    className="opacity-90 group-hover:opacity-100" // Example styling
+                  />
+                ),
+                isLogo: true // Custom flag to identify this item
+              },
           ].map((item) => {
             const safeHref = item.href || '#';
             const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
@@ -300,8 +315,15 @@ export function Navigation() {
                 )}
                 style={{ minWidth: '0' }}
               >
-                <item.icon className="w-5 h-5 mb-0.5" />
-                <span className="text-[10px] leading-tight text-center font-medium">{item.name}</span>
+                {item.isLogo ? (
+                  <item.icon /> // Render the Image component directly
+                ) : (
+                  <>
+                    <item.icon className="w-5 h-5 mb-0.5" />
+                    {/* Only render the name span if it's not the logo item */}
+                    <span className="text-[10px] leading-tight text-center font-medium">{item.name}</span>
+                  </>
+                )}
               </Link>
             );
           })}
@@ -329,6 +351,16 @@ export function Navigation() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="grid grid-cols-1 gap-2">
+              <div className="flex justify-center items-center py-3 border-b border-gray-700/30 mb-2">
+                <Link href={`/dashboard/${business_name}`} onClick={() => setShowMobileMenu(false)}>
+                  <Image
+                    src="/AI Nudge Logo.png"
+                    alt="AI Nudge Logo"
+                    width={130} // Adjust as needed for the "More" menu
+                    height={26}
+                  />
+                </Link>
+              </div>
               {[
                 { name: "Replies", href: `/replies/${business_name}`, icon: MailCheck },
                 { name: "Profile", href: `/profile/${business_name}`, icon: UserCircle },
