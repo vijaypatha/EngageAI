@@ -225,9 +225,12 @@ export default function LandingPage() {
           </div>
           <p className="text-gray-400">Small Nudges. Smart Guidance. Stronger Connections.</p>
           <p className="text-gray-400">Lovingly crafted in St. George, UT</p>
-          <a href="mailto:support@ainudge.app" className="text-blue-400 hover:text-blue-300 underline transition-colors text-lg">
+          <a href="mailto:support@ainudge.app" className="block text-blue-400 hover:text-blue-300 underline transition-colors text-lg">
             support@ainudge.app
           </a>
+          <p className="text-gray-400 mt-2"> {/* Added mt-2 for a little space */}
+            Nudge us with questions like "what is AI Nudge?" or "How will AI Nudge help my business grow?" @ <a href="sms:+14352721987" className="text-blue-400 hover:text-blue-300 underline transition-colors">435-272-1987</a>
+          </p>
 
           <div className="mt-10 space-x-6 font-medium">
             <Link href="/terms" className="text-gray-400 hover:text-white underline transition-colors">Terms of Service</Link>
