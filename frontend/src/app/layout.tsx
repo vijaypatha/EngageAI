@@ -7,7 +7,7 @@ import ClientLayout from '@/components/ClientLayout';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: "AI Nudge - Smart Customer Engagement",
+  title: "AI Nudge – Personal Client Engagement. Powered by AI",
   description: "Intelligent customer engagement platform powered by AI",
 };
 
