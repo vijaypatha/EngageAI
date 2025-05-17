@@ -109,7 +109,7 @@ export default function LandingPage() {
 
           {/* Sub-Tagline - Second Sentence */}
           <p className="text-lg md:text-xl lg:text-2xl text-gray-400 mb-12 leading-relaxed max-w-2xl mx-auto">
-          We help your customers remember you with timely, personal SMS messages, automatically and in<span className="text-gradient">your authentic style</span>.
+          We help your customers remember you with timely, personal SMS messages, automatically and in <span className="text-gradient">your authentic style</span>.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
             <Link href="/onboarding" passHref>
