@@ -1,3 +1,5 @@
+# backend/app/routes/roadmap_workflow_routes.py
+
 print("✅ roadmap_workflow_routes.py loaded")
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -5,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, desc, cast, Integer
 from datetime import datetime, timezone
 from app.database import get_db
-from app.models import RoadmapMessage, Message, Customer, Conversation
+from app.models import RoadmapMessage, Message, Customer, Conversation, MessageTypeEnum, MessageStatusEnum, SenderTypeEnum # Added Enum imports
 from app.celery_tasks import process_scheduled_message_task
 import logging
 import uuid
@@ -30,7 +32,7 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Missing send time for roadmap message")
 
     # 🔹 Step 3: Check if already scheduled
-    if msg.status == "scheduled":
+    if msg.status == MessageStatusEnum.SCHEDULED.value: # Using enum value
         return {"status": "already scheduled"}
 
     # 🔹 Step 4: Fetch the customer and check opt-in status
@@ -59,7 +61,7 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
 
     # 🔹 Step 6: Check for existing scheduled message linked to roadmap message
     existing_message = db.query(Message).filter(
-    Message.message_type == 'scheduled', # Check type first
+    Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE, # Using enum member
     Message.message_metadata != None,    # Ensure metadata is not null
     cast(Message.message_metadata.op('->>')('roadmap_id'), Integer) == msg.id
     ).first()
@@ -71,9 +73,10 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
             customer_id=msg.customer_id,
             business_id=msg.business_id,
             content=msg.smsContent,
-            message_type='scheduled',
-            status="scheduled",
-            scheduled_time=msg.send_datetime_utc,
+            message_type=MessageTypeEnum.SCHEDULED_MESSAGE, # Using enum member
+            status=MessageStatusEnum.SCHEDULED, # Using enum member
+            sender_type=SenderTypeEnum.BUSINESS, # Added sender_type
+            scheduled_send_at=msg.send_datetime_utc, # Corrected from scheduled_time
             message_metadata={
                 'source': 'roadmap',
                 'roadmap_id': msg.id
@@ -96,7 +99,7 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=500, detail="Failed to add message to scheduling queue. Please retry.")
 
         # 🔹 Step 9: ONLY IF Celery succeeds, update status and commit
-        msg.status = "scheduled"
+        msg.status = MessageStatusEnum.SCHEDULED.value # Using enum value
         msg.message_id = message.id
         db.commit()
 
@@ -107,13 +110,13 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
                 "id": message.id,
                 "customer_name": customer.customer_name,
                 "smsContent": message.content,
-                "send_datetime_utc": message.scheduled_time.isoformat() if message.scheduled_time else None,
+                "send_datetime_utc": message.scheduled_send_at.isoformat() if message.scheduled_send_at else None, # Corrected to scheduled_send_at
                 "status": message.status,
                 "source": message.message_metadata.get('source', 'scheduled')
             }
         }
 
-    msg.status = "scheduled"
+    msg.status = MessageStatusEnum.SCHEDULED.value # Using enum value
     db.commit()
     return {"status": "already scheduled"}
 
@@ -130,7 +133,7 @@ def approve_all(customer_id: int, db: Session = Depends(get_db)):
             RoadmapMessage.customer_id == customer_id,
             RoadmapMessage.send_datetime_utc != None,
             RoadmapMessage.send_datetime_utc >= now_utc,
-            RoadmapMessage.status == "pending_review"
+            RoadmapMessage.status == MessageStatusEnum.PENDING_REVIEW.value # Using enum value
         )
     ).all()
 
@@ -164,7 +167,7 @@ def approve_all(customer_id: int, db: Session = Depends(get_db)):
     for msg in messages:
         exists = db.query(Message).filter(
             Message.message_metadata['roadmap_id'].cast(Integer) == msg.id,
-            Message.message_type == 'scheduled'
+            Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE # Using enum member
         ).first()
 
         if not exists:
@@ -173,9 +176,10 @@ def approve_all(customer_id: int, db: Session = Depends(get_db)):
                 customer_id=msg.customer_id,
                 business_id=msg.business_id,
                 content=msg.smsContent,
-                message_type='scheduled',
-                status="scheduled",
-                scheduled_time=msg.send_datetime_utc,
+                message_type=MessageTypeEnum.SCHEDULED_MESSAGE, # Using enum member
+                status=MessageStatusEnum.SCHEDULED, # Using enum member
+                sender_type=SenderTypeEnum.BUSINESS, # Added sender_type
+                scheduled_send_at=msg.send_datetime_utc, # Corrected from scheduled_time
                 message_metadata={
                     'source': 'roadmap',
                     'roadmap_id': msg.id
@@ -198,7 +202,7 @@ def approve_all(customer_id: int, db: Session = Depends(get_db)):
                 continue # Skip updating status for this message if scheduling fails
 
             # 🔹 Step 6: If successful, update message and roadmap status
-            msg.status = "scheduled"
+            msg.status = MessageStatusEnum.SCHEDULED.value # Using enum value
             msg.message_id = message.id
             new_scheduled_count += 1
 
@@ -241,23 +245,23 @@ def update_message_time(
 
         scheduled = db.query(Message).filter(
             Message.message_metadata['roadmap_id'].cast(Integer) == id,
-            Message.message_type == 'scheduled'
+            Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE # Using enum member
         ).first()
 
         if scheduled:
-            scheduled.scheduled_time = new_time
+            scheduled.scheduled_send_at = new_time # Corrected from scheduled_time
             if new_content:
                 scheduled.content = new_content
 
     else:
         message = db.query(Message).filter(
             Message.id == id,
-            Message.message_type == 'scheduled'
+            Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE # Using enum member
         ).first()
         if not message:
             raise HTTPException(status_code=404, detail="Message not found")
 
-        message.scheduled_time = new_time
+        message.scheduled_send_at = new_time # Corrected from scheduled_time
         if new_content:
             message.content = new_content
 
@@ -286,7 +290,7 @@ def delete_message(id: int, source: str = Query(...), db: Session = Depends(get_
 
         scheduled = db.query(Message).filter(
             Message.message_metadata['roadmap_id'].cast(Integer) == id,
-            Message.message_type == 'scheduled'
+            Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE # Using enum member
         ).first()
 
         # 🔹 Step 2: Fetch and delete corresponding records
@@ -302,7 +306,7 @@ def delete_message(id: int, source: str = Query(...), db: Session = Depends(get_
     else:
         message = db.query(Message).filter(
             Message.id == id,
-            Message.message_type == 'scheduled'
+            Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE # Using enum member
         ).first()
         if not message:
             raise HTTPException(status_code=404, detail="Message not found")

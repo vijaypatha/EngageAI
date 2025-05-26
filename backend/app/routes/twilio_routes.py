@@ -1,41 +1,41 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app.models import BusinessProfile
-from app.schemas import TwilioNumberAssign
-from app.services.twilio_service import TwilioService
-from app.auth import get_current_user
-import logging  # Add this import
+# backend/app/routes/twilio_routes.py
 
-# Create logger
-logger = logging.getLogger(__name__)  # Add this line
-
-router = APIRouter(tags=["twilio"])
-
-
-# Add these imports at the top if they aren't already there
+import logging
 from typing import Optional, List
-from pydantic import BaseModel
-from fastapi import Query, status # Make sure Query and status are imported
 
-# --- Add Pydantic Models for Response (Recommended) ---
-class AvailableNumber(BaseModel):
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.ext.asyncio import AsyncSession # For async routes
+from sqlalchemy.orm import Session # Keep ONLY if TwilioService strictly requires sync session
+
+from app.database import get_async_db, get_db # Provide both get_db and get_async_db
+from app import models, schemas, auth # CORRECTLY IMPORT auth module
+# REMOVE: from app.auth import get_current_user 
+from app.config import Settings, get_settings
+from app.services.twilio_service import TwilioService
+
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["Twilio Operations"])
+
+
+class AvailableNumber(schemas.BaseModel):
     phone_number: str
     friendly_name: str
-    # Add other fields like locality, region if your service returns them
+    locality: Optional[str] = None
+    region: Optional[str] = None
 
-class AvailableNumbersResponse(BaseModel):
+class AvailableNumbersResponse(schemas.BaseModel):
     numbers: List[AvailableNumber]
 
 
-# -----------------------------------------------
-# Twilio Phone Number Search Route
-# -----------------------------------------------
 @router.get(
     "/numbers",
-    response_model=AvailableNumbersResponse
+    response_model=AvailableNumbersResponse,
+    # If this route needs authentication (e.g., only a logged-in business can search numbers for their context)
+    # add: current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business),
 )
-async def get_available_numbers(
+async def get_available_numbers_route(
     area_code: Optional[str] = Query(
         None, min_length=3, max_length=3, regex="^[0-9]{3}$",
         description="3-digit US area code to search within."
@@ -44,123 +44,154 @@ async def get_available_numbers(
         None, min_length=5, max_length=5, regex="^[0-9]{5}$",
         description="5-digit US ZIP code to search near."
     ),
-    db: Session = Depends(get_db),
-    # current_user = Depends(get_current_user)
+    # db_async: AsyncSession = Depends(get_async_db) # For async operations
+    # TwilioService currently takes a sync Session. This is problematic in an async route.
 ):
-    """
-    Searches for available Twilio phone numbers based on area code OR zip code.
-    """
-    logger.info(f"Received request to /numbers with area_code={area_code}, zip_code={zip_code}")
+    logger.info(f"Twilio Numbers: Request with area_code={area_code}, zip_code={zip_code}")
 
     if not area_code and not zip_code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Query parameters 'area_code' or 'zip_code' must be provided."
         )
-
-    # Only log the parameters passed from the frontend
-    logger.info(f"Route received search request: area_code={area_code}, zip_code={zip_code}")
-
+    
+    # --- Handling Synchronous TwilioService from Async Route ---
+    # This is a known pain point. Ideally, TwilioService and its client calls
+    # would be adapted for async (e.g., using run_in_threadpool for blocking I/O).
+    # For now, to make it "work" to resolve the import error, we get a sync session.
+    sync_db_session = None
     try:
-        twilio_service = TwilioService(db)
+        # Obtain a sync session for the TwilioService instantiation
+        sync_db_session = next(get_db()) 
+        twilio_service = TwilioService(db=sync_db_session) # TwilioService expects sync session
 
-        # --- FIX: Call the updated service method, passing BOTH params ---
-        # The service will decide which one to use based on its internal logic
-        available_numbers_list = await twilio_service.get_available_numbers(
+        from fastapi.concurrency import run_in_threadpool
+
+        # Twilio client calls inside get_available_numbers are blocking.
+        # The method twilio_service.get_available_numbers is async, but what it *does* matters.
+        # If it directly calls the sync Twilio client, it should use asyncio.to_thread internally.
+        # Assuming the method is correctly implemented to be awaitable from an async context.
+        available_numbers_list = await twilio_service.get_available_numbers( # This was not awaited before, but service method is async
+            country_code="US",
             area_code=area_code,
-            postal_code=zip_code # Pass zip_code value to postal_code param
+            postal_code=zip_code
         )
-
-        # Format response (using .get for safety on potentially missing keys)
+        
         formatted_numbers = [
              AvailableNumber(
-                 phone_number=num.get("phone_number", "N/A"), # Provide default on missing key
-                 friendly_name=num.get("friendly_name", "N/A")
-             ) for num in available_numbers_list if num and num.get("phone_number") # Ensure num and phone_number exist
+                 phone_number=num.get("phone_number", "N/A"),
+                 friendly_name=num.get("friendly_name", "N/A"),
+                 locality=num.get("locality"),
+                 region=num.get("region")
+             ) for num in available_numbers_list if num and num.get("phone_number")
          ]
-
-        logger.info(f"Route returning {len(formatted_numbers)} available numbers.")
+        logger.info(f"Twilio Numbers: Returning {len(formatted_numbers)} available numbers.")
         return AvailableNumbersResponse(numbers=formatted_numbers)
-
     except HTTPException as http_exc:
-        raise http_exc # Re-raise errors from service/validation
+        if sync_db_session: sync_db_session.close() # Ensure close on handled error
+        raise http_exc
     except Exception as e:
-        logger.exception(f"Error in /numbers route (area={area_code}, zip={zip_code}): {e}")
+        logger.exception(f"Twilio Numbers: Error in /numbers route (area={area_code}, zip={zip_code}): {e}")
+        if sync_db_session: sync_db_session.close() # Ensure close on unhandled error
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve available numbers."
         )
+    finally:
+        if sync_db_session:
+            sync_db_session.close()
 
 
-# -----------------------------------------------
-# Twilio Number Assignment Route
-# -----------------------------------------------
 @router.post("/assign")
-async def purchase_and_assign_number(
-    data: TwilioNumberAssign,
-    db: Session = Depends(get_db)
-    # current_user = Depends(get_current_user) # Still commented out
+async def purchase_and_assign_number_route(
+    data: schemas.TwilioNumberAssign,
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business),
 ):
-    logger.info(f"Received request to /assign with business_id={data.business_id}, phone_number={data.phone_number}")
-    try:
-        # Business lookup is fine
-        business = db.query(BusinessProfile).filter(
-            BusinessProfile.id == data.business_id
-        ).first()
+    logger.info(
+        f"Twilio Assign: Request for payload business_id={data.business_id}, phone_number={data.phone_number} "
+        f"by authenticated business {current_business.id} ({current_business.business_name})"
+    )
 
-        if not business:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Business not found"
-            )
-
-        # --- FIX: Pass 'db' when creating the service ---
-        twilio_service = TwilioService(db)
-
-        # --- FIX: Call the correct service method with correct arguments ---
-        # Your service has 'purchase_and_assign_number_to_business(business_id, phone_number)'
-        result = await twilio_service.purchase_and_assign_number_to_business(
-            business_id=data.business_id,  # Pass the ID
-            phone_number=data.phone_number # Pass the number
+    if data.business_id != current_business.id:
+        logger.warning(
+            f"Twilio Assign AuthZ Error: Authenticated business ID {current_business.id} "
+            f"does not match payload business_id {data.business_id}."
         )
-
-        # The service method already updates the DB and returns a dict
-        logger.info(f"Successfully assigned number {data.phone_number} to business {data.business_id}")
-        return result
-
-    except HTTPException as http_exc:
-        raise http_exc # Re-raise validation/not found errors
-    except Exception as e:
-        logger.exception(f"Error assigning Twilio number {data.phone_number} to business {data.business_id}: {e}") # Use logger.exception
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, # Use 500
-            detail="Failed to assign number due to an internal error." # Generic message
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to assign number to the specified business profile."
         )
 
-
-# -----------------------------------------------
-# Twilio Number Release Route
-# -----------------------------------------------
-@router.delete("/release")
-async def release_assigned_number(
-    business_id: int = Query(..., description="The ID of the business whose number should be released."),
-    db: Session = Depends(get_db)
-):
-    """
-    Releases the assigned Twilio number for the given business.
-    This should be triggered when a business cancels or is offboarded.
-    """
-    logger.info(f"Received request to /release with business_id={business_id}")
+    sync_db_session = None
     try:
-        twilio_service = TwilioService(db)
-        result = await twilio_service.release_assigned_twilio_number(business_id)
-        logger.info(f"Successfully released Twilio number for business_id={business_id}")
+        sync_db_session = next(get_db())
+        twilio_service = TwilioService(db=sync_db_session)
+        
+        # Assuming purchase_and_assign_number_to_business is adapted for async execution
+        result = await twilio_service.purchase_and_assign_number_to_business(
+            business_id=current_business.id,
+            phone_number=data.phone_number
+        )
+        
+        logger.info(f"Twilio Assign: Successfully assigned {data.phone_number} to business {current_business.id}")
         return result
     except HTTPException as http_exc:
+        if sync_db_session: sync_db_session.close()
         raise http_exc
     except Exception as e:
-        logger.exception(f"Error releasing Twilio number for business_id={business_id}: {e}")
+        logger.exception(f"Twilio Assign: Error assigning {data.phone_number} to business {current_business.id}: {e}")
+        if sync_db_session: sync_db_session.close()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to assign number due to an internal error."
+        )
+    finally:
+        if sync_db_session:
+            sync_db_session.close()
+
+
+@router.delete("/release")
+async def release_assigned_number_route(
+    business_id_query: int = Query(..., alias="business_id", description="The ID of the business whose number should be released."),
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business),
+):
+    logger.info(
+        f"Twilio Release: Request for query business_id={business_id_query} "
+        f"by authenticated business {current_business.id} ({current_business.business_name})"
+    )
+
+    if business_id_query != current_business.id:
+        logger.warning(
+            f"Twilio Release AuthZ Error: Authenticated business ID {current_business.id} "
+            f"does not match query business_id {business_id_query}."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to release number for the specified business."
+        )
+    
+    sync_db_session = None
+    try:
+        sync_db_session = next(get_db())
+        twilio_service = TwilioService(db=sync_db_session)
+
+        # Assuming release_assigned_twilio_number is adapted for async execution
+        result = await twilio_service.release_assigned_twilio_number(
+            business_id=current_business.id
+        )
+        
+        logger.info(f"Twilio Release: Successfully initiated release for Twilio number of business_id={current_business.id}")
+        return result
+    except HTTPException as http_exc:
+        if sync_db_session: sync_db_session.close()
+        raise http_exc
+    except Exception as e:
+        logger.exception(f"Twilio Release: Error releasing Twilio number for business_id={current_business.id}: {e}")
+        if sync_db_session: sync_db_session.close()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to release number due to an internal error."
         )
+    finally:
+        if sync_db_session:
+            sync_db_session.close()

@@ -11,7 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Body, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Engagement, Customer, BusinessProfile
-from app.config import settings
+from app.config import get_settings
+settings = get_settings()
 from app.services.twilio_service import send_sms_via_twilio  
 from datetime import datetime
 from pydantic import BaseModel

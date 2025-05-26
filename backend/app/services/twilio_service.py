@@ -13,13 +13,14 @@ from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 
 
-from app.config import settings
+from app.config import get_settings
+settings = get_settings()
 from app.database import SessionLocal
 from app.models import BusinessProfile, Customer, Message, OptInStatus
 from app.models import BusinessProfile as BusinessProfileModel, Customer as CustomerModel, ConsentLog as ConsentLogModel, OptInStatus # Make sure OptInStatus is imported from models
 from app.schemas import normalize_phone_number # Ensure this is imported from schemas
-from app.config import settings # Ensure settings is imported
 from sqlalchemy import desc 
+from fastapi.concurrency import run_in_threadpool
 
 
 
@@ -310,10 +311,10 @@ class TwilioService:
             if from_number_to_use: # Only add 'from_' if it's specified (e.g., not for support MSID pool)
                 create_params['from_'] = from_number_to_use
             
-            twilio_msg = self.client.messages.create(**create_params)
-            
-            logger.info(f"{log_prefix} SMS sent via Twilio. SID: {twilio_msg.sid}, Status: {twilio_msg.status}")
-            return twilio_msg.sid
+            twilio_msg_obj = await run_in_threadpool(self.client.messages.create, **create_params)
+
+            logger.info(f"{log_prefix} SMS sent via Twilio. SID: {twilio_msg_obj.sid}, Status: {twilio_msg_obj.status}")
+            return str(twilio_msg_obj.sid) # Ensure SID is returned as a string
         
         except TwilioRestException as e:
             logger.error(f"{log_prefix} Twilio API error: {e.status} - {e.msg}", exc_info=True)
@@ -466,7 +467,7 @@ class TwilioService:
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=error_detail
                 )
-            return twilio_msg.sid
+            return str(twilio_msg.sid)
         except HTTPException as http_exc:
             raise http_exc
         except Exception as e:
@@ -475,6 +476,84 @@ class TwilioService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to send OTP due to an internal error: {str(e)}"
             )
+        
+# --- ADD THIS NEW METHOD ---
+    async def send_sms_to_owner(
+        self,
+        business_owner_phone: str,
+        message_body: str,
+        # Optionally, you could pass the 'business' object if you need to use
+        # one of its specific Twilio numbers as the 'from' number.
+        # For now, this uses a default system/support number.
+    ) -> Optional[str]: # Returns SID or None
+        """
+        Sends an SMS notification to the business owner.
+        """
+        log_prefix = f"[TwilioService.send_sms_to_owner TO:{business_owner_phone}]"
+        logger.info(f"{log_prefix} Preparing to send notification.")
+
+        if not self.client:
+            logger.error(f"{log_prefix} Twilio client not initialized.")
+            return None
+        
+        if not business_owner_phone:
+            logger.error(f"{log_prefix} No business_owner_phone provided.")
+            return None
+        
+        if not message_body:
+            logger.error(f"{log_prefix} No message_body provided for owner notification.")
+            return None
+
+        try:
+            normalized_owner_phone = normalize_phone_number(business_owner_phone)
+        except ValueError as e:
+            logger.error(f"{log_prefix} Invalid owner phone number: {business_owner_phone}. Error: {e}")
+            return None # Or raise an appropriate error
+
+        # Determine the "From" number or Messaging Service SID for owner notifications.
+        # Option 1: Use a dedicated support/system Messaging Service SID (recommended if available)
+        # Option 2: Use a specific default Twilio "From" number for system notifications.
+        from_identity = None
+        messaging_service_sid_for_owner = settings.TWILIO_SUPPORT_MESSAGING_SERVICE_SID
+
+        if messaging_service_sid_for_owner:
+            logger.info(f"{log_prefix} Using TWILIO_SUPPORT_MESSAGING_SERVICE_SID: {messaging_service_sid_for_owner} for owner notification.")
+            from_identity = {'messaging_service_sid': messaging_service_sid_for_owner}
+        elif settings.TWILIO_DEFAULT_FROM_NUMBER: # Fallback to a default "From" number if no support MSID
+            logger.info(f"{log_prefix} Using TWILIO_DEFAULT_FROM_NUMBER: {settings.TWILIO_DEFAULT_FROM_NUMBER} for owner notification.")
+            from_identity = {'from_': settings.TWILIO_DEFAULT_FROM_NUMBER}
+        else:
+            logger.error(f"{log_prefix} No TWILIO_SUPPORT_MESSAGING_SERVICE_SID or TWILIO_DEFAULT_FROM_NUMBER configured in settings for owner notifications.")
+            return None
+
+        try:
+            logger.info(
+                f"{log_prefix} Sending owner notification to {normalized_owner_phone} "
+                f"using identity: {from_identity}. Body: '{message_body[:70]}...'"
+            )
+            
+            message_params = {
+                'to': normalized_owner_phone,
+                'body': message_body,
+            }
+            if 'messaging_service_sid' in from_identity:
+                message_params['messaging_service_sid'] = from_identity['messaging_service_sid']
+            elif 'from_' in from_identity:
+                message_params['from_'] = from_identity['from_']
+            
+            twilio_msg = self.client.messages.create(**message_params)
+            
+            logger.info(f"{log_prefix} Owner notification SMS sent successfully. SID: {twilio_msg.sid}, Status: {twilio_msg.status}")
+            return twilio_msg.sid
+        
+        except TwilioRestException as e:
+            logger.error(f"{log_prefix} Twilio API error sending owner SMS: {e.status} - {e.msg}", exc_info=True)
+            # Don't raise HTTPException here, just return None, let the background task handle failure.
+            return None
+        except Exception as e:
+            logger.error(f"{log_prefix} Unexpected error sending owner SMS: {str(e)}", exc_info=True)
+            return None
+    # --- END OF NEW METHOD ---
 
 
 # Standalone function for backward compatibility or direct calls.

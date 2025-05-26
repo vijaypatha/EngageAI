@@ -1,10 +1,11 @@
 # backend/app/services/stats_service.py
 
 from sqlalchemy.orm import Session
-from app.models import Customer, RoadmapMessage, Message, Engagement, ConsentLog
-from sqlalchemy import func, desc, distinct # Added distinct
+# MODIFIED: Import Enums from app.models
+from app.models import Customer, RoadmapMessage, Message, Engagement, ConsentLog, MessageTypeEnum, MessageStatusEnum
+from sqlalchemy import func, desc, distinct, select # Added select for potential subquery optimization if needed later
 from loguru import logger
-from datetime import datetime, timedelta, timezone # Added timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 def get_stats_for_business(business_id: int, db: Session):
     logger.info(f"📊 Fetching dashboard stats for business_id={business_id}")
@@ -13,67 +14,64 @@ def get_stats_for_business(business_id: int, db: Session):
     communitySize = db.query(Customer).filter(Customer.business_id == business_id).count()
     logger.info(f"👥 Community size: {communitySize}")
 
-    # Replace the simple opt-in status counting with a more accurate approach
     optedIn = optedOut = optInPending = 0
-
-    # Get all customers for this business
     customers = db.query(Customer).filter(Customer.business_id == business_id).all()
 
     for customer in customers:
-        # Get latest consent status from ConsentLog
         latest_consent = (
             db.query(ConsentLog)
             .filter(
-                ConsentLog.phone_number == customer.phone,
+                ConsentLog.phone_number == customer.phone, # Assuming phone is unique enough here for consent context
                 ConsentLog.business_id == business_id
                 )
-            .order_by(desc(ConsentLog.replied_at))
+            .order_by(desc(ConsentLog.replied_at)) # Using replied_at as per existing logic
             .first()
         )
 
         if latest_consent:
-            if latest_consent.status == "opted_in":
+            # Ensure comparison is with the actual enum values or stored string representations
+            # Assuming latest_consent.status is a string like 'opted_in', 'opted_out'
+            if latest_consent.status == "opted_in": # TODO: Confirm if ConsentLog.status is Enum or string. If Enum, use .value
                 optedIn += 1
             elif latest_consent.status == "opted_out":
                 optedOut += 1
-            elif latest_consent.status in ["pending", "waiting"]: # Check for multiple pending states
+            elif latest_consent.status in ["pending", "waiting"]:
                 optInPending += 1
-            # Handle potential edge cases or assume pending if status is unexpected
             else:
-                 optInPending += 1
+                 optInPending += 1 # Default to pending if status is unexpected
         else:
-            # No consent log means pending opt-in request
-            optInPending += 1
+            optInPending += 1 # No consent log implies pending opt-in
 
     logger.info(f"✅ Opted In: {optedIn}, ⏳ Pending Opt-in: {optInPending}, ❌ Opted Out: {optedOut}")
 
     # Without Plan = customers with no messages at all (Roadmap or Scheduled)
     subquery_roadmap = db.query(RoadmapMessage.customer_id).filter(RoadmapMessage.business_id == business_id).distinct()
-    subquery_scheduled = db.query(Message.customer_id).filter(Message.business_id == business_id, Message.message_type == 'scheduled').distinct()
+    # MODIFIED: Use MessageTypeEnum for message_type
+    subquery_scheduled = db.query(Message.customer_id).filter(
+        Message.business_id == business_id,
+        Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE # Use Enum member
+    ).distinct()
 
     customers_with_plan = subquery_roadmap.union(subquery_scheduled).subquery()
-
+    # The SAWarning about coercing Subquery can be addressed later if needed, focus on AttributeError first.
+    # For example, by using: select(customers_with_plan.c.customer_id)
     withoutPlanCount = db.query(Customer).filter(
         Customer.business_id == business_id,
-        ~Customer.id.in_(customers_with_plan)
+        ~Customer.id.in_(customers_with_plan) # SAWarning: Coercing Subquery object into a select()
     ).count()
     logger.info(f"📭 Customers without plan: {withoutPlanCount}")
 
+    # REMOVED: 'pending' stat calculation for outgoing messages.
+    # Frontend (page.tsx) has removed its usage for outgoing "pending_review" messages.
+    # "pending_review" is not a standard status in MessageStatusEnum for Message objects.
 
-    # Pending = message.status == "pending_review" (Often 0 for outgoing, keep for potential future use)
-    pending = db.query(Message).filter(
-        Message.business_id == business_id,
-        Message.status == "pending_review",
-        Message.message_type == 'scheduled' # Ensure it's outgoing type
-    ).count()
-
-    # Scheduled = message.status == "scheduled" AND scheduled_time in the future
     now_utc = datetime.now(timezone.utc)
+    # Scheduled = message.status == "scheduled" AND scheduled_send_at in the future
     scheduled = db.query(Message).filter(
         Message.business_id == business_id,
-        Message.status == "scheduled",
-        Message.scheduled_time != None, # Ensure time is set
-        Message.scheduled_time >= now_utc # Ensure it's upcoming
+        Message.status == MessageStatusEnum.SCHEDULED,      # MODIFIED: Use Enum member
+        Message.scheduled_send_at != None,                  # MODIFIED: Correct attribute name
+        Message.scheduled_send_at >= now_utc                # MODIFIED: Correct attribute name
     ).count()
 
     # Sent = message.sent_at is not null (Total historical sent)
@@ -82,13 +80,17 @@ def get_stats_for_business(business_id: int, db: Session):
         Message.sent_at.isnot(None)
     ).count()
 
-    # Rejected = message.status == "rejected" (if used)
+    # Rejected = message.status == "rejected"
+    # NOTE: 'REJECTED' is not a standard member of MessageStatusEnum as per message_service.py's GlobalMessageStatusEnum.
+    # If 'rejected' is a custom string status, this query is okay. Otherwise, this count might be inaccurate.
+    # The frontend expects this 'rejected' stat.
     rejected = db.query(Message).filter(
         Message.business_id == business_id,
-        Message.status == "rejected"
+        Message.status == "rejected" # Kept as string; use MessageStatusEnum.REJECTED if it exists and is appropriate.
     ).count()
 
-    logger.info(f"🕓 Pending Outgoing: {pending}, 📅 Scheduled: {scheduled}, ✅ Sent (Total): {sent}, ❌ Rejected: {rejected}")
+    logger.info(f"📅 Scheduled (Upcoming): {scheduled}, ✅ Sent (Total): {sent}, ❌ Rejected: {rejected}")
+
 
     # --- Calculate recent activity ---
     seven_days_ago = now_utc - timedelta(days=7)
@@ -103,7 +105,7 @@ def get_stats_for_business(business_id: int, db: Session):
     # Use created_at for replies as sent_at might be null until AI response is sent
     replies_last_7_days = db.query(Engagement).filter(
         Engagement.business_id == business_id,
-        Engagement.response != None,
+        Engagement.response != None, # Customer's message/reply to the business
         Engagement.created_at >= seven_days_ago
     ).count()
     logger.info(f"📥 Replies Last 7 Days: {replies_last_7_days}")
@@ -112,14 +114,14 @@ def get_stats_for_business(business_id: int, db: Session):
     return {
         "communitySize": communitySize,
         "withoutPlanCount": withoutPlanCount,
-        "pending": pending,
+        # "pending": pending, // REMOVED
         "scheduled": scheduled,
-        "sent": sent, # Total sent
+        "sent": sent,
         "rejected": rejected,
         "optedIn": optedIn,
         "optedOut": optedOut,
         "optInPending": optInPending,
-        "conversations": 0, # placeholder - could count active Conversation records
+        "conversations": 0, # Placeholder, as per existing code
         "sentLast7Days": sent_last_7_days,
         "repliesLast7Days": replies_last_7_days
     }
@@ -129,37 +131,32 @@ def calculate_reply_stats(business_id: int, db: Session):
     logger.info(f"📊 Fetching reply stats for business_id={business_id}")
 
     # Drafts Ready for Review (AI generated, status='pending_review')
+    # NOTE: Engagement.status == 'pending_review' is used here. Ensure 'pending_review' is a valid status for Engagement.
+    # If Engagement.status is an Enum, use Enum member for comparison.
     drafts_query = db.query(Engagement).filter(
         Engagement.business_id == business_id,
-        Engagement.status == 'pending_review',
+        Engagement.status == 'pending_review', # Check if Engagement.status is an Enum
         Engagement.ai_response != None
     )
     total_drafts = drafts_query.count()
     logger.info(f"🤖 AI Drafts Ready (Total): {total_drafts}")
 
-    # Unique Customers Waiting (customers associated with pending drafts)
-    # Use distinct() on customer_id from the same query
     customers_waiting = drafts_query.distinct(Engagement.customer_id).count()
     logger.info(f"👥 Customers with Waiting Drafts (Unique): {customers_waiting}")
 
     # Count of received messages (Engagements with a customer response)
     received_count = db.query(Engagement).filter(
         Engagement.business_id == business_id,
-        Engagement.response != None # Count engagements initiated by customer response
+        Engagement.response != None
     ).count()
-    logger.info(f"📩 Received Messages (Total): {received_count}")
+    logger.info(f"📩 Received Messages (Total Inbound): {received_count}")
 
-    # Map to the keys expected by the frontend API calls:
-    # `/review/reply-stats/{business_id}` response -> { customers_waiting: X, messages_total: Y }
-    # `/review/received-messages/{business_id}` response -> { received_count: Z }
-    # We return all from this function now for simplicity if routes use it.
     return {
-        "customers_waiting": customers_waiting, # Used for big number & 'Waiting' line item
-        "messages_total": total_drafts,         # Used for 'AI Drafts Ready' line item
-        "received_count": received_count        # Used for 'Messages Received' line item
+        "customers_waiting": customers_waiting,
+        "messages_total": total_drafts, # Corresponds to draftsReady in frontend
+        "received_count": received_count
     }
 
-
-# --- Ensure these are the export lines at the bottom ---
+# Ensure these are the export lines at the bottom
 calculate_stats = get_stats_for_business
-calculate_reply_stats = calculate_reply_stats # Replace the lambda stub with this line
+# calculate_reply_stats = calculate_reply_stats # This was redundant if function name matches

@@ -1,18 +1,21 @@
+# backend/app/routes/review.py
+
 print("✅ review.py loaded")
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import RoadmapMessage, Message, Customer, Engagement, ConsentLog, Conversation
+# Added MessageTypeEnum to the import
+from app.models import RoadmapMessage, Message, Customer, Engagement, ConsentLog, Conversation, MessageTypeEnum, MessageStatusEnum
 from datetime import datetime, timezone
-from sqlalchemy import and_, func, desc, cast, Integer, JSON
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import and_, func, desc, cast, Integer, JSON # Unused: cast, Integer, JSON, JSONB in this file
+from sqlalchemy.dialects.postgresql import JSONB # Unused in this file
 from app.celery_tasks import process_scheduled_message_task
-from app.services import MessageService
-from app.services.stats_service import get_stats_for_business as get_stats_for_business, calculate_reply_stats
+# from app.services import MessageService # Unused in this file
+from app.services.stats_service import get_stats_for_business, calculate_reply_stats # get_stats_for_business was imported twice, fixed
 import logging
-import uuid
-import pytz
+# import uuid # Unused in this file
+# import pytz # Unused in this file
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +24,11 @@ def format_roadmap_message(msg: RoadmapMessage) -> dict:
     return {
         "id": msg.id,
         "smsContent": msg.smsContent,
-        "smsTiming": msg.smsTiming,
+        "smsTiming": msg.smsTiming, # smsTiming is a string from the model, not a datetime object itself
         "status": msg.status,
         "relevance": getattr(msg, "relevance", None),
-        "successIndicator": getattr(msg, "successIndicator", None),
+        # "successIndicator": getattr(msg, "successIndicator", None), # Mismatch: model has success_indicator
+        "success_indicator": getattr(msg, "success_indicator", None),
         "send_datetime_utc": msg.send_datetime_utc.isoformat() if msg.send_datetime_utc else None,
         "source": "roadmap"
     }
@@ -34,9 +38,11 @@ def format_message(msg: Message) -> dict:
     return {
         "id": msg.id,
         "smsContent": msg.content,
-        "smsTiming": msg.scheduled_time.strftime("Scheduled: %b %d, %I:%M %p") if msg.scheduled_time else None,
+        # Changed msg.scheduled_time to msg.scheduled_send_at
+        "smsTiming": msg.scheduled_send_at.strftime("Scheduled: %b %d, %I:%M %p") if msg.scheduled_send_at else None,
         "status": msg.status,
-        "send_datetime_utc": msg.scheduled_time.isoformat() if msg.scheduled_time else None,
+        # Changed msg.scheduled_time to msg.scheduled_send_at
+        "send_datetime_utc": msg.scheduled_send_at.isoformat() if msg.scheduled_send_at else None,
         "source": msg.message_metadata.get('source', 'scheduled') if msg.message_metadata else 'scheduled'
     }
 
@@ -50,35 +56,33 @@ def get_engagement_plan(customer_id: int, db: Session = Depends(get_db)):
 
     now_utc = datetime.now(timezone.utc)
 
-    # Get latest consent status
     latest_consent = (
         db.query(ConsentLog)
         .filter(ConsentLog.customer_id == customer_id)
-        .order_by(desc(ConsentLog.replied_at))
+        .order_by(desc(ConsentLog.replied_at)) # Assuming replied_at indicates latest interaction for consent
         .first()
     )
 
-    consent_status = latest_consent.status if latest_consent else "pending"
-    opted_in = latest_consent.status == "opted_in" if latest_consent else False
+    # OptInStatus values are lowercase e.g. "opted_in"
+    consent_status = latest_consent.status.value if latest_consent and latest_consent.status else "pending"
+    opted_in = consent_status == "opted_in"
 
-    # Get roadmap messages that haven't been scheduled yet
     roadmap_messages = db.query(RoadmapMessage).filter(
         and_(
             RoadmapMessage.customer_id == customer_id,
             RoadmapMessage.send_datetime_utc != None,
             RoadmapMessage.send_datetime_utc >= now_utc,
-            RoadmapMessage.status != "deleted",
-            RoadmapMessage.status != "scheduled"  # Don't include already scheduled messages
+            RoadmapMessage.status != MessageStatusEnum.DELETED, # Use enum member for comparison
+            RoadmapMessage.status != MessageStatusEnum.SCHEDULED # Use enum member
         )
     ).all()
 
-    # Get scheduled messages
     scheduled_messages = db.query(Message).filter(
         and_(
             Message.customer_id == customer_id,
-            Message.message_type == 'scheduled',
-            Message.scheduled_time != None,
-            Message.scheduled_time >= now_utc
+            Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE, # Corrected comparison
+            Message.scheduled_send_at != None,      # Corrected attribute
+            Message.scheduled_send_at >= now_utc    # Corrected attribute
         )
     ).all()
 
@@ -94,17 +98,14 @@ def get_engagement_plan(customer_id: int, db: Session = Depends(get_db)):
 
 @router.get("/stats/{business_id}")
 def get_stats(business_id: int, db: Session = Depends(get_db)):
-    """API endpoint for getting message counts by status"""
     return get_stats_for_business(business_id, db)
 
 @router.get("/reply-stats/{business_id}")
 def get_reply_stats(business_id: int, db: Session = Depends(get_db)):
-    """API endpoint for getting reply stats"""
     return calculate_reply_stats(business_id, db)
 
 @router.get("/customers/without-engagement-count/{business_id}")
 def get_contact_stats(business_id: int, db: Session = Depends(get_db)):
-    """Get count of customers without any engagement"""
     total_customers = db.query(Customer).filter(
         Customer.business_id == business_id
     ).count()
@@ -118,10 +119,8 @@ def get_contact_stats(business_id: int, db: Session = Depends(get_db)):
         "customers_without_engagement": total_customers - customers_with_messages
     }
 
-@router.get("/all-engagements")
-def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
-    """Get all engagement data for a business"""
-    # Get all customers for this business
+@router.get("/all-engagements") # This endpoint seems to be for a general review, not just "engagements" table
+def get_all_engagements_review(business_id: int, db: Session = Depends(get_db)): # Renamed for clarity
     customers = db.query(Customer).filter(
         Customer.business_id == business_id
     ).all()
@@ -130,7 +129,6 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
     now_utc = datetime.now(timezone.utc)
 
     for customer in customers:
-        # Get latest consent status
         latest_consent = (
             db.query(ConsentLog)
             .filter(ConsentLog.customer_id == customer.id)
@@ -138,42 +136,47 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
             .first()
         )
 
-        consent_status = latest_consent.status if latest_consent else "pending"
+        consent_status = latest_consent.status.value if latest_consent and latest_consent.status else "pending"
         consent_updated = latest_consent.replied_at if latest_consent else None
-        opted_in = latest_consent.status == "opted_in" if latest_consent else False
+        opted_in = consent_status == "opted_in"
 
-        # Get roadmap messages
-        roadmap = db.query(RoadmapMessage).filter(
+        messages_to_display = [] # Renamed for clarity
+        
+        # Roadmap messages that are upcoming
+        # Roadmap messages that are upcoming AND NOT YET SCHEDULED
+        roadmap_items = db.query(RoadmapMessage).filter(
             RoadmapMessage.customer_id == customer.id,
-            RoadmapMessage.status != "deleted"
+            RoadmapMessage.status != MessageStatusEnum.DELETED,
+            RoadmapMessage.status != MessageStatusEnum.SCHEDULED,  # <<< Key change: Exclude already scheduled
+            RoadmapMessage.send_datetime_utc != None, # Ensure it has a send time
+            RoadmapMessage.send_datetime_utc >= now_utc
         ).all()
+        for msg in roadmap_items:
+            messages_to_display.append(format_roadmap_message(msg))
 
-        # Get scheduled messages
-        scheduled = db.query(Message).filter(
+        # Scheduled messages (from Message table) that are upcoming
+        # Scheduled messages (from Message table) that are upcoming
+        scheduled_message_items = db.query(Message).filter(
             Message.customer_id == customer.id,
-            Message.message_type == 'scheduled'
+            Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE,
+            Message.scheduled_send_at != None,
+            Message.scheduled_send_at >= now_utc
         ).all()
+        for msg in scheduled_message_items:
+             formatted_msg_data = format_message(msg)
+             formatted_msg_data["source"] = "scheduled" # Ensure source is 'scheduled' for these items
+             messages_to_display.append(formatted_msg_data)
 
-        # Format messages
-        messages = []
-        for msg in roadmap:
-            if msg.send_datetime_utc and msg.send_datetime_utc >= now_utc:
-                messages.append(format_roadmap_message(msg))
 
-        for msg in scheduled:
-            if msg.scheduled_time and msg.scheduled_time >= now_utc:
-                messages.append(format_message(msg))
-
-        if messages:  # Only include customers with messages
+        if messages_to_display: 
             result.append({
                 "customer_id": customer.id,
                 "customer_name": customer.customer_name,
                 "opted_in": opted_in,
                 "latest_consent_status": consent_status,
                 "latest_consent_updated": consent_updated.isoformat() if consent_updated else None,
-                "messages": sorted(messages, key=lambda x: x["send_datetime_utc"] or "")
+                "messages": sorted(messages_to_display, key=lambda x: datetime.fromisoformat(x["send_datetime_utc"]) if x.get("send_datetime_utc") else datetime.min.replace(tzinfo=timezone.utc))
             })
-
     return result
 
 @router.put("/update-time-debug/{id}")
@@ -181,10 +184,13 @@ def debug_update_message_time(
     id: int,
     source: str = Query(...),
     payload: dict = Body(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db) # db was unused
 ):
     print("✅ REACHED DEBUG ENDPOINT")
     print(f"ID={id}, Source={source}, Payload={payload}")
+    # Example: if source == "roadmap":
+    # item = db.query(RoadmapMessage).filter(RoadmapMessage.id == id).first()
+    # if item and 'new_time' in payload: item.send_datetime_utc = payload['new_time']; db.commit()
     return {"received": True, "id": id, "payload": payload, "source": source}
 
 @router.get("/customer-replies")
@@ -192,41 +198,33 @@ def get_customer_replies(
     business_id: int = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Get all customer replies for a business"""
     replies = db.query(Engagement).join(Customer).filter(
         Customer.business_id == business_id,
-        Engagement.response != None
-    ).order_by(Engagement.sent_at.desc()).all()
+        Engagement.response != None # Assuming Engagement.response holds the customer's reply text
+    ).order_by(Engagement.created_at.desc()).all() # Order by when engagement (and thus reply) was created
 
     result = []
-    for reply_engagement in replies: # Renamed loop variable for clarity
-        customer = db.query(Customer).filter(Customer.id == reply_engagement.customer_id).first()
+    for reply_engagement in replies: 
+        customer = db.query(Customer).filter(Customer.id == reply_engagement.customer_id).first() # This could be optimized
         if customer:
             result.append({
-                "id": reply_engagement.id,  # <--- THIS IS THE PRIMARY FIX (Engagement ID)
+                "id": reply_engagement.id, 
                 "customer_id": customer.id,
                 "customer_name": customer.customer_name,
-                "phone": customer.phone, # Added from Customer model
-                "response": reply_engagement.response, # Customer's message
-                "ai_response": reply_engagement.ai_response, # AI's draft for this engagement
-                "status": reply_engagement.status,
-                # Use engagement's created_at for the customer's message timestamp
+                "phone": customer.phone, 
+                "response": reply_engagement.response, 
+                "ai_response": reply_engagement.ai_response, 
+                "status": reply_engagement.status.value if reply_engagement.status else None, # Use .value for enums if sending as string
                 "timestamp": reply_engagement.created_at.isoformat() if reply_engagement.created_at else None,
                 "lifecycle_stage": customer.lifecycle_stage,
                 "pain_points": customer.pain_points,
                 "interaction_history": customer.interaction_history,
-                # Note: 'last_message' from CustomerReply interface is ambiguous here;
-                # 'response' (customer's message) or 'ai_response' (AI's message) are more specific.
-                # 'sent_at' in the original code referred to the engagement's sent_at,
-                # which is for when the AI's reply was sent. We'll keep it if useful,
-                # but 'timestamp' above is likely for the customer's message.
                 "engagement_sent_at": reply_engagement.sent_at.isoformat() if reply_engagement.sent_at else None
             })
     return result
 
 @router.post("/debug/send-sms-now/{message_id}")
 def debug_send_sms_now(message_id: int):
-    """Debug endpoint to trigger immediate send of a scheduled message"""
     print(f"🚨 Manually triggering SMS for Message id={message_id}")
     process_scheduled_message_task.apply_async(args=[message_id])
     return {"status": "triggered"}
@@ -248,13 +246,13 @@ def get_full_customer_history(
             .order_by(desc(ConsentLog.replied_at))
             .first()
         )
-        consent_status = latest_consent.status if latest_consent else "pending"
+        # Use .value for enums when assigning to a string if that's the intent
+        consent_status = latest_consent.status.value if latest_consent and latest_consent.status else "pending"
         opted_in = consent_status == "opted_in"
 
         message_history = []
         processed_sent_message_ids_from_messages_table = set()
 
-        # 1. Process the 'messages' table (typically outbound scheduled/direct messages)
         customer_messages_from_message_table = db.query(Message).filter(
             Message.customer_id == customer.id
         ).order_by(Message.created_at.asc()).all()
@@ -262,63 +260,58 @@ def get_full_customer_history(
         for msg_record in customer_messages_from_message_table:
             if msg_record.is_hidden:
                 continue
-            if msg_record.status == "sent":
+            # Example: Only add 'sent' messages from Message table to avoid double-counting 'scheduled' ones handled elsewhere
+            # Adjust logic based on how you differentiate message sources
+            if msg_record.status == MessageStatusEnum.SENT: # Use enum member for comparison
                 logger.debug(f"Adding from messages table: msg_id={msg_record.id}, content='{msg_record.content[:30]}...'")
                 message_history.append({
                     "id": f"msg-{msg_record.id}",
-                    "type": "sent",
+                    "type": "sent", # Or derive from msg_record.message_type.value
                     "content": msg_record.content,
-                    "status": msg_record.status,
-                    "scheduled_time": msg_record.scheduled_time.isoformat() if msg_record.scheduled_time else None,
+                    "status": msg_record.status.value, # Use .value for enums if sending as string
+                    # Corrected attribute name below:
+                    "scheduled_time": msg_record.scheduled_send_at.isoformat() if msg_record.scheduled_send_at else None,
                     "sent_time": msg_record.sent_at.isoformat() if msg_record.sent_at else None,
-                    "source": msg_record.message_metadata.get('source', 'scheduled') if msg_record.message_metadata else 'scheduled',
+                    "source": msg_record.message_metadata.get('source', 'message_table') if msg_record.message_metadata else 'message_table',
                     "customer_id": msg_record.customer_id,
                     "is_hidden": msg_record.is_hidden,
                 })
                 processed_sent_message_ids_from_messages_table.add(msg_record.id)
-            # Add other statuses from Message table if needed (e.g., "scheduled")
-
-        # 2. Process 'engagements' table (customer replies, AI drafts, and AI sent replies not covered by messages table)
+            
         customer_engagements = db.query(Engagement).filter(
             Engagement.customer_id == customer.id
         ).order_by(Engagement.created_at.asc()).all()
 
         for eng_record in customer_engagements:
-            # Add customer's inbound message (their reply)
             if eng_record.response:
                 logger.debug(f"Adding customer response from engagement: eng_id={eng_record.id}, response='{eng_record.response[:30]}...'")
                 message_history.append({
                     "id": f"eng-cust-{eng_record.id}",
-                    "type": "customer",
+                    "type": "customer", # This seems to represent inbound/received
                     "content": eng_record.response,
-                    "status": "received", # For clarity on frontend
-                    "sent_time": eng_record.created_at.isoformat() if eng_record.created_at else None, # Customer message time = engagement creation time
+                    "status": "received", 
+                    "sent_time": eng_record.created_at.isoformat() if eng_record.created_at else None, 
                     "source": "customer_reply",
                     "customer_id": eng_record.customer_id,
                     "is_hidden": False, 
                 })
 
-            # Add AI response from the engagement (draft or sent)
             if eng_record.ai_response:
                 logger.debug(f"Considering AI response from engagement: eng_id={eng_record.id}, status={eng_record.status}, message_id={eng_record.message_id}, ai_response='{eng_record.ai_response[:30]}...'")
-                # Skip if this AI response was 'sent' AND it's linked to a Message record
-                # that we've already processed from the `messages` table.
-                # This prevents duplicating sent messages that exist in both tables.
-                if eng_record.status == "sent" and \
+                if eng_record.status == MessageStatusEnum.SENT and \
                    eng_record.message_id and \
                    eng_record.message_id in processed_sent_message_ids_from_messages_table:
                     logger.debug(f"SKIPPING sent AI response from eng_id={eng_record.id} as message_id={eng_record.message_id} already processed.")
                     continue
                 
                 logger.debug(f"ADDING AI response from eng_id={eng_record.id}")
-                message_type = "ai_draft" if eng_record.status != "sent" else "sent"
+                message_type = "ai_draft" if eng_record.status != MessageStatusEnum.SENT else MessageTypeEnum.OUTBOUND_AI_REPLY.value # Example type
                 message_history.append({
                     "id": f"eng-ai-{eng_record.id}",
                     "type": message_type,
                     "content": eng_record.ai_response,
-                    "status": eng_record.status,
-                    # sent_time is only for 'sent' type messages from engagements
-                    "sent_time": eng_record.sent_at.isoformat() if eng_record.sent_at and message_type == "sent" else None,
+                    "status": eng_record.status.value, # Use .value
+                    "sent_time": eng_record.sent_at.isoformat() if eng_record.sent_at and eng_record.status == MessageStatusEnum.SENT else None,
                     "source": "ai_response_engagement",
                     "customer_id": eng_record.customer_id,
                     "is_hidden": False, 
@@ -333,7 +326,7 @@ def get_full_customer_history(
             "customer_name": customer.customer_name,
             "phone": customer.phone,
             "opted_in": opted_in,
-            "consent_status": consent_status,
+            "consent_status": consent_status, # Already a string from .value or "pending"
             "consent_updated": latest_consent.replied_at.isoformat() if latest_consent and latest_consent.replied_at else None,
             "message_count": len(message_history),
             "messages": message_history
@@ -341,12 +334,11 @@ def get_full_customer_history(
     logger.info(f"Finished processing history for business_id: {business_id}. Total customers processed: {len(customers)}")
     return result
 
-@router.get("/review/customer-id/from-message/{message_id}")
-def get_customer_id_from_message(message_id: int, db: Session = Depends(get_db)):
-    """Get customer ID from a message ID"""
+@router.get("/review/customer-id/from-message/{message_id}") # Path parameter name fixed
+def get_customer_id_from_message_review(message_id: int, db: Session = Depends(get_db)): # Function name fixed for clarity
     message = db.query(Message).filter(
         Message.id == message_id,
-        Message.message_type == 'scheduled'
+        Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE # Corrected comparison
     ).first()
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -355,13 +347,15 @@ def get_customer_id_from_message(message_id: int, db: Session = Depends(get_db))
 
 @router.put("/hide-sent/{message_id}")
 def hide_sent_message(message_id: int, hide: bool = Query(True), db: Session = Depends(get_db)):
-    """Hide or unhide a sent message"""
     message = db.query(Message).filter(
         Message.id == message_id,
-        Message.message_type == 'scheduled'
+        # Assuming you only want to hide messages that were of type "scheduled_message"
+        # If it can be any message type that was sent, this filter might be too restrictive or needs adjustment
+        Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE # Corrected comparison
     ).first()
     if not message:
-        raise HTTPException(status_code=404, detail="Message not found")
+        # Consider if you want to allow hiding non-scheduled messages or if this is the intended logic
+        raise HTTPException(status_code=404, detail="Scheduled message not found or not applicable for hiding")
 
     message.is_hidden = hide
     db.commit()
@@ -370,14 +364,12 @@ def hide_sent_message(message_id: int, hide: bool = Query(True), db: Session = D
 
 @router.get("/v2/engagement-plan/{customer_id}")
 def get_engagement_plan_v2(customer_id: int, db: Session = Depends(get_db)):
-    """Get engagement plan with additional metadata"""
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
     now_utc = datetime.now(timezone.utc)
 
-    # Get latest consent status
     latest_consent = (
         db.query(ConsentLog)
         .filter(ConsentLog.customer_id == customer_id)
@@ -385,34 +377,33 @@ def get_engagement_plan_v2(customer_id: int, db: Session = Depends(get_db)):
         .first()
     )
 
-    consent_status = latest_consent.status if latest_consent else "pending"
+    consent_status = latest_consent.status.value if latest_consent and latest_consent.status else "pending"
 
-    # Get roadmap messages that haven't been scheduled yet
     roadmap_messages = db.query(RoadmapMessage).filter(
         and_(
             RoadmapMessage.customer_id == customer_id,
             RoadmapMessage.send_datetime_utc != None,
             RoadmapMessage.send_datetime_utc >= now_utc,
-            RoadmapMessage.status != "deleted",
-            RoadmapMessage.status != "scheduled"
+            RoadmapMessage.status != MessageStatusEnum.DELETED, # Use enum member
+            RoadmapMessage.status != MessageStatusEnum.SCHEDULED # Use enum member
         )
     ).all()
 
-    # Get scheduled messages
     scheduled_messages = db.query(Message).filter(
         and_(
             Message.customer_id == customer_id,
-            Message.message_type == 'scheduled',
-            Message.scheduled_time != None,
-            Message.scheduled_time >= now_utc
+            Message.message_type == MessageTypeEnum.SCHEDULED_MESSAGE, # Corrected comparison
+            Message.scheduled_send_at != None,      # Corrected attribute
+            Message.scheduled_send_at >= now_utc    # Corrected attribute
         )
     ).all()
 
     roadmap_data = []
     for msg in roadmap_messages:
         data = format_roadmap_message(msg)
+        # Ensure 'relevance', 'success_indicator', 'no_response_plan' are actual attributes of RoadmapMessage model
         data["metadata"] = {
-            "relevance": msg.relevance,
+            "relevance": msg.relevance, 
             "success_indicator": msg.success_indicator,
             "no_response_plan": msg.no_response_plan
         }
@@ -429,7 +420,7 @@ def get_engagement_plan_v2(customer_id: int, db: Session = Depends(get_db)):
             "id": customer.id,
             "name": customer.customer_name,
             "phone": customer.phone,
-            "consent_status": consent_status
+            "consent_status": consent_status # Already a string from .value or "pending"
         },
         "engagements": roadmap_data + scheduled_data
     }

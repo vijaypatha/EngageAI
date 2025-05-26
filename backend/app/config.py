@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     FRONTEND_APP_URL: str = os.getenv("FRONTEND_APP_URL", "http://localhost:3000") # Add/Confirm this
 
+    # Appointment Service settings
+    APPOINTMENT_REMINDER_HOURS_BEFORE: int = 24 # e.g., Send reminder 24 hours before
+    APPOINTMENT_THANK_YOU_HOURS_AFTER: int = 2  # e.g., Send thank you 2 hours after
+
+
 
     class Config:
         env_file = ".env"
@@ -47,7 +52,20 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> Settings:
-    """Get cached settings instance"""
+    # Check if .env file exists
+    if not os.path.exists(".env"):
+        print("Warning: .env file not found. Using environment variables or default values.")
+
+    # Print all loaded settings for debugging (optional)
+    # loaded_settings = Settings()
+    # print("Loaded settings:")
+    # for field_name, value in loaded_settings.model_fields.items():
+    #     actual_value = getattr(loaded_settings, field_name)
+    #     print(f"  {field_name}: {actual_value}")
+
     return Settings()
 
-settings = get_settings()
+# This function can be used as a dependency that can be overridden in tests
+# to provide different settings. By default, it returns the standard settings.
+def get_settings_override() -> Settings:
+    return get_settings()

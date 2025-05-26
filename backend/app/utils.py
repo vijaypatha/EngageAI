@@ -1,81 +1,85 @@
-from datetime import datetime, timedelta, time
-import pytz
+# backend/app/utils.py
+from datetime import datetime, time, timedelta 
 import logging
+from typing import Optional, Dict, Any
+import pytz
+
+# Import specific functions from timezone_utils needed by this module's functions
 from app.timezone_utils import (
     get_business_timezone,
-    get_customer_timezone,
-    convert_to_utc,
-    convert_from_utc,
-    format_datetime,
     is_business_hours,
-    get_next_business_hour
+    get_next_business_hour,
+    # Removed get_utc_now, convert_to_utc from here
 )
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-def parse_sms_timing(sms_timing: str, business_timezone: str) -> datetime:
-    """
-    Parse SMS timing formats:
-    - 'Day X, HH:MM AM/PM'
-    - 'Immediate (New Client Welcome)'
-    - Other special cases
-    """
-    logger.info(f"Parsing SMS timing: {sms_timing}")
-    
+def parse_time_string(time_str: str) -> Optional[time]:
+    if not isinstance(time_str, str):
+        logger.warning(f"parse_time_string received non-string input: {time_str}")
+        return None
     try:
-        # Handle immediate case
-        if sms_timing.startswith("Immediate"):
-            return get_next_business_hour(datetime.now(), business_timezone)
+        return datetime.strptime(time_str, '%H:%M:%S').time()
+    except ValueError:
+        try:
+            return datetime.strptime(time_str, '%H:%M').time()
+        except ValueError:
+            logger.error(f"Invalid time format for string: '{time_str}'. Expected HH:MM or HH:MM:SS.")
+            return None
+
+def parse_sms_timing(sms_timing: str, business_timezone_str: str) -> datetime:
+    logger.info(f"Parsing SMS timing: '{sms_timing}' for timezone: {business_timezone_str}")
+    business_tz = get_business_timezone(business_timezone_str)
+
+    try:
+        if sms_timing.lower().startswith("immediate"):
+            now_in_business_tz = datetime.now(business_tz)
+            return get_next_business_hour(now_in_business_tz, business_timezone_str)
 
         parts = sms_timing.split(", ")
         if len(parts) != 2:
-            raise ValueError(f"Invalid timing format: '{sms_timing}'")
-
+            raise ValueError(f"Invalid timing format (expected 'Day X, HH:MM AM/PM'): '{sms_timing}'")
         day_part, time_part = parts
 
-        # Extract day offset
-        try:
-            days_offset = int(day_part.split(" ")[1])
-        except (IndexError, ValueError):
-            raise ValueError(f"Invalid day format: '{day_part}'")
+        days_offset = 0
+        if day_part.lower().startswith("day "):
+            try:
+                days_offset = int(day_part.split(" ")[1])
+            except (IndexError, ValueError):
+                raise ValueError(f"Invalid day format in '{day_part}'")
+        else:
+            raise ValueError(f"Unsupported day format: '{day_part}'")
 
-        # Extract time
-        try:
-            scheduled_time = datetime.strptime(time_part, "%I:%M %p").time()
-        except ValueError:
-            raise ValueError(f"Invalid time format: '{time_part}'")
-
-        # Calculate final datetime
-        tz = get_business_timezone(business_timezone)
-        base_date = datetime.now(tz).date()
-        target_date = base_date + timedelta(days=days_offset)
-        local_dt = tz.localize(datetime.combine(target_date, scheduled_time))
+        parsed_time_obj = datetime.strptime(time_part, "%I:%M %p").time()
+        base_date_local = datetime.now(business_tz).date()
+        target_date_local = base_date_local + timedelta(days=days_offset)
         
-        # Ensure the time is within business hours
-        if not is_business_hours(local_dt, business_timezone):
-            local_dt = get_next_business_hour(local_dt, business_timezone)
+        local_dt_naive = datetime.combine(target_date_local, parsed_time_obj)
+        local_dt_aware = business_tz.localize(local_dt_naive, is_dst=None)
         
-        logger.info(f"Parsed timing to: {local_dt}")
-        return local_dt.astimezone(pytz.UTC)
-
+        if not is_business_hours(local_dt_aware, business_timezone_str):
+            return get_next_business_hour(local_dt_aware, business_timezone_str)
+        
+        return local_dt_aware.astimezone(pytz.utc)
     except Exception as e:
-        logger.error(f"Error parsing timing '{sms_timing}': {str(e)}")
-        raise
+        logger.error(f"Error parsing SMS timing '{sms_timing}': {str(e)}", exc_info=True)
+        raise ValueError(f"Could not parse SMS timing '{sms_timing}': {e}")
 
-def get_formatted_timing(send_time: datetime, business_timezone: str, customer_timezone: Optional[str] = None) -> dict:
-    """
-    Format datetime into human-readable dictionary with both business and customer timezone info.
-    """
-    # Convert to business timezone
-    business_tz = get_business_timezone(business_timezone)
-    if send_time.tzinfo is None:
-        send_time = pytz.UTC.localize(send_time)
-    business_dt = send_time.astimezone(business_tz)
-    
-    # Calculate day offset from current business time
-    now = datetime.now(business_tz)
-    day_offset = (business_dt.date() - now.date()).days
+def get_formatted_timing(
+    send_time_utc: datetime, 
+    business_timezone_str: str, 
+    customer_timezone_str: Optional[str] = None
+) -> Dict[str, Any]:
+    from app.timezone_utils import convert_from_utc, get_customer_timezone # Local import
+
+    if send_time_utc.tzinfo is None or send_time_utc.tzinfo.utcoffset(send_time_utc) is None:
+        send_time_utc = pytz.utc.localize(send_time_utc)
+    else:
+        send_time_utc = send_time_utc.astimezone(pytz.utc)
+
+    business_dt = convert_from_utc(send_time_utc, business_timezone_str)
+    now_in_business_tz = datetime.now(get_business_timezone(business_timezone_str))
+    day_offset = (business_dt.date() - now_in_business_tz.date()).days
     
     result = {
         "business_time": {
@@ -83,21 +87,17 @@ def get_formatted_timing(send_time: datetime, business_timezone: str, customer_t
             "time": business_dt.strftime("%I:%M %p"),
             "day_offset": max(0, day_offset),
             "display_date": business_dt.strftime("%A, %B %d"),
-            "display_time": business_dt.strftime("%I:%M %p"),
-            "timezone": business_timezone
+            "display_time": business_dt.strftime("%I:%M %p %Z"),
+            "timezone_str": business_timezone_str
         }
     }
-    
-    # Add customer timezone info if available
-    if customer_timezone:
-        customer_tz = get_customer_timezone(customer_timezone, business_timezone)
-        customer_dt = send_time.astimezone(customer_tz)
+    if customer_timezone_str:
+        customer_dt = convert_from_utc(send_time_utc, customer_timezone_str)
         result["customer_time"] = {
             "calendar_date": customer_dt.strftime("%m/%d/%Y"),
             "time": customer_dt.strftime("%I:%M %p"),
             "display_date": customer_dt.strftime("%A, %B %d"),
-            "display_time": customer_dt.strftime("%I:%M %p"),
-            "timezone": customer_timezone
+            "display_time": customer_dt.strftime("%I:%M %p %Z"),
+            "timezone_str": customer_timezone_str
         }
-    
     return result

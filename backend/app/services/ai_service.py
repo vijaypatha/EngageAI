@@ -11,8 +11,12 @@ from sqlalchemy.orm import Session
 import openai
 
 from app.models import Customer, BusinessProfile, RoadmapMessage, MessageStatusEnum 
-from app.schemas import RoadmapGenerate, RoadmapResponse, RoadmapMessageResponse
-from app.config import settings
+from app.schemas import (
+    RoadmapGenerate, RoadmapResponse, RoadmapMessageResponse, 
+    CustomerRead, BusinessProfileRead, RoadmapMessageRead
+)
+from app.config import get_settings
+settings = get_settings() # Call the function to get an instance of your settings
 from app.services.style_service import StyleService 
 from app.timezone_utils import get_business_timezone
 
@@ -359,9 +363,15 @@ Output ONLY the JSON object: {{"messages": [...]}}. Each object: {{"days_from_to
                 try: self.db.flush(); self.db.refresh(draft) 
                 except Exception as e_flush: self.db.rollback(); logger.error(f"{log_msg_prefix}: DB Error flushing: {e_flush}", exc_info=True); continue 
                 try:
-                    roadmap_drafts_for_response.append(RoadmapMessageResponse.from_orm(draft))
+                    # Use RoadmapMessageRead.model_validate for Pydantic v2.
+                    # This correctly maps the ORM object 'draft' to the Pydantic schema.
+                    roadmap_message_read_instance = RoadmapMessageRead.model_validate(draft) 
+                    roadmap_drafts_for_response.append(roadmap_message_read_instance)
                     successful_parses += 1 
-                except Exception as e_val: logger.error(f"{log_msg_prefix}: Pydantic validation draft ID {draft.id} failed: {e_val}", exc_info=True)
+                except Exception as e_val: 
+                    logger.error(f"{log_msg_prefix}: Pydantic validation for RoadmapMessageRead from draft ID {draft.id} failed: {e_val}", exc_info=True)
+                    # Log the draft object's values to aid debugging what Pydantic couldn't validate
+                    logger.debug(f"Failed draft details: id={draft.id}, smsContent='{draft.smsContent}', smsTiming='{draft.smsTiming}', created_at={draft.created_at}")
             
             if successful_parses > 0:
                 try: self.db.commit(); logger.info(f"AI_SERVICE_GR_V6: Committed {successful_parses} drafts for cust {data.customer_id}.")
@@ -371,10 +381,16 @@ Output ONLY the JSON object: {{"messages": [...]}}. Each object: {{"days_from_to
             if successful_parses == 0 and len(ai_message_list) > 0: final_msg = "AI returned messages, but none were valid."
             elif len(ai_message_list) == 0: final_msg = "AI did not return any messages."
 
+            customer_read_info = CustomerRead.model_validate(customer)
+            business_read_info = BusinessProfileRead.model_validate(business)
+
             return RoadmapResponse(
                 status="success" if successful_parses > 0 or len(ai_message_list) == 0 else "error",
-                message=final_msg, roadmap=roadmap_drafts_for_response,
-                total_messages=successful_parses, customer_info=customer_context, business_info=business_context
+                message=final_msg, 
+                roadmap=roadmap_drafts_for_response, # This list now contains RoadmapMessageRead instances
+                total_messages=successful_parses, 
+                customer_info=customer_read_info, # Pass the fully validated CustomerRead object here
+                business_info=business_read_info  # Pass the fully validated BusinessProfileRead object here
             )
         
         except HTTPException as http_exc: 

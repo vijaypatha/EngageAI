@@ -1,413 +1,541 @@
-# backend/app/routes/twilio_webhook.py
+# backend/app/routes/conversation_routes.py
 
-from datetime import datetime, timezone as dt_timezone
 import logging
-import traceback
 import uuid
-import json
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Response
-from fastapi.responses import PlainTextResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from datetime import datetime, timezone as dt_timezone
+from typing import List, Optional, Dict, Any
+import json # Not strictly needed if only Pydantic is used for JSON (de)serialization
+
 import pytz
-from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Body
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import desc, distinct, func, case, and_, String # Use String for casting
+from sqlalchemy.orm import selectinload, Session
 
-from app.database import get_db
-from app.models import (
-    BusinessProfile,
-    Engagement,
-    Message,
-    Conversation as ConversationModel,
-    ConsentLog,
-    Customer
-)
-
-from app.services.ai_service import AIService
-from app.services.consent_service import ConsentService
-from app.config import settings
+from app.database import get_async_db, get_db
+from app import models, schemas, auth
+from app.config import Settings, get_settings
+from app.services.message_service import MessageService
 from app.services.twilio_service import TwilioService
-
-from app.schemas import normalize_phone_number as normalize_phone
-import re
+from app.services.appointment_ai_service import AppointmentAIService
+from app.services.appointment_service import AppointmentService
+from app.models import (
+    AppointmentRequestStatusEnum,
+    AppointmentRequest as AppointmentRequestModel,
+    Customer as CustomerModel, # This is how CustomerModel is defined
+    Message as MessageModel,
+    OptInStatus, 
+    SenderTypeEnum, 
+    MessageTypeEnum,
+    ConsentLog as ConsentLogModel,
+)
+from app.timezone_utils import get_utc_now
+from pydantic import BaseModel
+from enum import Enum  # Add this at the top with other imports
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
 
-@router.post("/inbound", response_class=PlainTextResponse)
-async def receive_sms(
-    request: Request,
-    db: Session = Depends(get_db)
-) -> PlainTextResponse:
-    message_sid_from_twilio = "N/A"
-    from_number_raw = "N/A"
-    to_number_raw = "N/A"
-    form_data = {}
+router = APIRouter(
+    # Prefix and tags are managed in main.py
+)
 
-    # Instantiate services
-    twilio_service = TwilioService(db=db)
-    ai_service = AIService(db=db)
-    consent_service = ConsentService(db=db)
+class InboxConversationItem(BaseModel):
+    customer_id: int
+    customer_name: str
+    last_message_content: str
+    last_message_timestamp: Optional[datetime] = None
+    last_message_type: Optional[models.MessageTypeEnum] = None
+    last_message_status: Optional[models.MessageStatusEnum] = None
+    conversation_id: Optional[str] = None
+    latest_appointment_request_id: Optional[int] = None
+    latest_appointment_request_status: Optional[AppointmentRequestStatusEnum] = None
+    latest_appointment_request_datetime_utc: Optional[datetime] = None
+    latest_appointment_request_time_text: Optional[str] = None
+    model_config = {'from_attributes': True, 'use_enum_values': True}
+
+@router.get("/inbox", response_model=Dict[str, List[InboxConversationItem]])
+async def get_open_conversations(
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business),
+    db: AsyncSession = Depends(get_async_db),
+    appointment_status_filter: Optional[List[AppointmentRequestStatusEnum]] = Query(
+        None,
+        alias="appointment_status",
+        description="Filter conversations by associated AppointmentRequest status."
+    ),
+    no_appointment_history: Optional[bool] = Query(False, description="Filter for conversations with no appointment history.")
+):
+    logger.info(
+        f"Inbox: Fetching conversations for Business ID: {current_business.id}, "
+        f"Appt Status Filter: {appointment_status_filter}, No Appt History: {no_appointment_history}"
+    )
+
+    latest_message_subquery = (
+        select(
+            MessageModel.customer_id.label("l_customer_id"),
+            func.max(MessageModel.created_at).label("max_created_at")
+        )
+        .where(MessageModel.business_id == current_business.id)
+        .group_by(MessageModel.customer_id)
+        .subquery("latest_message_sub")
+    )
+
+    latest_appointment_subquery = (
+        select(
+            AppointmentRequestModel.customer_id.label("la_customer_id"),
+            func.max(AppointmentRequestModel.updated_at).label("max_updated_at")
+        )
+        .where(AppointmentRequestModel.business_id == current_business.id)
+        .group_by(AppointmentRequestModel.customer_id)
+        .subquery("latest_appointment_sub")
+    )
+
+    confirmed_status_val = AppointmentRequestStatusEnum.CONFIRMED_BY_OWNER.value
+    reschedule_status_val = AppointmentRequestStatusEnum.OWNER_PROPOSED_RESCHEDULE.value
+
+    stmt_customers_with_latest_interactions = (
+        select(
+            CustomerModel, # Selecting the ORM class CustomerModel as the first element
+            MessageModel.content.label("last_message_content"),
+            MessageModel.created_at.label("last_message_timestamp"),
+            MessageModel.message_type.label("last_message_type"),
+            MessageModel.status.label("last_message_status"),
+            MessageModel.conversation_id.label("message_conversation_id"),
+            AppointmentRequestModel.id.label("latest_appointment_request_id"),
+            AppointmentRequestModel.status.label("latest_appointment_request_status"),
+            case(
+                (AppointmentRequestModel.status.cast(String) == confirmed_status_val, AppointmentRequestModel.confirmed_datetime_utc),
+                (AppointmentRequestModel.status.cast(String) == reschedule_status_val, AppointmentRequestModel.owner_suggested_datetime_utc),
+                else_=AppointmentRequestModel.parsed_requested_datetime_utc
+            ).label("latest_appointment_request_datetime_utc"),
+            case(
+                (AppointmentRequestModel.status.cast(String) == confirmed_status_val, AppointmentRequestModel.parsed_requested_time_text),
+                (AppointmentRequestModel.status.cast(String) == reschedule_status_val, AppointmentRequestModel.owner_suggested_time_text),
+                else_=AppointmentRequestModel.parsed_requested_time_text
+            ).label("latest_appointment_request_time_text")
+        )
+        .select_from(CustomerModel)
+        .join(latest_message_subquery, CustomerModel.id == latest_message_subquery.c.l_customer_id)
+        .join(MessageModel, and_(
+            MessageModel.customer_id == latest_message_subquery.c.l_customer_id,
+            MessageModel.created_at == latest_message_subquery.c.max_created_at,
+            MessageModel.business_id == current_business.id
+        ))
+        .outerjoin(latest_appointment_subquery, CustomerModel.id == latest_appointment_subquery.c.la_customer_id)
+        .outerjoin(AppointmentRequestModel, and_(
+            AppointmentRequestModel.customer_id == latest_appointment_subquery.c.la_customer_id,
+            AppointmentRequestModel.updated_at == latest_appointment_subquery.c.max_updated_at,
+            AppointmentRequestModel.business_id == current_business.id
+        ))
+        .where(CustomerModel.business_id == current_business.id)
+    )
+
+    if appointment_status_filter:
+        logger.info(f"Applying appointment status filter: {appointment_status_filter}")
+        status_values = [s.value for s in appointment_status_filter]
+        
+        # Base status filter
+        stmt_customers_with_latest_interactions = stmt_customers_with_latest_interactions.where(
+            AppointmentRequestModel.status.in_(status_values)
+        )
+        
+        # If the filter is specifically for "upcoming appointments" (i.e., CONFIRMED_BY_OWNER),
+        # add a condition to ensure the appointment date is in the future.
+        # This assumes the "upcoming_appointments" filter sends only AppointmentRequestStatusEnum.CONFIRMED_BY_OWNER.
+        if len(appointment_status_filter) == 1 and appointment_status_filter[0] == AppointmentRequestStatusEnum.CONFIRMED_BY_OWNER:
+            stmt_customers_with_latest_interactions = stmt_customers_with_latest_interactions.where(
+                AppointmentRequestModel.confirmed_datetime_utc > get_utc_now() # Ensures the confirmed date is in the future
+            )
+            logger.info(f"Applied future date filter for CONFIRMED_BY_OWNER status.")
+    
+    if no_appointment_history:
+        stmt_customers_with_latest_interactions = stmt_customers_with_latest_interactions.where(
+            AppointmentRequestModel.id.is_(None)
+        )
+    
+    stmt_customers_with_latest_interactions = stmt_customers_with_latest_interactions.order_by(
+        desc(latest_message_subquery.c.max_created_at)
+    )
+
+    result_rows = await db.execute(stmt_customers_with_latest_interactions)
+    customer_interactions_data = result_rows.all()
+
+    response_list: List[InboxConversationItem] = []
+    for row_data in customer_interactions_data:
+        # CORRECTED: Access the CustomerModel ORM instance by its index (0) in the row
+        customer_orm = row_data[0] 
+        
+        conv_id = str(row_data.message_conversation_id) if row_data.message_conversation_id else None
+        if not conv_id: # Fallback logic for conversation_id
+            conv_res = await db.execute(
+                select(models.Conversation.id)
+                .where(models.Conversation.customer_id == customer_orm.id, models.Conversation.business_id == current_business.id)
+                .order_by(desc(models.Conversation.last_message_at)).limit(1)
+            )
+            conv_tuple = conv_res.first()
+            if conv_tuple: conv_id = str(conv_tuple[0])
+
+        response_list.append(
+            InboxConversationItem(
+                customer_id=customer_orm.id,
+                customer_name=customer_orm.customer_name or f"Customer ({customer_orm.phone[-4:] if customer_orm.phone else 'N/A'})",
+                last_message_content=(row_data.last_message_content or "")[:75] + ('...' if len(row_data.last_message_content or "") > 75 else ''),
+                last_message_timestamp=row_data.last_message_timestamp,
+                last_message_type=row_data.last_message_type,
+                last_message_status=row_data.last_message_status,
+                conversation_id=conv_id,
+                latest_appointment_request_id=row_data.latest_appointment_request_id,
+                latest_appointment_request_status=row_data.latest_appointment_request_status,
+                latest_appointment_request_datetime_utc=row_data.latest_appointment_request_datetime_utc,
+                latest_appointment_request_time_text=row_data.latest_appointment_request_time_text,
+            )
+        )
+    logger.info(f"Inbox: Returning {len(response_list)} conversations for Business ID {current_business.id}")
+    return {"conversations": response_list}
+
+
+@router.get("/customer/{customer_id}", response_model=schemas.ConversationResponseSchema)
+async def get_conversation_history(
+    customer_id: int,
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business),
+    db: AsyncSession = Depends(get_async_db),
+    settings: Settings = Depends(get_settings)
+):
+    logger.info(f"History: Fetching conversation for customer {customer_id} for business '{current_business.business_name}' (ID: {current_business.id})")
+
+    stmt_customer = (
+        select(CustomerModel)
+        .options(
+            selectinload(CustomerModel.business),
+            selectinload(CustomerModel.tags)
+        )
+        .where(CustomerModel.id == customer_id)
+        .where(CustomerModel.business_id == current_business.id)
+    )
+    result_customer = await db.execute(stmt_customer)
+    customer_orm: Optional[CustomerModel] = result_customer.scalar_one_or_none()
+
+    if not customer_orm:
+        raise HTTPException(status_code=404, detail="Customer not found for this business.")
+    if not customer_orm.business:
+        logger.error(f"History: Business profile not loaded for customer {customer_id} (Business ID: {customer_orm.business_id})")
+        raise HTTPException(status_code=500, detail="Associated business data missing.")
+
+    business_tz_str = customer_orm.business.timezone if customer_orm.business.timezone else "UTC"
+    try:
+        business_tz = pytz.timezone(business_tz_str)
+    except pytz.exceptions.UnknownTimeZoneError:
+        logger.warning(f"History: Unknown timezone '{business_tz_str}' for business {current_business.id}. Defaulting to UTC.")
+        business_tz = pytz.utc
+
+    # --- MODIFICATION START: Fetch latest consent and prepare customer DTO ---
+    actual_latest_consent_status: Optional[str] = None
+    actual_latest_consent_updated: Optional[datetime] = None
+
+    stmt_latest_consent_log = (
+        select(ConsentLogModel.status, ConsentLogModel.updated_at)
+        .where(ConsentLogModel.customer_id == customer_orm.id)
+        .where(ConsentLogModel.business_id == current_business.id)
+        .order_by(desc(ConsentLogModel.updated_at))
+        .limit(1)
+    )
+    result_latest_consent_log = await db.execute(stmt_latest_consent_log)
+    latest_consent_log_entry = result_latest_consent_log.first()
+
+    if latest_consent_log_entry:
+        actual_latest_consent_status = latest_consent_log_entry.status
+        actual_latest_consent_updated = latest_consent_log_entry.updated_at
+
+    tags_for_dto: List[schemas.TagRead] = []
+    if customer_orm.tags and hasattr(schemas, 'TagRead'):
+        try:
+            tags_for_dto = [schemas.TagRead.model_validate(tag) for tag in customer_orm.tags]
+        except Exception as e_tag_val:
+            logger.error(f"Error validating tags for customer {customer_orm.id}: {e_tag_val}")
+            tags_for_dto = []
+    elif customer_orm.tags:
+        logger.warning("schemas.TagRead not found, cannot validate tags.")
+        tags_for_dto = []
+
+    customer_data_for_dto = {
+        "id": customer_orm.id,
+        "customer_name": customer_orm.customer_name,
+        "phone": customer_orm.phone,
+        "sms_opt_in_status": customer_orm.sms_opt_in_status.value if isinstance(customer_orm.sms_opt_in_status, Enum) else customer_orm.sms_opt_in_status,
+        "latest_consent_status": actual_latest_consent_status,
+        "latest_consent_updated": actual_latest_consent_updated,
+        "tags": tags_for_dto,
+        "timezone": customer_orm.timezone if hasattr(customer_orm, 'timezone') and customer_orm.timezone else customer_orm.business.timezone,
+        # --- ADDING MISSING REQUIRED FIELDS ---
+        "business_id": customer_orm.business_id, # Added
+        "created_at": customer_orm.created_at,   # Added
+        # --- Optionally, include other common fields if they are part of CustomerRead ---
+        # "updated_at": getattr(customer_orm, 'updated_at', None),
+        # "notes": getattr(customer_orm, 'notes', None),
+        # "email": getattr(customer_orm, 'email', None),
+        # "lifecycle_stage": getattr(customer_orm, 'lifecycle_stage').value if hasattr(customer_orm, 'lifecycle_stage') and isinstance(getattr(customer_orm, 'lifecycle_stage'), Enum) else getattr(customer_orm, 'lifecycle_stage', None),
+    }
+    
+    customer_read_dto = schemas.CustomerRead.model_validate(customer_data_for_dto)
+    # --- MODIFICATION END ---
+
+    # ... (The rest of the function remains unchanged from your latest version) ...
+    # For example:
+    stmt_messages = (
+        select(models.Message)
+        .where(models.Message.customer_id == customer_id)
+        .where(models.Message.business_id == current_business.id)
+        .order_by(models.Message.created_at.asc())
+    )
+    result_messages = await db.execute(stmt_messages)
+    messages_from_db_orm = result_messages.scalars().all()
+
+    temp_message_list = []
+    for msg_record_orm in messages_from_db_orm:
+        if msg_record_orm.is_hidden and msg_record_orm.message_type != models.MessageTypeEnum.AI_DRAFT:
+            continue
+        temp_message_list.append({
+            "id": str(msg_record_orm.id),
+            "text": msg_record_orm.content,
+            "type": msg_record_orm.message_type.value,
+            "status": msg_record_orm.status.value if msg_record_orm.status else None,
+            "direction": "inbound" if msg_record_orm.message_type == models.MessageTypeEnum.INBOUND else "outbound",
+            "timestamp": msg_record_orm.created_at,
+            "sender_name": customer_orm.customer_name if msg_record_orm.message_type == models.MessageTypeEnum.INBOUND \
+                      else (customer_orm.business.representative_name or customer_orm.business.business_name),
+            "is_hidden": msg_record_orm.is_hidden,
+            "source": msg_record_orm.source,
+        })
+
+    stmt_ai_draft_engagements = (
+        select(models.Engagement)
+        .where(models.Engagement.customer_id == customer_id)
+        .where(models.Engagement.business_id == current_business.id)
+        .where(models.Engagement.status == models.MessageStatusEnum.PENDING_REVIEW)
+        .where(models.Engagement.ai_response.isnot(None))
+        .where(models.Engagement.is_hidden == False)
+        .where(models.Engagement.source.in_(["ai_response_engagement", "system_ai_draft", "customer_sms_reply_engagement"]))
+        .order_by(models.Engagement.created_at.asc())
+    )
+    result_ai_drafts = await db.execute(stmt_ai_draft_engagements)
+    ai_draft_engagements_orm = result_ai_drafts.scalars().all()
+
+    for draft_eng_orm in ai_draft_engagements_orm:
+        temp_message_list.append({
+            "id": f"eng-ai-{draft_eng_orm.id}",
+            "text": draft_eng_orm.ai_response,
+            "type": models.MessageTypeEnum.AI_DRAFT.value,
+            "status": draft_eng_orm.status.value if draft_eng_orm.status else models.MessageStatusEnum.PENDING_REVIEW.value,
+            "direction": "outbound",
+            "timestamp": draft_eng_orm.created_at,
+            "sender_name": customer_orm.business.representative_name or customer_orm.business.business_name,
+            "is_hidden": draft_eng_orm.is_hidden,
+            "source": draft_eng_orm.source or "system_ai_draft",
+        })
+
+    temp_message_list.sort(key=lambda m: m["timestamp"] or datetime.min.replace(tzinfo=dt_timezone.utc))
+
+    formatted_messages: List[schemas.ConversationMessage] = []
+    for msg_data in temp_message_list:
+        localized_timestamp = msg_data["timestamp"].astimezone(business_tz) if msg_data["timestamp"] else get_utc_now().astimezone(business_tz)
+        formatted_messages.append(schemas.ConversationMessage(
+            id=str(msg_data["id"]),
+            text=msg_data["text"],
+            type=models.MessageTypeEnum(msg_data["type"]),
+            status=models.MessageStatusEnum(msg_data["status"]) if msg_data["status"] else None,
+            direction=msg_data["direction"],
+            timestamp=localized_timestamp,
+            sender_name=msg_data["sender_name"],
+            is_hidden=msg_data["is_hidden"],
+            source=msg_data.get("source")
+        ))
+
+    stmt_conversation = (
+        select(models.Conversation)
+        .where(models.Conversation.customer_id == customer_orm.id)
+        .where(models.Conversation.business_id == current_business.id)
+        .order_by(desc(models.Conversation.last_message_at))
+        .limit(1)
+    )
+    result_conversation = await db.execute(stmt_conversation)
+    conversation_orm = result_conversation.scalar_one_or_none()
+    conv_id_for_response = str(conversation_orm.id) if conversation_orm else str(uuid.uuid4())
+    
+    stmt_latest_appt_req = (
+        select(models.AppointmentRequest)
+        .where(models.AppointmentRequest.customer_id == customer_id)
+        .where(models.AppointmentRequest.business_id == current_business.id)
+        .order_by(desc(models.AppointmentRequest.updated_at))
+        .limit(1)
+    )
+    result_latest_appt_req = await db.execute(stmt_latest_appt_req)
+    latest_appointment_request_orm = result_latest_appt_req.scalar_one_or_none()
+    
+    latest_appointment_request_read: Optional[schemas.AppointmentRequestRead] = None
+    draft_reply_for_appointment_action: Optional[str] = None
+
+    if latest_appointment_request_orm:
+        latest_appointment_request_read = schemas.AppointmentRequestRead.model_validate(latest_appointment_request_orm)
+        actionable_statuses_for_draft = [
+            AppointmentRequestStatusEnum.PENDING_OWNER_ACTION,
+            AppointmentRequestStatusEnum.CUSTOMER_REQUESTED_RESCHEDULE,
+            AppointmentRequestStatusEnum.CUSTOMER_CONFIRMED_PENDING_OWNER_APPROVAL,
+        ]
+        if latest_appointment_request_orm.status in actionable_statuses_for_draft:
+            try:
+                ai_service_instance = AppointmentAIService(db=None)
+                draft_intent = schemas.AppointmentIntent.OWNER_ACTION_CONFIRM 
+                if latest_appointment_request_orm.status == AppointmentRequestStatusEnum.CUSTOMER_REQUESTED_RESCHEDULE:
+                    draft_intent = schemas.AppointmentIntent.OWNER_ACTION_SUGGEST_RESCHEDULE
+                
+                draft_reply_for_appointment_action = await ai_service_instance.draft_appointment_related_sms(
+                    business=current_business, 
+                    customer_name=customer_orm.customer_name,
+                    intent_type=draft_intent,
+                    time_details=latest_appointment_request_orm.parsed_requested_time_text or \
+                                 (latest_appointment_request_orm.parsed_requested_datetime_utc.strftime('%a, %b %d @ %I:%M %p') if latest_appointment_request_orm.parsed_requested_datetime_utc else "the requested time"),
+                    original_customer_request=latest_appointment_request_orm.original_message_text
+                )
+            except Exception as e_ai_draft:
+                logger.error(f"History: Error generating general AI draft: {e_ai_draft}", exc_info=True)
+                draft_reply_for_appointment_action = "Could not generate AI suggestion."
+
+    return schemas.ConversationResponseSchema(
+        customer=customer_read_dto,
+        messages=formatted_messages,
+        conversation_id=conv_id_for_response,
+        latest_appointment_request=latest_appointment_request_read,
+        draft_reply_for_appointment=draft_reply_for_appointment_action
+    )
+
+
+@router.post("/customer/{customer_id}/reply", response_model=schemas.MessageRead)
+async def send_reply_to_customer_conversation(
+    customer_id: int,
+    payload: schemas.InboxReplyPayload,
+    db: AsyncSession = Depends(get_async_db),
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business),
+    settings: Settings = Depends(get_settings)
+):
+    logger.info(
+        f"Reply: Attempting for customer {customer_id} by business '{current_business.business_name}' (ID: {current_business.id})."
+    )
+
+    customer = await db.get(models.Customer, customer_id)
+    if not customer or customer.business_id != current_business.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found for this business.")
+
+    # MessageService uses AsyncSession, so it's fine with 'db' (which is AsyncSession here)
+    message_service = MessageService(db=db)
+    # AppointmentAIService does not rely on a db session for parsing/drafting in the methods used here
+    appointment_ai_service = AppointmentAIService(db=None) 
+
+    message_type_for_db = models.MessageTypeEnum.OUTBOUND
+    should_create_appointment_request = False
+
+    if payload.is_appointment_proposal:
+        message_type_for_db = models.MessageTypeEnum.APPOINTMENT_PROPOSAL
+        should_create_appointment_request = True
+    else:
+        # This part uses appointment_ai_service which is fine (no db session needed for this call)
+        ai_parsed_owner_message = await appointment_ai_service.parse_appointment_sms(
+            payload.message, business=current_business, customer=customer, is_owner_message=True
+        )
+        if ai_parsed_owner_message.intent == schemas.AppointmentIntent.OWNER_PROPOSAL:
+            message_type_for_db = models.MessageTypeEnum.APPOINTMENT_PROPOSAL
+            should_create_appointment_request = True
 
     try:
-        form_data = await request.form()
-        from_number_raw = form_data.get("From", "")
-        to_number_raw = form_data.get("To", "")
-
-        try:
-            from_number = normalize_phone(from_number_raw)
-        except ValueError as e:
-            logger.error(f"INBOUND_SMS [SID_UNKNOWN]: Invalid 'From' phone: '{from_number_raw}'. Err: {e}")
-            return PlainTextResponse(f"Invalid 'From' number: {from_number_raw}", status_code=status.HTTP_200_OK)
-        try:
-            to_number = normalize_phone(to_number_raw)
-        except ValueError as e:
-            logger.error(f"INBOUND_SMS [SID_UNKNOWN]: Invalid 'To' phone: '{to_number_raw}'. Err: {e}")
-            return PlainTextResponse(f"Invalid 'To' number: {to_number_raw}", status_code=status.HTTP_200_OK)
-
-        body_raw = form_data.get("Body", "").strip()
-        body_lower = body_raw.lower()
-        message_sid_from_twilio = form_data.get("MessageSid", "N/A")
-
-        log_prefix = f"INBOUND_SMS [SID:{message_sid_from_twilio}]"
-        logger.info(f"{log_prefix}: From={from_number}(raw:{from_number_raw}), To={to_number}(raw:{to_number_raw}), Body='{body_raw}'")
-
-        if not all([from_number, to_number, body_raw]):
-            logger.error(f"{log_prefix}: Missing Twilio params. Form: {dict(form_data)}")
-            return PlainTextResponse("Missing params", status_code=status.HTTP_200_OK)
-
-        # --- Consent Processing ---
-        consent_log_response = await consent_service.process_sms_response(
-            phone_number=from_number, response=body_lower
+        # Message creation uses async session, this is fine
+        message_orm_instance = await message_service.create_message(
+            customer_id=customer_id, business_id=current_business.id, content=payload.message,
+            message_type=message_type_for_db, status=models.MessageStatusEnum.PENDING_SEND,
+            sender_type=models.SenderTypeEnum.BUSINESS, source="owner_manual_reply"
         )
-        if consent_log_response:
-            logger.info(f"{log_prefix}: Consent response handled for {from_number}.")
-            return consent_log_response
-        logger.info(f"{log_prefix}: Message from {from_number} not direct consent update. Proceeding.")
+        # Note: message_service.create_message should handle its own commit/flush logic.
+        # If it returns the instance, it's usually after it's been added and flushed/refreshed.
 
-        # --- Business and Customer Lookup ---
-        business = db.query(BusinessProfile).filter(BusinessProfile.twilio_number == to_number).first()
-        if not business:
-            logger.error(f"{log_prefix}: No business for Twilio number {to_number}.")
-            return PlainTextResponse("Receiving number not associated", status_code=status.HTTP_200_OK)
-        logger.info(f"{log_prefix}: Routed to Business ID {business.id} ({business.business_name}).")
-
-        customer = db.query(Customer).filter(
-            Customer.phone == from_number, Customer.business_id == business.id
-        ).first()
-
-        now_utc_aware = datetime.now(pytz.UTC) # Use a consistent UTC timestamp
-
-        initial_consent_created_this_request = False
-        if not customer:
-            logger.info(f"{log_prefix}: New customer from {from_number}. Creating.")
-            customer = Customer(
-                phone=from_number,
-                business_id=business.id,
-                customer_name=f"Customer ({from_number})", # More generic name
-                opted_in=False, # Default for new customer; will be updated by consent flow
-                created_at=now_utc_aware,
-                # Ensure other required fields for Customer model have defaults or are handled
-                lifecycle_stage="Lead", # Example default
-                pain_points="Unknown",  # Example default
-                interaction_history=f"First contact via SMS: {body_raw[:100]}" # Example default
-            )
-            db.add(customer)
+        if should_create_appointment_request:
+            # For AppointmentService operations that use its internal synchronous self.db
+            sync_db_session_for_appt: Session = next(get_db())
             try:
-                db.flush() # Get customer.id for ConsentLog
-            except Exception as e_flush_cust:
-                db.rollback()
-                logger.error(f"{log_prefix}: DB error flushing new customer {from_number}: {e_flush_cust}", exc_info=True)
-                return PlainTextResponse("Server error creating customer profile.", status_code=status.HTTP_200_OK)
-
-
-            # Create an initial PENDING consent log since they messaged us
-            initial_consent = ConsentLog(
-                customer_id=customer.id,
-                phone_number=from_number,
-                business_id=business.id,
-                method="customer_initiated_sms", # Indicates they messaged first
-                status="pending", # Or 'pending_confirmation' if you always send an opt-in query
-                sent_at=now_utc_aware, # Time of their first message
-                # replied_at can be null until they reply to an opt-in query
-            )
-            db.add(initial_consent)
-            initial_consent_created_this_request = True
-            logger.info(f"{log_prefix}: Created new Customer ID {customer.id} and initial 'pending' ConsentLog ID {initial_consent.id if hasattr(initial_consent, 'id') else 'Pending'}.")
-        else:
-            logger.info(f"{log_prefix}: Matched Customer ID {customer.id} ({customer.customer_name}). Current opted_in flag from DB: {customer.opted_in}")
-
-
-        # Check latest consent log status.
-        latest_consent_log_for_check = db.query(ConsentLog).filter(
-            ConsentLog.customer_id == customer.id,
-            # ConsentLog.business_id == business.id # Filter by business if consent is per-business
-        ).order_by(desc(ConsentLog.created_at)).first() # Or replied_at, or a combined latest timestamp logic
-
-        if latest_consent_log_for_check and latest_consent_log_for_check.status == "opted_out":
-            logger.warning(f"{log_prefix}: Customer {customer.id} ({from_number}) is OPTED_OUT based on ConsentLog. Discarding message.")
-            if initial_consent_created_this_request: # If we just created the customer and a pending log
-                db.rollback() # Rollback customer/consent creation
-            return PlainTextResponse("Customer has opted out.", status_code=status.HTTP_200_OK)
-
-        logger.info(f"{log_prefix}: Customer {customer.id} not explicitly opted-out by log. Latest ConsentLog status: '{latest_consent_log_for_check.status if latest_consent_log_for_check else 'None'}'.")
-
-
-        # --- Conversation Handling ---
-        conversation = db.query(ConversationModel).filter(
-            ConversationModel.customer_id == customer.id,
-            ConversationModel.business_id == business.id, # Important for multi-tenant
-            ConversationModel.status == 'active'
-        ).first()
-
-        if not conversation:
-            conversation = ConversationModel(
-                id=uuid.uuid4(), customer_id=customer.id, business_id=business.id,
-                started_at=now_utc_aware, last_message_at=now_utc_aware, status='active'
-            )
-            db.add(conversation)
-            try:
-                db.flush()
-            except Exception as e_flush_conv:
-                db.rollback()
-                logger.error(f"{log_prefix}: DB error flushing new conversation for customer {customer.id}: {e_flush_conv}", exc_info=True)
-                return PlainTextResponse("Server error initializing conversation.", status_code=status.HTTP_200_OK)
-
-            logger.info(f"{log_prefix}: New Conversation ID {conversation.id} for Customer {customer.id}.")
-        else:
-            conversation.last_message_at = now_utc_aware
-            logger.info(f"{log_prefix}: Existing Conversation ID {conversation.id}. Updated last_message_at.")
-
-        # --- Log Inbound Message & Create Engagement ---
-        inbound_message_record = Message(
-            conversation_id=conversation.id, business_id=business.id, customer_id=customer.id,
-            content=body_raw, message_type='inbound', status='received',
-            sent_at=now_utc_aware, # Time customer's message was received by Twilio/us
-            message_metadata={'twilio_sid': message_sid_from_twilio, 'source': 'customer_reply'}
-        )
-        db.add(inbound_message_record)
-        try:
-            db.flush()
-        except Exception as e_flush_in_msg:
-            db.rollback()
-            logger.error(f"{log_prefix}: DB error flushing inbound message for customer {customer.id}: {e_flush_in_msg}", exc_info=True)
-            return PlainTextResponse("Server error saving message.", status_code=status.HTTP_200_OK)
-
-
-        engagement = Engagement(
-            customer_id=customer.id, business_id=business.id, message_id=inbound_message_record.id,
-            response=body_raw, ai_response=None, status="pending_review", created_at=now_utc_aware
-        )
-        db.add(engagement)
-        try:
-            db.flush()
-        except Exception as e_flush_eng:
-            db.rollback()
-            logger.error(f"{log_prefix}: DB error flushing engagement for customer {customer.id}: {e_flush_eng}", exc_info=True)
-            return PlainTextResponse("Server error creating engagement.", status_code=status.HTTP_200_OK)
-
-        logger.info(f"{log_prefix}: Customer message logged. MsgID: {inbound_message_record.id}, EngID: {engagement.id}")
-
-        # --- AI Response Generation ---
-        ai_generated_reply_text: Optional[str] = None
-        ai_payload_structured: Optional[dict] = None # Keep structured payload separate
-
-        try:
-            # AIService.generate_sms_response is expected to return a string
-            ai_generated_reply_text = await ai_service.generate_sms_response(
-                message=body_raw, business_id=business.id, customer_id=customer.id
-            )
-            if ai_generated_reply_text:
-                # Create the structured payload dictionary
-                ai_payload_structured = {
-                    "text": ai_generated_reply_text, # Store the generated text here
-                    "is_faq_answer": True,
-                    "ai_can_reply_directly": True
-                }
-                # Store the JSON string representation in the database
-                engagement.ai_response = json.dumps(ai_payload_structured)
-
-                # Safely get text for logging preview from the structured payload
-                ai_text_preview_content = ""
-                if ai_payload_structured and isinstance(ai_payload_structured, dict) and "text" in ai_payload_structured:
-                    ai_text_preview_content = ai_payload_structured.get("text", "")
-                    if not isinstance(ai_text_preview_content, str): # Defensive check
-                        ai_text_preview_content = str(ai_text_preview_content) # Ensure it's a string for slicing
-                elif isinstance(ai_generated_reply_text, str):
-                    # Fallback to the original generated text if structured payload wasn't created/valid
-                    ai_text_preview_content = ai_generated_reply_text
-                else:
-                    # Last resort fallback
-                    ai_text_preview_content = "AI response content unavailable for preview."
-
-
-                # Use the extracted string content for logging the preview
-                logger.info(f"{log_prefix}: AI draft for EngID {engagement.id}: '{ai_text_preview_content[:50]}...'")
-
-            else:
-                logger.warning(f"{log_prefix}: AI service returned no response text for EngID {engagement.id}")
-        except Exception as ai_err:
-            logger.error(f"{log_prefix}: AI response generation failed for EngID {engagement.id}: {ai_err}", exc_info=True)
-            # ai_generated_reply_text remains None
-
-        # --- AI Auto-Reply Logic (Flow B) ---
-        # ONLY attempt auto-reply if AI successfully generated text AND it's enabled
-        if business.enable_ai_faq_auto_reply and ai_generated_reply_text:
-            logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=True. Attempting AI auto-reply.")
-            try:
-                # Use the generated text content for sending
-                message_content_to_send = ai_generated_reply_text # Start with the raw AI text
-
-                # Append opt-in prompt if customer is newly created AND this is effectively their first *meaningful* interaction
-                # and they are not yet opted in.
-                if initial_consent_created_this_request and not customer.opted_in:
-                    # Check latest consent again specifically for appending prompt
-                    current_consent_for_prompt = db.query(ConsentLog).filter(ConsentLog.customer_id == customer.id).order_by(desc(ConsentLog.created_at)).first()
-                    if not current_consent_for_prompt or current_consent_for_prompt.status == "pending":
-                        # --- START MODIFICATION ---
-                        message_content_to_send += "\n\nWant to stay in the loop? Reply YES to stay in touch. ❤️ Msg&Data rates may apply. Reply STOP to cancel."
-                        # --- END MODIFICATION ---
-                        logger.info(f"{log_prefix}: Appended opt-in prompt to AI reply for new/pending customer {customer.id}.")
-
-
-                # Call send_sms with the explicit string content and flag as direct reply
-                sent_message_sid = await twilio_service.send_sms(
-                    to=customer.phone,
-                    message_body=message_content_to_send, # Pass the explicitly constructed string
-                    business=business,
-                    is_direct_reply=True # This is a reply to an inbound message
+                # Instantiate AppointmentService with the synchronous session
+                appointment_service_sync_instance = AppointmentService(db=sync_db_session_for_appt)
+                
+                # Call the async method. Its helper methods (_check_availability_and_conflicts, 
+                # _create_appointment_request_internal) will use the self.db 
+                # (which is now sync_db_session_for_appt) correctly.
+                await appointment_service_sync_instance.create_business_initiated_appointment_proposal(
+                    business=current_business, 
+                    customer=customer,
+                    owner_message_text=payload.message, 
+                    outbound_message_id=message_orm_instance.id
                 )
+                logger.info(f"Reply: Created AppointmentRequest for business proposal. Message ID: {message_orm_instance.id}")
+                # Refresh using the async session if message_orm_instance is tied to it
+                await db.refresh(message_orm_instance) 
+            finally:
+                sync_db_session_for_appt.close() # Ensure the synchronous session is closed
 
-                if sent_message_sid:
-                    engagement.status = "auto_replied_faq"
-                    engagement.sent_at = datetime.now(pytz.UTC) # Record time AI reply was sent
-                    logger.info(f"{log_prefix}: AI auto-reply sent for EngID {engagement.id}. SID: {sent_message_sid}. Status: '{engagement.status}'.")
-
-                    # Log this AI auto-reply as an outbound Message
-                    # Content for the Message record can be structured if desired
-                    outbound_message_content_structured = {
-                        "text": message_content_to_send, # Store the actual text sent
-                        "is_faq_answer": True,
-                        "appended_opt_in_prompt": (initial_consent_created_this_request and not customer.opted_in) # Track if prompt was added
-                    }
-
-                    outbound_message = Message(
-                        conversation_id=conversation.id,
-                        business_id=business.id,
-                        customer_id=customer.id,
-                        content=json.dumps(outbound_message_content_structured), # Store structured content as JSON string
-                        message_type='outbound_ai_reply', # Specific type
-                        status="sent", # Mark as sent
-                        sent_at=engagement.sent_at, # Align timestamp
-                        message_metadata={
-                            'twilio_sid': sent_message_sid,
-                            'source': 'ai_auto_reply_faq', # Clear source
-                            'engagement_id': engagement.id,
-                            'original_customer_message_sid': message_sid_from_twilio
-                        }
+        can_send_sms = True
+        if customer.sms_opt_in_status == OptInStatus.OPTED_OUT:
+            can_send_sms = False
+            logger.warning(f"Reply: SMS for Message ID {message_orm_instance.id} blocked, customer {customer.id} opted out.")
+            message_orm_instance.status = models.MessageStatusEnum.FAILED
+            message_orm_instance.message_metadata = {"failure_reason": "Customer opted out"}
+        
+        if can_send_sms and customer.phone and (current_business.twilio_number or current_business.messaging_service_sid):
+            try:
+                sync_db_for_twilio: Optional[Session] = None
+                try:
+                    sync_db_for_twilio = next(get_db()) 
+                    twilio_service_instance = TwilioService(db=sync_db_for_twilio)
+                    sms_sent_sid = await twilio_service_instance.send_sms(
+                        to=customer.phone, message_body=payload.message,
+                        business=current_business, customer=customer, is_direct_reply=True
                     )
-                    db.add(outbound_message)
-                    logger.info(f"{log_prefix}: Logged AI auto-reply as Message (ID to be assigned).")
-                else: # Should not happen if send_sms raises on failure
-                    logger.error(f"{log_prefix}: twilio_service.send_sms returned no SID for AI auto-reply (EngID {engagement.id}).")
+                finally:
+                    if sync_db_for_twilio:
+                        sync_db_for_twilio.close()
+                
+                if sms_sent_sid:
+                    message_orm_instance.twilio_message_sid = sms_sent_sid
+                    message_orm_instance.status = models.MessageStatusEnum.SENT
+                    message_orm_instance.sent_at = get_utc_now()
+                else:
+                    message_orm_instance.status = models.MessageStatusEnum.FAILED
+                    message_orm_instance.message_metadata = {"failure_reason": "Twilio send returned no SID"}
+            except HTTPException as e_http:
+                message_orm_instance.status = models.MessageStatusEnum.FAILED
+                message_orm_instance.message_metadata = {"failure_reason": f"Twilio HTTP Error: {e_http.detail}"}
+                logger.error(f"Reply: HTTPException from Twilio: {e_http.detail}", exc_info=False)
+            except Exception as e_sms:
+                message_orm_instance.status = models.MessageStatusEnum.FAILED
+                message_orm_instance.message_metadata = {"failure_reason": f"Unexpected SMS error: {str(e_sms)}"}
+                logger.error(f"Reply: Error sending SMS: {e_sms}", exc_info=True)
+        elif not can_send_sms:
+            pass 
+        else: 
+            message_orm_instance.status = models.MessageStatusEnum.FAILED
+            message_orm_instance.message_metadata = {"failure_reason": "Missing customer phone or Twilio config"}
+        
+        db.add(message_orm_instance)
+        await db.commit() 
+        await db.refresh(message_orm_instance)
 
-            except HTTPException as http_send_exc:
-                logger.error(f"{log_prefix}: HTTPException sending AI auto-reply for EngID {engagement.id}: {http_send_exc.detail} (Status: {http_send_exc.status_code})")
-            except Exception as send_exc:
-                logger.error(f"{log_prefix}: Unexpected error sending AI auto-reply for EngID {engagement.id}: {send_exc}", exc_info=True)
+        return schemas.MessageRead.model_validate(message_orm_instance)
 
-        elif not ai_generated_reply_text:
-            logger.info(f"{log_prefix}: No AI response text available. AI Auto-reply skipped for EngID {engagement.id}.")
-        elif not business.enable_ai_faq_auto_reply:
-            logger.info(f"{log_prefix}: Business {business.id} has enable_ai_faq_auto_reply=False. AI Auto-reply skipped for EngID {engagement.id}. Draft (if any) saved in engagement.")
-
-
-        # --- Owner Notification Logic (Flow A) ---
-        # Notify owner if AI did NOT auto-reply (engagement status is still 'pending_review')
-        # AND business owner wants notifications.
-        should_notify_owner_now = (
-            business.notify_owner_on_reply_with_link and
-            business.business_phone_number and
-            business.slug and
-            engagement.status == "pending_review" # CRITICAL: Only notify if AI didn't handle it
-        )
-
-        if should_notify_owner_now:
-            logger.info(f"{log_prefix}: Preparing owner notification for EngID {engagement.id} (status is 'pending_review').")
-            try:
-                # Enhanced deep link to include customer and engagement context
-                deep_link_url = f"{settings.FRONTEND_APP_URL}/inbox/{business.slug}?activeCustomer={customer.id}&engagementId={engagement.id}"
-
-                ai_draft_preview_for_notification = ""
-                if engagement.ai_response:
-                    try:
-                        ai_data = json.loads(engagement.ai_response)
-                        # Safely get text from the loaded JSON
-                        ai_text = ai_data.get("text", "")
-                        if not isinstance(ai_text, str): # Defensive check
-                            ai_text = str(ai_text)
-                        ai_draft_preview_for_notification = f"\nAI Draft: \"{ai_text[:40]}{'...' if len(ai_text) > 40 else ''}\""
-                    except Exception as preview_err:
-                        logger.warning(f"{log_prefix}: Could not parse ai_response JSON for preview: {preview_err}")
-
-                notification_sms_body = (
-                    f"AI Nudge: New SMS from {customer.customer_name} ({customer.phone}).\n"
-                    f"Message: \"{body_raw[:70]}{'...' if len(body_raw) > 70 else ''}\""
-                    f"{ai_draft_preview_for_notification}\n"
-                    f"View & Reply: {deep_link_url}"
-                )
-
-                await twilio_service.send_sms(
-                    to=business.business_phone_number,
-                    message_body=notification_sms_body, # Use message_body keyword arg
-                    business=business, # Send FROM this business's Twilio setup
-                    is_direct_reply=False # Owner notification is a proactive message
-                )
-                logger.info(f"{log_prefix}: Owner SMS notification sent via TwilioService to {business.business_phone_number}.")
-
-            except Exception as notify_err:
-                logger.error(f"{log_prefix}: Failed to send owner notification SMS (via TwilioService): {notify_err}", exc_info=True)
-
-        elif engagement.status != "pending_review":
-            logger.info(f"{log_prefix}: Owner notification skipped because engagement status is '{engagement.status}'.")
-        else: # Conditions for notification not met (e.g., business settings)
-            logger.info(
-                f"{log_prefix}: Owner notification conditions not met. "
-                f"Notify: {business.notify_owner_on_reply_with_link}, "
-                f"OwnerPhone: {'Set' if business.business_phone_number else 'Not Set'}, "
-                f"Slug: {'Set' if business.slug else 'Not Set'}, "
-                f"EngStatus: {engagement.status}"
-            )
-
-
-        # --- Final Commit ---
-        try:
-            db.commit()
-            logger.info(f"{log_prefix}: Database changes committed successfully.")
-        except Exception as db_commit_err:
-            db.rollback()
-            logger.error(f"{log_prefix}: Final DB commit failed: {db_commit_err}", exc_info=True)
-            # Twilio still expects a 200 OK response to acknowledge receipt of the webhook.
-            # So, we log the error but return a generic success message to Twilio.
-            return PlainTextResponse("Error saving interaction details.", status_code=status.HTTP_200_OK)
-
-        return PlainTextResponse("SMS Received", status_code=status.HTTP_200_OK)
-
-    except HTTPException as http_exc:
-        logger.error(f"HTTPException in webhook: {http_exc.detail} (Status: {http_exc.status_code})", exc_info=True)
-        # Ensure rollback if any DB operations happened before the HTTPException was raised by our code
-        if db.is_active: # Check if session is active
-            db.rollback()
-        # Twilio expects a 200 OK even if we identify it as a bad request from their side
-        # or an error on our side that we handle gracefully.
-        return PlainTextResponse(f"Handled error: {http_exc.detail}", status_code=status.HTTP_200_OK)
+    except HTTPException as e:
+        await db.rollback()
+        raise e
+    except ValueError as ve:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
-        current_form_data_str = str(dict(form_data))[:500] # Log part of form data for context
-        logger.error(f"UNHANDLED EXCEPTION in webhook processing. SID: {message_sid_from_twilio}, From: {from_number_raw}, To: {to_number_raw}, Form Data (partial): {current_form_data_str}. Error: {e}", exc_info=True)
-        if db.is_active:
-            db.rollback()
-        # For truly unhandled exceptions, Twilio might retry if it gets a 500.
-        # However, often it's better to return 200 OK to stop retries if the issue is persistent or data-related.
-        # Let's return 500 for now to indicate a server-side unhandled issue.
-        return PlainTextResponse("Internal Server Error processing webhook", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    finally:
-        logger.info(f"=== Twilio Webhook: END /inbound processing for SID:{message_sid_from_twilio} ===")
+        await db.rollback()
+        logger.error(f"Reply: Unexpected error processing owner's reply for customer {customer_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to process message reply due to an internal error.")
+
+schemas.ConversationResponseSchema.model_rebuild()
+schemas.CustomerRead.model_rebuild()
+schemas.AppointmentRequestRead.model_rebuild()

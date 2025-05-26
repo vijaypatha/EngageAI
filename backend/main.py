@@ -13,13 +13,13 @@ from fastapi.routing import APIRoute
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.celery_app import ping
-from app.config import settings
+from app.config import get_settings
+settings = get_settings() # Call the function to get an instance of your settings
 from app.database import Base, engine
 from app.models import (
     BusinessProfile,
     ConsentLog,
-    Customer,
-    ScheduledSMS,
+    Customer
 )
 from app.routes import (
     ai_routes,
@@ -40,13 +40,13 @@ from app.routes import (
     auth_routes,
     review,
     instant_nudge_routes,
-    tag_routes
+    tag_routes,
+    appointment_routes
 )
 from app.schemas import (
     BusinessProfileCreate,
     ConsentLogCreate,
     CustomerCreate,
-    ScheduledSMSCreate,
 )
 
 # Configure logging
@@ -111,6 +111,7 @@ app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
 app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
 app.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
+app.include_router(appointment_routes.router, prefix="/appointments", tags=["appointments"])
 
 @app.get("/", response_model=Dict[str, str])
 async def read_root() -> Dict[str, str]:
@@ -166,9 +167,14 @@ for route in app.routes:
 
 if __name__ == "__main__":
     import uvicorn
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    logging.getLogger("app.routes.business_routes").setLevel(logging.DEBUG)
+
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=True,
+        log_level="debug"
     )

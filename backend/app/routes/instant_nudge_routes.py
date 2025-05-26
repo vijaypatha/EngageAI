@@ -1,177 +1,163 @@
 # backend/app/routes/instant_nudge_routes.py
 
-# Routes for generating and sending Instant Nudges – AI-personalized SMS messages
-# Supports drafting based on topic and multi-customer delivery (immediate or scheduled)
-# Includes filtering customers based on tags.
-
-# --- Standard Imports ---
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
-# --- FastAPI and Pydantic Imports ---
-from fastapi import APIRouter, HTTPException, Depends, status # Added status
-from pydantic import BaseModel, Field # Added Field
+from fastapi import APIRouter, HTTPException, Depends, status, Query 
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession 
+from sqlalchemy import func, select 
 
-# --- SQLAlchemy Imports ---
-from sqlalchemy.orm import Session
-from sqlalchemy import func # Keep func import
-
-# --- App Specific Imports ---
-from app.database import get_db
-# Import necessary models (add Customer, Tag if not present)
-from app.models import BusinessProfile, Message, Conversation, Customer as CustomerModel, Tag
-# Import services
+from app.database import get_async_db 
+from app.models import (
+    BusinessProfile,
+    Message,
+    Customer as CustomerModel,
+    Tag,
+    MessageTypeEnum
+)
 from app.services.instant_nudge_service import generate_instant_nudge, handle_instant_nudge_batch
+from app.schemas import InstantNudgeSendPayload
+
+from app import auth, models, schemas 
+from app.config import Settings, get_settings 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    # No prefix here, will be defined in main.py
-    tags=["instant-nudge"] # Keep existing tag
+    tags=["Instant Nudge"]
 )
 
-# === Schema Definitions (Moved/Modified for Tag Filtering) ===
-
-# --- MODIFIED: Input model for generating message / identifying targets ---
 class InstantNudgeTargetingRequest(BaseModel):
-    """Defines how to target customers for an instant nudge."""
     topic: str = Field(..., description="The topic/subject for the AI message generation.")
     business_id: int = Field(..., description="The ID of the business sending the nudge.")
-    # Allow EITHER specific customer IDs OR tag filters, not both required. Add validation?
     customer_ids: Optional[List[int]] = Field(None, description="Optional: Specific list of customer IDs to target.")
     filter_tags: Optional[List[str]] = Field(None, description="Optional: List of tag names (lowercase) to filter customers by (matches ALL tags).")
-    # Add fields needed for scheduling if extending functionality later
-    # send_datetime_utc: Optional[str] = None
-
-# --- Existing: Payload model for sending a pre-drafted batch ---
-# This model might need adjustment depending on how you handle the flow (generate then send vs. generate-and-send)
-# Assuming for now that the sending logic receives customer IDs determined by the targeting request.
-class InstantNudgeSendPayload(BaseModel):
-    """Payload for the actual sending/scheduling of nudges to specific customers."""
-    customer_ids: List[int] = Field(..., description="The final list of customer IDs to send the message to.")
-    message: str = Field(..., description="The message content (potentially personalized).")
-    business_id: int # Needed for logging/context during sending
-    send_datetime_utc: Optional[str] = Field(None, description="Optional: ISO 8601 UTC datetime string for scheduling.")
 
 
-# === Route Definitions ===
-
-# --- MODIFIED: Endpoint to generate message AND identify targets ---
-# This endpoint now handles finding the customer IDs based on criteria.
-# It could return the draft + target IDs, or directly trigger the send.
-# Let's make it return the draft + IDs for flexibility.
 @router.post("/generate-targeted-draft", response_model=Dict[str, Any])
 async def generate_targeted_nudge_draft(
     payload: InstantNudgeTargetingRequest,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db), 
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business)
 ):
-    """
-    Generates an AI message draft based on topic and identifies target customer IDs
-    based on either specific IDs or tag filters.
-    """
-    logger.info(f"✍️ Received Instant Nudge generation/targeting request for business_id={payload.business_id} | topic='{payload.topic}' | tags='{payload.filter_tags}' | specific_ids='{payload.customer_ids}'")
+    # Capture business ID early for safe logging
+    auth_business_id = current_business.id
+    
+    logger.info(
+        f"Nudge Draft: Request by Business ID {auth_business_id} for payload business_id={payload.business_id} "
+        f"| topic='{payload.topic}' | tags='{payload.filter_tags}' | specific_ids='{payload.customer_ids}'"
+    )
 
-    target_customer_ids = set() # Use a set to store unique IDs
+    if payload.business_id != auth_business_id:
+        logger.warning(
+            f"Nudge Draft AuthZ Error: Auth Business ID {auth_business_id} "
+            f"does not match payload business_id {payload.business_id}."
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this business.")
 
-    # --- Determine Target Customers ---
+    target_customer_ids = set()
+
     if payload.customer_ids and payload.filter_tags:
-        # If both are provided, it's ambiguous - raise an error or prioritize one? Let's raise error.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Provide either 'customer_ids' or 'filter_tags', not both."
         )
 
     if payload.customer_ids:
-        # Use specific customer IDs provided
         target_customer_ids = set(payload.customer_ids)
-        # Optional: Validate these customers belong to the business_id
-        valid_customers_q = db.query(CustomerModel.id).filter(
-            CustomerModel.business_id == payload.business_id,
+        stmt_valid_customers = select(CustomerModel.id).where(
+            CustomerModel.business_id == auth_business_id, 
             CustomerModel.id.in_(target_customer_ids)
         )
-        valid_customer_ids = {res[0] for res in valid_customers_q.all()}
+        result_valid_customers = await db.execute(stmt_valid_customers)
+        valid_customer_ids = {res[0] for res in result_valid_customers.all()}
+        
         if len(valid_customer_ids) != len(target_customer_ids):
             invalid_ids = target_customer_ids - valid_customer_ids
-            logger.warning(f"Provided customer IDs not found or not linked to business {payload.business_id}: {invalid_ids}")
-            # Decide: Raise error or proceed with only valid IDs? Let's proceed with valid ones.
-            target_customer_ids = valid_customer_ids
-        logging.info(f"Targeting specific customer IDs (validated): {target_customer_ids}")
+            logger.warning(f"Nudge Draft: Provided customer IDs not found or not linked to business {auth_business_id}: {invalid_ids}")
+            target_customer_ids = valid_customer_ids 
+        logging.info(f"Nudge Draft: Targeting specific customer IDs (validated for business {auth_business_id}): {target_customer_ids}")
 
     elif payload.filter_tags:
-        # Filter customers by tags if provided
         tag_names = [tag.strip().lower() for tag in payload.filter_tags if tag.strip()]
         if tag_names:
-            logging.info(f"Filtering customers for business {payload.business_id} by tags: {tag_names}")
-            # Query customers matching ALL tags for this business
-            query = db.query(CustomerModel.id).join(CustomerModel.tags).filter(
-                CustomerModel.business_id == payload.business_id,
-                Tag.name.in_(tag_names)
-            ).group_by(CustomerModel.id).having(func.count(Tag.id) == len(tag_names))
-
-            customer_ids_from_tags = {result[0] for result in query.all()}
+            logging.info(f"Nudge Draft: Filtering customers for business {auth_business_id} by tags: {tag_names}")
+            subquery = (
+                select(CustomerModel.id)
+                .join(CustomerModel.tags)
+                .where(CustomerModel.business_id == auth_business_id)
+                .where(Tag.name.in_(tag_names))
+                .group_by(CustomerModel.id)
+                .having(func.count(Tag.id) == len(tag_names))
+            )
+            result_tags = await db.execute(subquery)
+            customer_ids_from_tags = {res[0] for res in result_tags.all()}
             target_customer_ids = customer_ids_from_tags
-            logging.info(f"Found {len(target_customer_ids)} customers matching tags: {target_customer_ids}")
+            logging.info(f"Nudge Draft: Found {len(target_customer_ids)} customers matching tags for business {auth_business_id}: {target_customer_ids}")
         else:
-            logging.warning("filter_tags provided but resulted in empty list after cleaning.")
-            # If tags were provided but empty, maybe return no customers?
-            target_customer_ids = set() # Ensure it's empty
-
+            logging.warning("Nudge Draft: filter_tags provided but resulted in empty list after cleaning.")
+            target_customer_ids = set()
     else:
-        # Neither specific IDs nor tags provided - this is an invalid request state.
-        logging.error("Targeting request must include either 'customer_ids' or 'filter_tags'.")
+        logging.error("Nudge Draft: Targeting request must include either 'customer_ids' or 'filter_tags'.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Request must include customer_ids or filter_tags to identify targets."
-            )
+        )
 
     if not target_customer_ids:
-        logging.warning("No target customers identified for the nudge.")
-        # Return indicating no targets found
+        logging.warning(f"Nudge Draft: No target customers identified for business {auth_business_id}.")
         return {
             "message_draft": None,
             "target_customer_count": 0,
             "target_customer_ids": [],
             "status": "No customers found matching criteria."
-            }
+        }
 
-    # --- Generate AI Message Draft ---
     try:
-        generated_data = await generate_instant_nudge(payload.topic, payload.business_id, db)
+        generated_data = await generate_instant_nudge(
+            db=db, 
+            topic=payload.topic, 
+            business_id=auth_business_id 
+        )
         message_draft = generated_data.get("message")
-        logger.info(f"Generated nudge draft for topic '{payload.topic}'.")
+        logger.info(f"Nudge Draft: Generated for topic '{payload.topic}' for business {auth_business_id}.")
         if not message_draft:
-             logger.error("AI service returned empty message draft.")
+             logger.error(f"Nudge Draft: AI service returned empty message draft for business {auth_business_id}.")
              raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate message draft content.")
-
-        # Return the draft and the list of identified customer IDs
         return {
             "message_draft": message_draft,
             "target_customer_count": len(target_customer_ids),
-            "target_customer_ids": sorted(list(target_customer_ids)) # Return sorted list
-            }
-
+            "target_customer_ids": sorted(list(target_customer_ids))
+        }
     except Exception as e:
-        # Catch errors specifically from the generate_instant_nudge service
-        logger.error(f"❌ Instant Nudge generation failed: {e}", exc_info=True)
-        # Check if it's an HTTPException already (e.g., business not found)
+        logger.error(f"Nudge Draft: Generation failed for business {auth_business_id}: {e}", exc_info=True)
         if isinstance(e, HTTPException):
              raise e
-        raise HTTPException(status_code=500, detail=f"Failed to generate instant nudge message: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate instant nudge message: {str(e)}")
 
 
-# --- MODIFIED: Endpoint to send/schedule the batch ---
-# This endpoint now takes the final list of customers and the message.
-# It calls the service function responsible for DB interaction and Celery tasks.
-@router.post("/send-batch", status_code=status.HTTP_202_ACCEPTED) # Use 202 Accepted for async tasks
+@router.post("/send-batch", status_code=status.HTTP_202_ACCEPTED, response_model=Dict[str, Any])
 async def send_instant_nudge_batch_final(
-    payload: InstantNudgeSendPayload, # Use the new payload schema
-    db: Session = Depends(get_db) # Inject DB if handle_instant_nudge_batch needs it (it likely does)
-    ):
-    """
-    Sends or schedules a pre-drafted message to a specific list of customer IDs.
-    """
-    logging.info(f"📨 Received Instant Nudge batch send request for {len(payload.customer_ids)} customers. Business ID: {payload.business_id}")
+    payload: InstantNudgeSendPayload,
+    db: AsyncSession = Depends(get_async_db), 
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business)
+):
+    # Capture business ID early for safe logging
+    auth_business_id = current_business.id
+
+    logger.info(
+        f"Nudge Send Batch: Request by Business ID {auth_business_id} for payload business_id={payload.business_id}. "
+        f"Customers: {len(payload.customer_ids)}. Is Appointment: {payload.is_appointment_proposal}"
+    )
+
+    if payload.business_id != auth_business_id:
+        logger.warning(
+            f"Nudge Send Batch AuthZ Error: Auth Business ID {auth_business_id} "
+            f"does not match payload business_id {payload.business_id}."
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this business.")
 
     if not payload.customer_ids:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="customer_ids list cannot be empty.")
@@ -179,92 +165,132 @@ async def send_instant_nudge_batch_final(
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message content cannot be empty.")
 
     try:
-        # The service function handles creating Message records and scheduling Celery tasks
-        # Pass the necessary data from the payload
         result = await handle_instant_nudge_batch(
-             db=db, # Pass db session to the service function
-             business_id=payload.business_id,
-             customer_ids=payload.customer_ids,
-             message_content=payload.message,
-             send_datetime_iso=payload.send_datetime_utc # Pass optional schedule time
-             )
-
-        logger.info(f"✅ Batch processing initiated. Result: {result}")
-        # Return result from the service (e.g., list of created message IDs or success status)
-        # Using 202 Accepted indicates the task is queued, not necessarily completed.
-        return {"status": "accepted", "details": result}
+             db=db, 
+             payload=payload,
+             business=current_business, 
+        )
+        logger.info(f"Nudge Send Batch: Processing initiated for business {auth_business_id}. Result: {result.get('message')}")
+        return result
 
     except ValueError as ve:
-         # Catch specific validation errors from the service layer
-         logger.error(f"❌ Value error sending instant nudges: {ve}", exc_info=True)
+         logger.error(f"Nudge Send Batch: Value error for business {auth_business_id}: {ve}", exc_info=True) # Use captured ID
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        # If it's an HTTPException, it might already have important details
+        logger.error(f"Nudge Send Batch: HTTP Exception for business {auth_business_id}: {he.detail}", exc_info=True) # Use captured ID
+        raise he
     except Exception as e:
-        logger.error(f"❌ Failed to send/schedule instant nudges: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to process nudge batch: {e}")
+        # For other exceptions, log with the captured ID
+        logger.error(f"Nudge Send Batch: Failed for business {auth_business_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to process nudge batch: {str(e)}")
 
 
-# === Keep Existing Read/Analytics Endpoints (ensure models/fields are correct) ===
+# --- Analytics/Status Endpoints (Ensure async correctness) ---
 
-# Endpoint to get the status of instant nudges by slug
 @router.get("/instant-status/slug/{slug}")
-def get_instant_nudge_status(slug: str, db: Session = Depends(get_db)):
-    # ... (implementation likely remains the same, ensure Message model fields are correct) ...
-    business = db.query(BusinessProfile).filter(BusinessProfile.slug == slug).first()
+async def get_instant_nudge_status_by_slug( 
+    slug: str, 
+    db: AsyncSession = Depends(get_async_db)
+):
+    stmt_business = select(BusinessProfile).where(BusinessProfile.slug == slug)
+    result_business = await db.execute(stmt_business)
+    business = result_business.scalar_one_or_none()
+    
     if not business:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business not found")
-    messages = db.query(Message).filter(
+    
+    stmt_messages = select(Message).where(
         Message.business_id == business.id,
-        Message.message_type == 'scheduled',
-        # Ensure JSON query syntax is correct for your SQLAlchemy/DB version
-        Message.message_metadata.op('->>')('source') == 'instant_nudge'
-    ).all()
-    # Format response... (ensure fields exist)
+        Message.message_metadata.op('->>')('source') == 'instant_nudge' 
+    ).order_by(Message.created_at.desc())
+    
+    result_messages = await db.execute(stmt_messages)
+    messages = result_messages.scalars().all()
+
     return [
         {
             "id": m.id, "message": m.content, "customer_id": m.customer_id,
-            "status": m.status, "send_time": m.scheduled_time, "is_hidden": m.is_hidden,
-            "conversation_id": m.conversation_id, "metadata": m.message_metadata
+            "status": m.status.value if m.status else None, 
+            "send_time": m.scheduled_send_at or m.sent_at or m.created_at,
+            "is_hidden": m.is_hidden,
+            "conversation_id": str(m.conversation_id) if m.conversation_id else None,
+            "message_type": m.message_type.value if m.message_type else None,
+            "metadata": m.message_metadata
         } for m in messages
     ]
 
 
-# Endpoint to get detailed instant nudge analytics
-@router.get("/nudge/instant-analytics/business/{business_id}")
-def get_instant_nudge_analytics(business_id: int, db: Session = Depends(get_db)):
-    # ... (implementation likely remains the same, ensure Message model fields are correct) ...
+@router.get("/nudge/instant-analytics/business/{business_id_in_path}") 
+async def get_instant_nudge_analytics(
+    business_id_in_path: int, 
+    db: AsyncSession = Depends(get_async_db),
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business)
+):
+    auth_business_id = current_business.id # Capture ID early
+    if business_id_in_path != auth_business_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this business's analytics.")
+
     now_utc = datetime.now(timezone.utc)
-    messages = db.query(Message).filter(
-        Message.business_id == business_id,
-        Message.message_type == 'scheduled',
+    
+    stmt_messages = select(Message).where(
+        Message.business_id == auth_business_id,
         Message.message_metadata.op('->>')('source') == 'instant_nudge'
-    ).all()
-    # Calculate analytics...
-    total_sent = sum(1 for m in messages if m.status == 'sent')
-    total_scheduled = sum(1 for m in messages if m.status == 'scheduled' and m.scheduled_time and m.scheduled_time > now_utc)
-    # Add other statuses if needed (e.g., failed, pending)
-    total_failed = sum(1 for m in messages if m.status == 'failed') # Example
+    )
+    result_messages = await db.execute(stmt_messages)
+    messages = result_messages.scalars().all()
+    
+    total_sent = sum(1 for m in messages if m.status == models.MessageStatusEnum.SENT)
+    total_scheduled = sum(1 for m in messages if m.status == models.MessageStatusEnum.SCHEDULED and m.scheduled_send_at and m.scheduled_send_at > now_utc)
+    total_failed = sum(1 for m in messages if m.status == models.MessageStatusEnum.FAILED)
+    appointment_proposals_initiated = sum(
+        1 for m in messages if m.message_type == models.MessageTypeEnum.APPOINTMENT_PROPOSAL
+    )
 
     return {
-        "total_messages": len(messages), "sent": total_sent,
-        "scheduled": total_scheduled, "failed": total_failed,
-        # Adjust success rate calculation as needed
-        "success_rate": (total_sent / (total_sent + total_failed)) if (total_sent + total_failed) > 0 else 0
+        "total_messages_via_instant_nudge": len(messages),
+        "sent": total_sent,
+        "scheduled_future": total_scheduled,
+        "failed": total_failed,
+        "appointment_proposals_initiated": appointment_proposals_initiated,
+        "success_rate_attempted_sends": (total_sent / (total_sent + total_failed)) if (total_sent + total_failed) > 0 else 0
     }
 
 
-# Endpoint to get all instant nudge messages for a customer
 @router.get("/nudge/instant-multi/customer/{customer_id}")
-def get_instant_nudges_for_customer(customer_id: int, db: Session = Depends(get_db)):
-     # ... (implementation likely remains the same, ensure Message model fields are correct) ...
-     messages = db.query(Message).filter(
+async def get_instant_nudges_for_customer(
+    customer_id: int, 
+    db: AsyncSession = Depends(get_async_db),
+    current_business: models.BusinessProfile = Depends(auth.get_current_authenticated_business)
+):
+     auth_business_id = current_business.id # Capture ID early
+     customer_stmt = select(CustomerModel).where(
+         CustomerModel.id == customer_id,
+         CustomerModel.business_id == auth_business_id 
+     )
+     result_customer = await db.execute(customer_stmt)
+     customer = result_customer.scalar_one_or_none()
+
+     if not customer:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found for this business.")
+
+     messages_stmt = select(Message).where(
         Message.customer_id == customer_id,
+        Message.business_id == auth_business_id, 
         Message.message_metadata.op('->>')('source') == 'instant_nudge'
-     ).order_by(Message.scheduled_time.desc()).all()
-     # Format response...
+     ).order_by(Message.created_at.desc())
+     
+     result_messages = await db.execute(messages_stmt)
+     messages = result_messages.scalars().all()
+     
      return [
         {
             "id": m.id, "message": m.content, "customer_id": m.customer_id,
-            "status": m.status, "send_time": m.scheduled_time, "is_hidden": m.is_hidden,
-            "conversation_id": m.conversation_id, "metadata": m.message_metadata
+            "status": m.status.value if m.status else None, 
+            "send_time": m.scheduled_send_at or m.sent_at or m.created_at,
+            "is_hidden": m.is_hidden,
+            "message_type": m.message_type.value if m.message_type else None,
+            "conversation_id": str(m.conversation_id) if m.conversation_id else None,
+            "metadata": m.message_metadata
         } for m in messages
     ]
