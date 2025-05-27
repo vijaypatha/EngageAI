@@ -26,7 +26,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 # Get database URL from environment variable, with a default for Render PostgreSQL
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://engageai_db_user:THtPfaorNWqMDB5grrU6VRwuijSzErZe@dpg-cvqo321r0fns73a3722g-a.oregon-postgres.render.com/engageai_db"
+    "postgresql://ainudge_dev_db_user:lI8DI6v8kJ7iFkxU85t5MXpTqsy4svhP@dpg-d0qcl4re5dus739f8k0g-a.oregon-postgres.render.com/ainudge_dev_db"
 )
 
 # Create engine with SSL mode require for Render

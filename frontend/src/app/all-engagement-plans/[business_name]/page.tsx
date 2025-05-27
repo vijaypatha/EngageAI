@@ -1,556 +1,485 @@
-// frontend/src/app/all-engagement-plans/[business_name]/page.tsx
-
 'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { apiClient } from '@/lib/api';
 import { format, isThisWeek, addWeeks, isBefore, parseISO } from 'date-fns';
-import { OptInStatusBadge } from '@/components/OptInStatus';
-import type { OptInStatus } from "@/components/OptInStatus";
-// Using @ts-ignore as proper types might not be installed or included
-// @ts-ignore
-import { zonedTimeToUtc, utcToZonedTime } from "date-fns-tz"; // For timezone conversions
+import { OptInStatusBadge } from '@/components/OptInStatus'; // Assuming this component exists and is styled
+import type { OptInStatus as OptInStatusType } from "@/components/OptInStatus"; // Renamed to avoid conflict
 
-// Interface for a single message within a customer's engagement data
-interface CustomerMessage {
-  id: number; // This is the message ID (roadmap or scheduled)
-  status: string; // e.g., 'pending_review', 'scheduled', 'sent'
+// @ts-ignore
+import { zonedTimeToUtc, utcToZonedTime } from "date-fns-tz";
+
+// Interface for a single message within a customer's engagement data from backend
+interface CustomerMessageFromServer {
+  id: number;
+  status: string;
   smsContent: string;
-  smsTiming: string; // Original timing string (e.g., "Day 5, 10:00 AM") - might not be directly used here
-  send_datetime_utc: string; // ISO string for the scheduled time
-  source: string; // e.g., 'roadmap', 'scheduled', 'instant_nudge'
-  customer_timezone: string | null; // Customer's specific timezone identifier
+  smsTiming: string;
+  send_datetime_utc: string;
+  source: string; // 'roadmap' or 'scheduled' (after being scheduled)
+  customer_timezone: string | null;
 }
 
 // Interface for the data structure returned by /review/all-engagements
-interface CustomerEngagement {
+interface CustomerEngagementFromServer {
   customer_id: number;
   customer_name: string;
-  messages: CustomerMessage[]; // Array of messages for this customer
-  opted_in: boolean;
-  latest_consent_status?: string; // Raw status from backend
-  latest_consent_updated?: string; // ISO string or null
+  messages: CustomerMessageFromServer[];
+  opted_in: boolean; // This is the Customer.opted_in status
+  latest_consent_status?: string; // This is from ConsentLog, e.g. "opted_in", "opted_out", "pending"
+  latest_consent_updated?: string;
 }
 
-// Interface for the flattened plan object used in the component's state and rendering
-// Each object represents one message to be displayed in the timeline
+// Interface for the flattened plan object used in this component's state and rendering
 interface EngagementPlan {
-  id: number; // The message ID
-  customer_id: number; // ID of the customer this message belongs to
+  id: number; // If source='roadmap', this is RoadmapMessage.id. If source='scheduled', this is Message.id.
+  customer_id: number;
   customer_name: string;
-  status: string; // Message status
+  status: string; // 'pending_review', 'scheduled', 'sent', etc.
   smsContent: string;
   send_datetime_utc: string; // ISO string
-  source: string; // Message source ('roadmap' or 'scheduled')
-  latest_consent_status: OptInStatus; // Mapped status for the badge
-  latest_consent_updated: string | null; // ISO string or null
-  customer_timezone: string | null; // Customer's timezone identifier
+  source: 'roadmap' | 'scheduled'; // Explicitly 'roadmap' or 'scheduled'
+  latest_consent_status: OptInStatusType; // Mapped status for the badge
+  latest_consent_updated: string | null;
+  customer_timezone: string | null;
 }
+
+// Robust sort function for EngagementPlan array
+const robustDateSort = (a: EngagementPlan, b: EngagementPlan): number => {
+  let timeA = 0;
+  let timeB = 0;
+
+  try {
+    if (a.send_datetime_utc) {
+      const dateA = parseISO(a.send_datetime_utc);
+      if (!isNaN(dateA.getTime())) timeA = dateA.getTime();
+    }
+  } catch (e) { /* Keep timeA as 0 */ }
+
+  try {
+    if (b.send_datetime_utc) {
+      const dateB = parseISO(b.send_datetime_utc);
+      if (!isNaN(dateB.getTime())) timeB = dateB.getTime();
+    }
+  } catch (e) { /* Keep timeB as 0 */ }
+  
+  return timeA - timeB;
+};
+
+// Interface for the expected response from the schedule API endpoint
+interface ScheduleApiResponse {
+    message_id: number;
+    message?: { // Optional details about the newly scheduled message
+        status?: string;
+        smsContent?: string;
+        send_datetime_utc?: string;
+        // Add any other properties the backend might return here
+    };
+    // Add other top-level response properties if any
+}
+
 
 export default function AllEngagementPlansPage() {
   const params = useParams();
-  // Ensure business_name is treated as a string
   const business_name = params?.business_name as string | undefined;
 
   const [plans, setPlans] = useState<EngagementPlan[]>([]);
   const [businessId, setBusinessId] = useState<number | null>(null);
-  const [editingPlan, setEditingPlan] = useState<number | null>(null); // Store the ID of the plan being edited
+  const [editingPlanId, setEditingPlanId] = useState<number | null>(null);
+  const [editingPlanSource, setEditingPlanSource] = useState<'roadmap' | 'scheduled' | null>(null);
+
   const [editedContent, setEditedContent] = useState<string>("");
-  const [editedDate, setEditedDate] = useState<string>(""); // Format: minGoto-MM-DD
-  const [editedTime, setEditedTime] = useState<string>(""); // Format: HH:mm
+  const [editedDate, setEditedDate] = useState<string>("");
+  const [editedTime, setEditedTime] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchPlans = useCallback(async () => {
     if (!business_name) {
-        setError("Business name not found in URL.");
-        setIsLoading(false);
-        return;
+      setError("Business name not found in URL.");
+      setIsLoading(false);
+      return;
     }
-
+    setIsLoading(true);
+    setError(null);
     try {
-      setIsLoading(true);
-      setError(null);
-      console.log(`Workspaceing plans for business slug: ${business_name}`);
-
-      // 1. Get the business ID from the slug
       const businessRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
       const currentBusinessId = businessRes.data.business_id;
       setBusinessId(currentBusinessId);
-      console.log(`Business ID found: ${currentBusinessId}`);
 
-      // 2. Fetch all engagement data using the business ID
-      const response = await apiClient.get<CustomerEngagement[]>(`/review/all-engagements?business_id=${currentBusinessId}`);
-      console.log(`Workspaceed raw engagement data:`, response.data);
-
-      // 3. Process the response: Flatten customer messages into individual plans
-      const allPlans: EngagementPlan[] = [];
+      const response = await apiClient.get<CustomerEngagementFromServer[]>(`/review/all-engagements?business_id=${currentBusinessId}`);
+      
+      const allPlansLocal: EngagementPlan[] = [];
       if (Array.isArray(response.data)) {
-        response.data.forEach((customer: CustomerEngagement) => {
-          // Ensure customer.messages is an array before iterating
+        response.data.forEach((customer) => {
           if (Array.isArray(customer.messages)) {
-            customer.messages.forEach((message: CustomerMessage) => {
-              // Extract customer_timezone safely, default to null if missing
-              const customer_timezone = message.customer_timezone ?? null;
-              const { customer_timezone: _, ...restMessage } = message; // Exclude customer_timezone from restMessage
-
-              // Map the raw consent status string to our OptInStatus enum/type
-              let mappedStatus: OptInStatus = "waiting"; // Default status
-              const rawStatus = customer.latest_consent_status?.toLowerCase();
-              const isOptedIn = customer.opted_in;
-
-              if (rawStatus === "opted_in" && isOptedIn) {
-                mappedStatus = "opted_in";
-              } else if (rawStatus === "opted_out" || (rawStatus === "declined" && !isOptedIn)) {
-                // Consider 'declined' as 'opted_out' for the badge
-                mappedStatus = "opted_out";
-              } else if (rawStatus === "pending") {
-                mappedStatus = "pending";
-              } else if (!rawStatus) {
-                // If no status exists, treat as 'waiting' (or maybe 'pending' depending on logic)
-                mappedStatus = "waiting";
-              } else {
-                // Handle unexpected statuses, map to 'error' or log a warning
-                console.warn(`Unexpected consent status '${rawStatus}' for customer ${customer.customer_id}`);
-                mappedStatus = "error";
+            customer.messages.forEach((message) => {
+              let mappedConsentStatus: OptInStatusType = "waiting";
+              const rawConsent = customer.latest_consent_status?.toLowerCase();
+              
+              if (customer.opted_in && rawConsent === "opted_in") {
+                mappedConsentStatus = "opted_in";
+              } else if (rawConsent === "opted_out" || rawConsent === "declined") {
+                mappedConsentStatus = "opted_out";
+              } else if (rawConsent === "pending") {
+                mappedConsentStatus = "pending";
               }
 
-              // Push a new EngagementPlan object for each message
-              allPlans.push({
-                ...restMessage, // Spread message details (id, status, smsContent, etc.)
-                customer_id: customer.customer_id, // Add customer ID
+              allPlansLocal.push({
+                id: message.id,
+                customer_id: customer.customer_id,
                 customer_name: customer.customer_name,
-                latest_consent_status: mappedStatus,
-                latest_consent_updated: customer.latest_consent_updated || null, // Use null if undefined
-                customer_timezone: customer_timezone, // Add customer timezone
+                status: message.status,
+                smsContent: message.smsContent,
+                send_datetime_utc: message.send_datetime_utc,
+                source: message.source as 'roadmap' | 'scheduled',
+                latest_consent_status: mappedConsentStatus,
+                latest_consent_updated: customer.latest_consent_updated || null,
+                customer_timezone: message.customer_timezone,
               });
             });
-          } else {
-            console.warn(`Customer ${customer.customer_id} has no 'messages' array or it's not an array.`);
           }
         });
-      } else {
-         console.warn(`API response data for /review/all-engagements is not an array:`, response.data);
       }
+      
+      allPlansLocal.sort(robustDateSort);
+      setPlans(allPlansLocal);
 
-      console.log(`Processed ${allPlans.length} total plan items.`);
-      setPlans(allPlans); // Update state with the flattened list
-
-    } catch (error: any) {
-      console.error('Error fetching plans:', error);
-      // Provide more specific error message if possible
-      const errorDetail = error.response?.data?.detail || error.message || 'Unknown error';
-      setError(`Failed to load engagement plans: ${errorDetail}. Please try again.`);
-      setPlans([]); // Clear plans on error
+    } catch (err: any) {
+      console.error('Error fetching plans:', err);
+      const errorDetail = err.response?.data?.detail || err.message || 'Unknown error';
+      setError(`Failed to load engagement plans: ${errorDetail}.`);
+      setPlans([]);
     } finally {
       setIsLoading(false);
     }
-  }, [business_name]); // Add business_name as dependency
+  }, [business_name]);
 
   useEffect(() => {
     fetchPlans();
-  }, [fetchPlans]); // Call fetchPlans when the component mounts or fetchPlans changes
+  }, [fetchPlans]);
 
-  const handleDelete = async (plan: EngagementPlan) => {
-    // Optimistic UI update: Remove immediately
-    setPlans(prev => prev.filter(p => !(p.id === plan.id && p.source === plan.source)));
+  const handleDelete = async (planToDelete: EngagementPlan) => {
+    setError(null);
+    const originalPlans = [...plans];
+    setPlans(prev => prev.filter(p => !(p.id === planToDelete.id && p.source === planToDelete.source)));
+    
     try {
-      console.log(`Deleting plan ID: ${plan.id}, Source: ${plan.source}`);
-      await apiClient.delete(`/roadmap-workflow/${plan.id}?source=${plan.source}`);
-      console.log(`Successfully deleted plan ID: ${plan.id}`);
-    } catch (err) {
-      console.error("❌ Failed to delete message:", err);
-      setError('Failed to delete message. Please try again.');
-      // Rollback UI update on failure
-      fetchPlans(); // Refetch to get the correct state
+      await apiClient.delete(`/roadmap-workflow/${planToDelete.id}?source=${planToDelete.source}`);
+    } catch (err: any) {
+      console.error("Failed to delete message:", err);
+      setError(err.response?.data?.detail || 'Failed to delete message. Please try again.');
+      setPlans(originalPlans);
     }
   };
 
-  const handleEdit = (plan: EngagementPlan) => {
-    console.log(`Editing plan ID: ${plan.id}, Source: ${plan.source}`);
-    setEditingPlan(plan.id); // Store the ID of the plan being edited
-    setEditedContent(plan.smsContent);
+  const handleEdit = (planToEdit: EngagementPlan) => {
+    setEditingPlanId(planToEdit.id);
+    setEditingPlanSource(planToEdit.source);
+    setEditedContent(planToEdit.smsContent);
+    setError(null);
 
     try {
-        // Use current time if send_datetime_utc is invalid or null
-        const dateString = plan.send_datetime_utc || new Date().toISOString();
-        const utcDate = parseISO(dateString); // Use parseISO for reliability
+      const dateString = planToEdit.send_datetime_utc || new Date().toISOString();
+      const utcDate = parseISO(dateString);
+      if (isNaN(utcDate.getTime())) throw new Error("Invalid date string for editing");
 
-        // Pre-fill date input (YYYY-MM-DD)
-        setEditedDate(format(utcDate, "yyyy-MM-dd"));
-
-        // Convert UTC to customer's local timezone for time input
-        // Use a fallback timezone if customer_timezone is null/invalid
-        const customerTz = plan.customer_timezone || "America/Denver"; // Fallback timezone
-        const localDate = utcToZonedTime(utcDate, customerTz);
-        setEditedTime(format(localDate, "HH:mm")); // Format as HH:mm (local time)
-    } catch (parseError) {
-        console.error(`Error parsing date for plan ${plan.id}:`, parseError);
-        // Set defaults if parsing fails
-        const now = new Date();
-        setEditedDate(format(now, "yyyy-MM-dd"));
-        setEditedTime(format(now, "HH:mm"));
-        setError(`Could not parse date for message ID ${plan.id}. Please set manually.`);
+      setEditedDate(format(utcDate, "yyyy-MM-dd"));
+      const customerTz = planToEdit.customer_timezone || "America/Denver";
+      const localDate = utcToZonedTime(utcDate, customerTz);
+      setEditedTime(format(localDate, "HH:mm"));
+    } catch (parseError: any) {
+      console.error(`Error parsing date for plan ${planToEdit.id}:`, parseError);
+      const now = new Date();
+      const customerTz = planToEdit.customer_timezone || "America/Denver";
+      const localNow = utcToZonedTime(now, customerTz);
+      setEditedDate(format(localNow, "yyyy-MM-dd"));
+      setEditedTime(format(localNow, "HH:mm"));
+      setError(`Could not parse date for message ID ${planToEdit.id}. Please set manually.`);
     }
   };
+  
+  const handleCancelEdit = () => {
+    setEditingPlanId(null);
+    setEditingPlanSource(null);
+    setError(null);
+  };
 
-  const handleSaveEdit = async (plan: EngagementPlan) => {
+  const handleSaveEdit = async () => {
+    if (editingPlanId === null || editingPlanSource === null) {
+        setError("No plan selected for saving. Please try again.");
+        return;
+    }
+    setError(null);
+    const originalPlans = [...plans];
+
     try {
-      // Combine date and time strings into a local date object
-      const localDateTimeString = `${editedDate}T${editedTime}:00`; // Assume seconds are 00
-      const localDate = new Date(localDateTimeString); // This creates a Date object in the browser's local time
+      const localDateTimeString = `${editedDate}T${editedTime}:00`;
+      const localDate = new Date(localDateTimeString);
+      if (isNaN(localDate.getTime())) {
+        setError("Invalid date or time entered for saving.");
+        return;
+      }
 
-      // Convert this local date/time to UTC using the customer's timezone
-      const customerTz = plan.customer_timezone || "America/Denver"; // Use fallback
-      const utcDate = zonedTimeToUtc(localDate, customerTz).toISOString(); // Convert to UTC ISO string
-      console.log(`Saving edit for plan ID: ${plan.id}. New UTC time: ${utcDate}`);
+      const planBeingEdited = plans.find(p => p.id === editingPlanId && p.source === editingPlanSource);
+      const customerTz = planBeingEdited?.customer_timezone || "America/Denver";
+      const utcDateISOString = zonedTimeToUtc(localDate, customerTz).toISOString();
 
-      await apiClient.put(`/roadmap-workflow/update-time/${plan.id}?source=${plan.source}`, {
+      await apiClient.put(`/roadmap-workflow/update-time/${editingPlanId}?source=${editingPlanSource}`, {
         smsContent: editedContent,
-        send_datetime_utc: utcDate, // Send the correctly converted UTC ISO string
+        send_datetime_utc: utcDateISOString,
       });
 
-      // Update local state optimistically
       setPlans(prev =>
-        prev.map(p =>
-          (p.id === plan.id && p.source === plan.source) // Ensure we match the correct plan
-            ? { ...p, smsContent: editedContent, send_datetime_utc: utcDate }
-            : p
-        )
+        prev
+          .map(p =>
+            (p.id === editingPlanId && p.source === editingPlanSource)
+              ? { ...p, smsContent: editedContent, send_datetime_utc: utcDateISOString }
+              : p
+          )
+          .sort(robustDateSort)
       );
-      setEditingPlan(null); // Exit editing mode
-      console.log(`Successfully saved edit for plan ID: ${plan.id}`);
-    } catch (err) {
-      console.error("❌ Failed to save edited message:", err);
-      setError('Failed to save changes. Please try again.');
+      handleCancelEdit();
+    } catch (err: any) {
+      console.error("Failed to save edited message:", err);
+      setError(err.response?.data?.detail || 'Failed to save changes. Please try again.');
+      setPlans(originalPlans);
     }
   };
 
-  const handleSchedule = async (plan: EngagementPlan) => {
-    // Find the original plan in state to potentially update
-    const originalPlanIndex = plans.findIndex(p => p.id === plan.id && p.source === plan.source);
+  const handleSchedule = async (planToSchedule: EngagementPlan) => {
+    setError(null);
+    const originalPlans = [...plans];
 
     try {
-      console.log(`Attempting to schedule plan ID: ${plan.id}, Source: ${plan.source}`);
-      const res = await apiClient.put(`/roadmap-workflow/${plan.id}/schedule`);
-      console.log(`Schedule API response for ID ${plan.id}:`, res.data);
+      const res = await apiClient.put(`/roadmap-workflow/${planToSchedule.id}/schedule`);
+      const responseData = res.data as ScheduleApiResponse;
+      
+      const newMessageId = responseData.message_id;
+      const backendResponseMessageDetails = responseData.message;
 
-      // --- FIX: Use message_id from response ---
-      const newMessageId = res.data.message_id; // Get the ID of the *new* Message record created
-      if (!newMessageId) {
-          throw new Error("API response did not include a message_id.");
+      if (typeof newMessageId !== 'number' || isNaN(newMessageId)) {
+        console.error("Invalid or missing 'message_id' in schedule API response:", responseData);
+        throw new Error("API response did not include a valid new message_id.");
       }
 
-      // Update the state: Change the status and source, and potentially the ID
-       setPlans(prev => {
-           const newPlans = [...prev];
-           if (originalPlanIndex > -1) {
-               // Update the existing plan item in place
-               newPlans[originalPlanIndex] = {
-                   ...newPlans[originalPlanIndex],
-                   id: newMessageId, // Update ID to the new Message record ID
-                   status: "scheduled",
-                   source: "scheduled" // Update source to 'scheduled'
-               };
-           } else {
-               console.warn(`Plan with ID ${plan.id} and Source ${plan.source} not found in state during schedule update.`);
-           }
-           return newPlans;
-       });
-
-       console.log(`Successfully scheduled message. Original roadmap ID: ${plan.id}, New Message ID: ${newMessageId}`);
-
+      setPlans(currentPlans =>
+        currentPlans
+          .map((p): EngagementPlan => {
+            if (p.id === planToSchedule.id && p.source === 'roadmap') {
+              const updatedPlan: EngagementPlan = {
+                ...p,
+                id: newMessageId,
+                status: backendResponseMessageDetails?.status || "scheduled",
+                source: 'scheduled',
+                smsContent: backendResponseMessageDetails?.smsContent || p.smsContent,
+                send_datetime_utc: backendResponseMessageDetails?.send_datetime_utc || p.send_datetime_utc,
+              };
+              return updatedPlan;
+            }
+            return p;
+          })
+          .sort(robustDateSort)
+      );
     } catch (err: any) {
-      console.error("❌ Failed to schedule message:", err);
-       const errorDetail = err.response?.data?.detail || err.message || 'Unknown error';
-      setError(`Failed to schedule message ID ${plan.id}: ${errorDetail}. Please try again.`);
+      console.error("Failed to schedule message:", err);
+      const errorDetail = err.response?.data?.detail || err.message || 'Unknown error';
+      setError(`Failed to schedule message ID ${planToSchedule.id}: ${errorDetail}.`);
+      setPlans(originalPlans);
     }
   };
 
-  // Memoized calculation for grouping plans by time categories
   const groupedPlans = useMemo(() => {
-    console.log("Recalculating grouped plans...");
-    // Ensure plans is an array before reducing
-    if (!Array.isArray(plans)) {
-        console.warn("Plans state is not an array, returning empty groups.");
-        return {} as Record<string, EngagementPlan[]>;
+    if (!Array.isArray(plans) || plans.length === 0) {
+      return {} as Record<string, EngagementPlan[]>;
     }
-
     const groups: Record<string, EngagementPlan[]> = {
-      'This Week': [],
-      'Next Week': [],
-      'Later': []
+      'This Week': [], 'Next Week': [], 'Later': [], 'Undated/Errored': []
     };
+    const now = new Date();
 
-    const now = new Date(); // Reference point for 'This Week'/'Next Week'
-
-    return plans.reduce((acc, plan) => {
-      // Basic validation for plan structure and date
-      if (!plan || typeof plan !== 'object' || !plan.send_datetime_utc || typeof plan.send_datetime_utc !== 'string') {
-          console.warn('Skipping invalid plan object:', plan);
-          return acc;
-      }
-
+    plans.forEach((plan) => {
       try {
-        const date = parseISO(plan.send_datetime_utc); // Use parseISO for reliability
-        const nextWeekStart = addWeeks(now, 1);
-
-        let group = 'Later'; // Default group
-
-        // Check if the date is valid before comparing
-        if (!isNaN(date.getTime())) {
-            if (isThisWeek(date, { weekStartsOn: 1 })) { // weekStartsOn: 1 for Monday
-              group = 'This Week';
-            } else if (isBefore(date, nextWeekStart)) {
-              group = 'Next Week';
-            }
-        } else {
-             console.warn(`Invalid date parsed for plan ID ${plan.id}: ${plan.send_datetime_utc}`);
-             group = 'Later';
+        if (!plan.send_datetime_utc) {
+            groups['Undated/Errored'].push(plan);
+            return;
         }
-
-        acc[group].push(plan);
-        return acc;
+        const date = parseISO(plan.send_datetime_utc);
+        if (isNaN(date.getTime())) {
+            groups['Undated/Errored'].push(plan);
+            return;
+        }
+        
+        const nextWeekStart = addWeeks(now, 1);
+        let groupKey = 'Later';
+        if (isThisWeek(date, { weekStartsOn: 1 })) {
+          groupKey = 'This Week';
+        } else if (isBefore(date, nextWeekStart)) { // Check if it's before next week but not this week
+          groupKey = 'Next Week';
+        }
+        
+        groups[groupKey].push(plan);
 
       } catch (error) {
-         console.error(`Error processing date for plan ID ${plan.id}:`, error);
-         acc['Later'].push(plan);
-         return acc;
+        console.error(`Error processing date for plan ID ${plan.id}:`, error);
+        groups['Undated/Errored'].push(plan);
       }
-    }, groups); // Start with the pre-defined groups object
-  }, [plans]); // Dependency array includes 'plans' state
+    });
+    return groups;
+  }, [plans]);
 
-  // Render Loading State
+  const getPlanKey = (plan: EngagementPlan): string => `${plan.source}-${plan.id}`;
+
+
   if (isLoading) {
     return (
-      <div className="flex-1 p-6 bg-[#11131E] text-white min-h-screen">
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-4xl font-bold mb-2 text-gray-100">📬 Loading Engagement Plans...</h1>
-          <div className="animate-pulse space-y-6 mt-8">
-            <div className="h-8 bg-gray-700 rounded w-1/3"></div>
-            <div className="h-40 bg-gray-700 rounded-lg"></div>
-            <div className="h-40 bg-gray-700 rounded-lg"></div>
-          </div>
+      <div className="flex-1 p-6 bg-slate-900 text-white min-h-screen flex items-center justify-center">
+        <div className="text-center">
+            <svg className="animate-spin h-10 w-10 text-purple-400 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <h1 className="text-2xl font-bold text-slate-300">Loading Engagement Plans...</h1>
         </div>
       </div>
     );
   }
 
-  // Render Error State
-  if (error) {
-    return (
-      <div className="flex-1 p-6 bg-[#11131E] text-white min-h-screen">
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-4xl font-bold mb-2 text-gray-100">📬 Engagement Plans</h1>
-          <div className="bg-red-900/30 border border-red-700 text-red-300 rounded-lg px-4 py-3 my-6" role="alert">
-            <p className="font-semibold">Error:</p>
-            <p>{error}</p>
-            <button
-              onClick={fetchPlans}
-              className="mt-3 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors text-sm font-medium"
-            >
-              Try Again
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Render Content
   return (
-    <div className="flex-1 p-6 bg-[#11131E] text-white min-h-screen">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-4xl font-bold mb-2 text-gray-100">📬 Engagement Plans</h1>
-        <p className="text-gray-400 mb-10">View and manage upcoming scheduled messages across all customers.</p>
+    <div className="flex-1 p-6 md:p-8 bg-slate-900 text-slate-100 min-h-screen font-sans">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex flex-col sm:flex-row justify-between items-center mb-10">
+            <h1 className="text-4xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 mb-4 sm:mb-0">
+                📬 All Engagement Plans
+            </h1>
+            {business_name && <p className="text-sm text-slate-400">For: {decodeURIComponent(business_name)}</p>}
+        </div>
 
-        {/* Iterate over the defined groups to ensure order */}
-        {['This Week', 'Next Week', 'Later'].map(group => (
-          <div key={group} className="mb-12 last:mb-6">
-            <h2 className="text-2xl font-semibold mb-6 text-gray-200 border-b border-gray-700 pb-2">{group}</h2>
-            <div className="space-y-6"> {/* Increased spacing between cards */}
-              {groupedPlans[group] && groupedPlans[group].length > 0 ? (
-                groupedPlans[group].map((plan, index) => { // Added index for potential logging
-                  // --- Date/Time Formatting ---
-                  let formattedDate = "---";
-                  let formattedTime = "---";
-                  const timezoneDisplay = plan.customer_timezone || "America/Denver"; // Fallback
-
-                  try {
-                      const utcDate = parseISO(plan.send_datetime_utc);
-
-                      // 1. Check if the initial UTC date parsing is valid
-                      if (isNaN(utcDate.getTime())) {
-                          throw new Error("Invalid date string received from backend");
-                      }
-
-                      // 2. Convert to the target timezone
-                      const localDateInstance = utcToZonedTime(utcDate, timezoneDisplay);
-
-                      // 3. Check if the result of timezone conversion is valid (optional but safe)
-                      if (isNaN(localDateInstance.getTime())) {
-                          throw new Error("Failed to convert date to local timezone");
-                      }
-
-                      // 4. Format the valid localDateInstance - Linter should be happy now
-                      formattedDate = format(localDateInstance, 'MMM d');
-                      formattedTime = format(localDateInstance, 'EEEE, h:mm a');
-
-                  } catch (e: any) { // Catch any error from parsing or conversion
-                      console.error(`Error formatting date for plan ${plan.id} (UTC: ${plan.send_datetime_utc}): ${e.message}`);
-                      // formattedDate and formattedTime retain their "---" default values
-                  }
-                  // --- End Date/Time Formatting ---
-
-                  // --- Unique Key Generation ---
-                  const uniqueKey = `${plan.source}-${plan.id}`;
-                  // --- End Unique Key Generation ---
-
-                  return (
-                    // Use the unique key here
-                    <div key={uniqueKey} className="relative pl-20"> {/* Added pl-20 for spacing */}
-                      {/* Timeline line (vertical) */}
-                      <div className="absolute left-6 top-0 bottom-0 w-1 bg-gradient-to-b from-green-600 to-teal-600 rounded-full"></div>
-
-                      {/* Date circle - positioned relative to the line */}
-                      <div className="absolute left-6 top-4 -translate-x-1/2 w-14 h-14 rounded-full bg-[#2C2F3E] border-2 border-green-500 flex items-center justify-center text-center text-xs font-medium shadow-lg shadow-green-900/30">
-                        <div className="text-green-400 leading-tight">{formattedDate}</div>
-                      </div>
-
-                      {/* Content card */}
-                      <div className={`rounded-lg p-6 transition-all duration-300 shadow-md hover:shadow-lg ${
-                        plan.status === "scheduled"
-                          ? "bg-gradient-to-br from-green-900/40 to-green-950/30 border border-green-700/50"
-                          : "bg-[#1C1F2E]/80 border border-gray-700/50 backdrop-blur-sm"
-                      }`}>
-                        {/* Top section: Time and Status */}
-                        <div className="flex justify-between items-start mb-4">
-                          <div>
-                             <div className="text-lg font-semibold text-gray-100">
-                               {formattedTime}
-                             </div>
-                             <div className="text-xs text-gray-400">
-                               ({timezoneDisplay.split('/')[1]?.replace('_', ' ')} Time)
-                             </div>
-                          </div>
-                           {/* Status badge */}
-                           <div className={`px-3 py-1 rounded-full text-xs font-semibold tracking-wide ${
-                            plan.status === "scheduled"
-                              ? "bg-green-500/20 text-green-300 border border-green-500/30"
-                              : plan.status === "sent"
-                              ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
-                              : plan.status === "rejected"
-                              ? "bg-red-500/20 text-red-300 border border-red-500/30"
-                              : "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" // Default/pending
-                          }`}>
-                            {plan.status.toUpperCase().replace('_', ' ')}
-                          </div>
-                        </div>
-
-                        {/* Main Content: Editing or Display */}
-                        <div className="mb-4">
-                          {editingPlan === plan.id ? (
-                            // Editing View
-                            <div className="space-y-3">
-                              <textarea
-                                value={editedContent}
-                                onChange={(e) => setEditedContent(e.target.value)}
-                                className="w-full p-2 text-sm text-white bg-[#2C2F3E] border border-gray-600 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                rows={3}
-                                placeholder="Enter message content..."
-                              />
-                              <input
-                                type="date"
-                                value={editedDate}
-                                onChange={(e) => setEditedDate(e.target.value)}
-                                className="w-full p-2 text-sm text-white bg-[#2C2F3E] border border-gray-600 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              />
-                              <input
-                                type="time"
-                                value={editedTime}
-                                onChange={(e) => setEditedTime(e.target.value)}
-                                className="w-full p-2 text-sm text-white bg-[#2C2F3E] border border-gray-600 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              />
-                            </div>
-                          ) : (
-                            // Display View
-                            <p className="text-gray-300 text-sm leading-relaxed">{plan.smsContent}</p>
-                          )}
-                        </div>
-
-                        {/* Customer Info */}
-                        <div className="flex items-center gap-3 text-sm border-t border-gray-700/50 pt-4">
-                          <span className="text-gray-400">👤</span>
-                          <span className="font-medium text-gray-200">{plan.customer_name}</span>
-                          <OptInStatusBadge
-                            status={plan.latest_consent_status}
-                            lastUpdated={plan.latest_consent_updated}
-                          />
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="flex justify-end gap-2 mt-5">
-                          {editingPlan === plan.id ? (
-                            // Buttons during editing
-                            <>
-                              <button
-                                onClick={() => setEditingPlan(null)} // Cancel edit
-                                className="px-3 py-1.5 text-xs font-medium bg-gray-600 hover:bg-gray-700 text-gray-100 rounded-md transition-colors"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                onClick={() => handleSaveEdit(plan)}
-                                className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
-                              >
-                                Save Changes
-                              </button>
-                            </>
-                          ) : (
-                            // Buttons for display mode
-                            <>
-                              <button
-                                onClick={() => handleDelete(plan)}
-                                className="px-3 py-1.5 text-xs font-medium bg-red-600/80 hover:bg-red-700 text-white rounded-md transition-colors"
-                                title="Remove this message"
-                              >
-                                Remove
-                              </button>
-                              <button
-                                onClick={() => handleEdit(plan)}
-                                className="px-3 py-1.5 text-xs font-medium bg-blue-600/80 hover:bg-blue-700 text-white rounded-md transition-colors"
-                                title="Edit message and time"
-                              >
-                                Edit
-                              </button>
-                              {/* Only show Schedule button if not already scheduled */}
-                              {plan.status !== "scheduled" && (
-                                <button
-                                  onClick={() => handleSchedule(plan)}
-                                  className="px-3 py-1.5 text-xs font-medium bg-green-600/90 hover:bg-green-700 text-white rounded-md transition-colors"
-                                  title="Approve and schedule this message"
-                                >
-                                  Schedule
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div> {/* End Content card */}
-                    </div> // End relative container
-                  );
-                }) // End map over plans
-              ) : (
-                // Message when no plans in the group
-                <div className="text-gray-500 text-center py-8 italic">
-                  No messages scheduled for {group.toLowerCase()}.
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-300 px-4 py-3 rounded-lg relative mb-6 shadow-lg" role="alert">
+            <div className="flex">
+                <div className="py-1"><svg className="fill-current h-6 w-6 text-red-400 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M2.93 17.07A10 10 0 1 1 17.07 2.93 10 10 0 0 1 2.93 17.07zM9 5v6h2V5H9zm0 8v2h2v-2H9z"/></svg></div>
+                <div>
+                    <p className="font-bold">Error Occurred</p>
+                    <p className="text-sm">{error}</p>
                 </div>
-              )}
-            </div> {/* End space-y-6 */}
-          </div> // End group container
-        ))}
-      </div> {/* End max-w-6xl */}
-    </div> // End main container
+            </div>
+            <button onClick={() => { setError(null); fetchPlans();}} className="absolute top-0 bottom-0 right-0 px-4 py-3 text-red-300 hover:text-red-100 font-bold text-2xl">&times;</button>
+          </div>
+        )}
+
+        {Object.values(groupedPlans).every(group => group.length === 0) && !isLoading && !error ? (
+             <div className="text-center py-16">
+                <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-16 w-16 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1V4a1 1 0 011-1h16a1 1 0 011 1v10a1 1 0 01-1 1h-1.586l-2.707 2.707A.996.996 0 0115 17v-2H9v2c0 .399-.216.764-.553.924L5.586 15zM15 9a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <p className="mt-5 text-xl text-slate-400 font-semibold">No Engagement Plans Found</p>
+                <p className="text-sm text-slate-500 mt-1">There are no messages scheduled or pending review for this business.</p>
+            </div>
+        ) : (
+            ['This Week', 'Next Week', 'Later', 'Undated/Errored'].map(groupName => (
+                groupedPlans[groupName] && groupedPlans[groupName].length > 0 && (
+                <div key={groupName} className="mb-12 last:mb-6">
+                    <h2 className="text-2xl font-semibold mb-6 text-slate-300 border-b-2 border-slate-700 pb-3">{groupName}</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {groupedPlans[groupName].map((plan) => {
+                        let formattedDate = "N/A";
+                        let formattedTime = "N/A";
+                        const timezoneDisplay = plan.customer_timezone || "America/Denver";
+
+                        if (plan.send_datetime_utc) {
+                            try {
+                                const utcDate = parseISO(plan.send_datetime_utc);
+                                if (!isNaN(utcDate.getTime())) {
+                                    const localDateInstance = utcToZonedTime(utcDate, timezoneDisplay);
+                                    formattedDate = format(localDateInstance, 'MMM d, yyyy'); // Added year
+                                    formattedTime = format(localDateInstance, 'EEEE, h:mm a');
+                                }
+                            } catch (e) { console.warn("Date format error for plan", plan.id, e); }
+                        }
+
+                        const isEditingThisPlan = editingPlanId === plan.id && editingPlanSource === plan.source;
+                        const isOptedOutForSchedule = plan.latest_consent_status === "opted_out";
+
+
+                        return (
+                        <div key={getPlanKey(plan)} 
+                             className={`rounded-xl p-5 transition-all duration-300 shadow-lg hover:shadow-purple-500/20 
+                                        ${isEditingThisPlan ? 'ring-2 ring-purple-500 shadow-purple-500/30' : ''}
+                                        ${plan.status === "scheduled" ? "bg-green-600/10 border border-green-500/30" 
+                                            : plan.status === "sent" ? "bg-blue-600/10 border border-blue-500/30" 
+                                            : "bg-slate-800/70 border border-slate-700 backdrop-blur-sm"}`}>
+                            
+                            <div className="flex justify-between items-start mb-3">
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-300">{plan.customer_name}</p>
+                                    <p className="text-xs text-slate-400">ID: {plan.customer_id} <OptInStatusBadge status={plan.latest_consent_status} lastUpdated={plan.latest_consent_updated} /></p>
+                                </div>
+                                <span className={`text-xs font-semibold uppercase px-3 py-1 rounded-full tracking-wider ${
+                                    plan.status === "scheduled" ? "bg-green-500/80 text-white"
+                                    : plan.status === "sent" ? "bg-blue-500/80 text-white"
+                                    : "bg-yellow-500/80 text-slate-900"}`}>
+                                    {plan.status.replace('_', ' ')}
+                                </span>
+                            </div>
+
+                            <div className="mb-3 border-t border-slate-700 pt-3">
+                                <p className="text-sm font-medium text-slate-300">{formattedDate} at {formattedTime}</p>
+                                <p className="text-xs text-slate-500">({timezoneDisplay.split('/')[1]?.replace('_', ' ') || 'Local Time'})</p>
+                            </div>
+
+                            {isEditingThisPlan ? (
+                            <div className="space-y-3 mt-2">
+                                <textarea value={editedContent} onChange={(e) => setEditedContent(e.target.value)}
+                                    className="w-full p-3 text-sm text-slate-100 bg-slate-700 border border-slate-600 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    rows={4} />
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <input type="date" value={editedDate} onChange={(e) => setEditedDate(e.target.value)}
+                                        className="w-full p-3 text-sm text-slate-100 bg-slate-700 border border-slate-600 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500" />
+                                    <input type="time" value={editedTime} onChange={(e) => setEditedTime(e.target.value)}
+                                        className="w-full p-3 text-sm text-slate-100 bg-slate-700 border border-slate-600 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500" />
+                                </div>
+                                <div className="flex justify-end gap-3 pt-2">
+                                    <button onClick={handleCancelEdit} className="text-sm px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-md text-slate-100">Cancel</button>
+                                    <button onClick={handleSaveEdit} className="text-sm px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-md text-white">Save</button>
+                                </div>
+                            </div>
+                            ) : (
+                            <div className="mt-1">
+                                <p className="text-slate-300 text-sm leading-relaxed mb-4 whitespace-pre-wrap h-20 overflow-y-auto p-1 bg-slate-800/30 rounded-md scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-800/50">{plan.smsContent}</p>
+                                <div className="flex justify-end gap-2 items-center pt-2 border-t border-slate-700/50">
+                                <button onClick={() => handleDelete(plan)} title="Remove"
+                                    className="text-xs p-2 bg-red-700/40 hover:bg-red-600/60 rounded-md text-red-300 hover:text-white transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193v-.443A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" /></svg>
+                                </button>
+                                <button onClick={() => handleEdit(plan)} title="Edit"
+                                    className="text-xs p-2 bg-blue-600/40 hover:bg-blue-500/60 rounded-md text-blue-300 hover:text-white transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" /><path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z" /></svg>
+                                </button>
+                                {plan.source === 'roadmap' && plan.status !== "scheduled" && plan.status !== "sent" && (
+                                <button onClick={() => handleSchedule(plan)} title="Schedule"
+                                    disabled={isOptedOutForSchedule}
+                                    className={`text-xs p-2 rounded-md text-white transition-colors flex items-center space-x-1
+                                                ${isOptedOutForSchedule
+                                                    ? 'bg-slate-600 cursor-not-allowed'
+                                                    : 'bg-purple-600/70 hover:bg-purple-500/90'}`}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" /></svg>
+                                    <span>Schedule</span>
+                                </button>
+                                )}
+                                </div>
+                            </div>
+                            )}
+                        </div>
+                        );
+                    })}
+                    </div>
+                </div>
+                )
+            ))
+        )}
+      </div>
+    </div>
   );
 }
