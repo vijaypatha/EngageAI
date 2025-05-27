@@ -8,24 +8,24 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Trash2, Edit3, Save, XCircle } from 'lucide-react';
+import clsx from 'clsx';
 
 export interface FaqItem {
   id: string;
-  type: 'system' | 'custom'; // Used by parent to know if question is editable & removable
-  questionText: string;     // This will ALWAYS be the title
+  type: 'system' | 'custom';
+  questionText: string;
   answerText: string;
-  isEditing?: boolean;       // For parent to suggest initial edit state
+  isEditing?: boolean;
   placeholder?: string;
-  // isPredefinedQuestion is effectively replaced by item.type === 'system' for parent's logic
 }
 
 interface FaqCardProps {
   item: FaqItem;
   onAnswerChange: (id: string, newAnswer: string) => void;
-  onQuestionChange?: (id: string, newQuestion: string) => void; // Only for type: 'custom'
-  onRemove?: (id: string) => void; // Only for type: 'custom'
+  onQuestionChange?: (id: string, newQuestion: string) => void;
+  onRemove?: (id: string) => void;
   isSavingOverall?: boolean;
-  initialEditing?: boolean;
+  className?: string;
 }
 
 export function FaqCard({
@@ -34,10 +34,10 @@ export function FaqCard({
   onQuestionChange,
   onRemove,
   isSavingOverall = false,
-  initialEditing = false,
+  className,
 }: FaqCardProps) {
   const [isEditingThisCard, setIsEditingThisCard] = useState(
-    initialEditing || item.isEditing || (item.type === "custom" && !item.questionText && !item.answerText)
+    item.isEditing || (item.type === "custom" && !item.questionText && !item.answerText)
   );
   const [currentAnswer, setCurrentAnswer] = useState(item.answerText);
   const [currentQuestion, setCurrentQuestion] = useState(item.questionText);
@@ -48,38 +48,47 @@ export function FaqCard({
     if (item.isEditing !== undefined && item.isEditing !== isEditingThisCard) {
       setIsEditingThisCard(item.isEditing);
     }
-  }, [item.answerText, item.questionText, item.isEditing]);
+  }, [item.answerText, item.questionText, item.isEditing, isEditingThisCard]);
 
   const handleSaveEdit = () => {
     if (item.type === "custom" && onQuestionChange) {
       onQuestionChange(item.id, currentQuestion.trim());
     }
     onAnswerChange(item.id, currentAnswer.trim());
-    setIsEditingThisCard(false);
+    // isEditingThisCard will be set to false via useEffect due to item.isEditing changing in parent
   };
 
   const handleCancelEdit = () => {
     setCurrentAnswer(item.answerText);
     setCurrentQuestion(item.questionText);
-    setIsEditingThisCard(false);
+    setIsEditingThisCard(false); 
   };
 
-  // Determine if the question field itself should be editable
   const isQuestionFieldActuallyEditable = item.type === 'custom' && onQuestionChange;
-
-  // Determine the text to display as the card's title
-  // For system cards, it's fixed. For custom, it's currentQuestion or a prompt if empty.
   const cardTitle = item.type === 'system' 
                     ? item.questionText 
-                    : (currentQuestion || "New Q&A (Click Edit to define)");
+                    : (currentQuestion || (isEditingThisCard ? "" : "New Q&A (Edit to define)"));
+
+  // Define text color classes for dark background consistency
+  const textPrimaryDarkBg = "text-slate-100"; // Brightest for titles/questions
+  const textSecondaryDarkBg = "text-gray-300"; // For answers and important text
+  const textMutedDarkBg = "text-gray-400"; // For labels and less important text
+  const placeholderTextDarkBg = "text-gray-500 italic"; // For placeholders
+
+  // Input and Textarea specific styling for dark theme
+  const inputClassesDark = `bg-[#242842] border-[#333959] ${textPrimaryDarkBg} placeholder-gray-500 focus:border-emerald-500/70 focus:ring-1 focus:ring-emerald-500/70`;
+
+
+  const baseCardClasses = "flex flex-col justify-between w-full transition-shadow duration-200";
+  // Default theme classes from shadcn/ui (like border-border, bg-background) will be applied by <Card>
+  // The `className` prop from parent will provide the specific dark background (e.g. bg-[#1A1D2D]) and border.
 
   return (
-    <Card className="flex flex-col justify-between w-full rounded-xl border border-border bg-background shadow-sm hover:shadow-md transition-shadow duration-200">
-      <CardHeader className="px-5 pt-4 pb-2"> {/* Consistent padding */}
+    <Card className={clsx(baseCardClasses, className)}> {/* className from props will apply bg, border etc. */}
+      <CardHeader className="px-5 pt-4 pb-2">
         {isEditingThisCard && isQuestionFieldActuallyEditable ? (
-          // Editing the question of a CUSTOM FAQ
           <>
-            <Label htmlFor={`faq-q-${item.id}`} className="text-xs text-muted-foreground mb-1">
+            <Label htmlFor={`faq-q-${item.id}`} className={`text-xs ${textMutedDarkBg} mb-1`}>
               Customer Asks:
             </Label>
             <Input
@@ -88,22 +97,20 @@ export function FaqCard({
               onChange={(e: ChangeEvent<HTMLInputElement>) => setCurrentQuestion(e.target.value)}
               disabled={isSavingOverall}
               placeholder="Enter the customer's question..."
-              className="h-9 text-sm" // Use consistent input styling
+              className={`h-9 text-sm rounded-md ${inputClassesDark}`}
             />
           </>
         ) : (
-          // Displaying the question as the title for ALL CARDS (system or custom)
-          <CardTitle className="text-base font-semibold text-foreground tracking-tight leading-snug">
-            {cardTitle}
+          <CardTitle className={`text-base font-semibold ${textPrimaryDarkBg} tracking-tight leading-snug break-words`}>
+            {cardTitle || item.questionText}
           </CardTitle>
         )}
       </CardHeader>
 
-      <CardContent className="px-5 py-2 text-sm flex-grow"> {/* flex-grow ensures content pushes footer down */}
+      <CardContent className="px-5 py-2 text-sm flex-grow">
         {isEditingThisCard ? (
-          // Editing the answer
           <>
-            <Label htmlFor={`faq-a-${item.id}`} className="text-xs text-muted-foreground mb-1 block mt-2"> {/* Added mt-2 if question also editable */}
+            <Label htmlFor={`faq-a-${item.id}`} className={`text-xs ${textMutedDarkBg} mb-1 block mt-2`}>
               AI Nudge Should Answer:
             </Label>
             <Textarea
@@ -112,23 +119,22 @@ export function FaqCard({
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setCurrentAnswer(e.target.value)}
               disabled={isSavingOverall}
               placeholder={item.placeholder || "Provide the answer AI should use..."}
-              rows={3}
-              className="text-sm" // Use consistent textarea styling
+              rows={4} // Adjusted rows for better editing space
+              className={`text-sm rounded-md ${inputClassesDark}`}
             />
           </>
         ) : (
-          // Displaying the answer
           <p
-            className={`min-h-[40px] whitespace-pre-wrap ${ // Ensure some min height
-              currentAnswer ? "text-muted-foreground" : "italic text-muted-foreground/70"
+            className={`min-h-[40px] whitespace-pre-wrap break-words text-sm ${ // ensure text-sm for consistency
+              item.answerText ? textSecondaryDarkBg : placeholderTextDarkBg
             }`}
           >
-            {currentAnswer || "No answer yet. Click Edit to add one."}
+            {item.answerText || "No answer yet. Click Edit to add one."}
           </p>
         )}
       </CardContent>
 
-      <CardFooter className="px-5 pb-4 pt-3 flex justify-end gap-2 border-t-0"> {/* Removed top border, adjusted padding */}
+      <CardFooter className="px-5 pb-4 pt-3 flex justify-end gap-2 border-t border-[#2A2F45]"> {/* Added explicit border color for footer top */}
         {isEditingThisCard ? (
           <>
             <Button
@@ -136,7 +142,7 @@ export function FaqCard({
               variant="ghost"
               onClick={handleCancelEdit}
               disabled={isSavingOverall}
-              className="text-muted-foreground"
+              className={`${textMutedDarkBg} hover:bg-[#2A2F45]`}
             >
               <XCircle className="w-4 h-4 mr-1.5" /> Cancel
             </Button>
@@ -144,34 +150,37 @@ export function FaqCard({
               size="sm"
               onClick={handleSaveEdit}
               disabled={isSavingOverall}
-              className="bg-primary text-primary-foreground hover:bg-primary/90" // Assuming primary button style
+              className={`bg-emerald-500 text-white hover:bg-emerald-600`}
             >
               <Save className="w-4 h-4 mr-1.5" /> Save
             </Button>
           </>
         ) : (
-          <>
-            {item.type === "custom" && onRemove && ( // Remove button only for custom FAQs
+          <div className="flex w-full justify-between items-center">
+            {item.type === "custom" && onRemove ? (
               <Button
-                size="sm"
+                size="icon"
                 variant="ghost"
                 onClick={() => onRemove(item.id)}
                 disabled={isSavingOverall}
-                className="text-destructive hover:bg-destructive/10"
+                className="text-red-500/70 hover:text-red-500 hover:bg-red-900/30 p-1.5 h-auto w-auto rounded"
+                aria-label="Remove Q&A"
               >
-                <Trash2 className="w-4 h-4 mr-1.5" /> Remove
+                <Trash2 className="w-4 h-4" />
               </Button>
-            )}
+            ) : <div /> }
             <Button
               size="sm"
-              variant="secondary" // Or outline, depending on your theme
+              variant="secondary" // This variant typically has a lighter bg or border in dark themes
               onClick={() => setIsEditingThisCard(true)}
               disabled={isSavingOverall}
+              // Style the edit button for dark theme
+              className={`bg-[#242842] hover:bg-[#333959] border border-[#333959] ${textSecondaryDarkBg} hover:${textPrimaryDarkBg}`}
             >
               <Edit3 className="w-4 h-4 mr-1.5" />
-              {currentAnswer ? "Edit Answer" : "Add Answer"}
+              {item.answerText ? "Edit" : "Add Answer"}
             </Button>
-          </>
+          </div>
         )}
       </CardFooter>
     </Card>

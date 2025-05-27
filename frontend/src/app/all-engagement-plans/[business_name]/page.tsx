@@ -57,7 +57,7 @@ export default function AllEngagementPlansPage() {
   const [businessId, setBusinessId] = useState<number | null>(null);
   const [editingPlan, setEditingPlan] = useState<number | null>(null); // Store the ID of the plan being edited
   const [editedContent, setEditedContent] = useState<string>("");
-  const [editedDate, setEditedDate] = useState<string>(""); // Format: minGoto-MM-DD
+  const [editedDate, setEditedDate] = useState<string>(""); // Format: YYYY-MM-DD
   const [editedTime, setEditedTime] = useState<string>(""); // Format: HH:mm
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,8 +156,13 @@ export default function AllEngagementPlansPage() {
     // Optimistic UI update: Remove immediately
     setPlans(prev => prev.filter(p => !(p.id === plan.id && p.source === plan.source)));
     try {
-      console.log(`Deleting plan ID: ${plan.id}, Source: ${plan.source}`);
-      await apiClient.delete(`/roadmap-workflow/${plan.id}?source=${plan.source}`);
+      // Determine the correct source parameter for the backend DELETE endpoint
+      // If the plan is "scheduled", its ID is from the 'messages' table, so use source='scheduled'.
+      // Otherwise, it's a 'roadmap' draft, and its ID is from the 'roadmap_messages' table.
+      const deleteSource = (plan.source === "scheduled" || plan.source === "instant_nudge") ? "scheduled" : "roadmap";
+      
+      console.log(`Deleting plan ID: ${plan.id}, Determined Source Parameter: ${deleteSource}`);
+      await apiClient.delete(`/roadmap-workflow/${plan.id}?source=${deleteSource}`);
       console.log(`Successfully deleted plan ID: ${plan.id}`);
     } catch (err) {
       console.error("❌ Failed to delete message:", err);
@@ -294,27 +299,50 @@ export default function AllEngagementPlansPage() {
 
       try {
         const date = parseISO(plan.send_datetime_utc); // Use parseISO for reliability
-        const nextWeekStart = addWeeks(now, 1);
+
+        // Convert now to local time for comparison with a consistent timezone
+        const nowInLocalTimezone = utcToZonedTime(now, plan.customer_timezone || "America/Denver");
+        const dateInLocalTimezone = utcToZonedTime(date, plan.customer_timezone || "America/Denver");
+
+        const startOfThisWeekInLocalTimezone = format(nowInLocalTimezone, 'yyyy-MM-dd');
+        const startOfNextWeekInLocalTimezone = format(addWeeks(nowInLocalTimezone, 1), 'yyyy-MM-dd');
+
 
         let group = 'Later'; // Default group
 
         // Check if the date is valid before comparing
         if (!isNaN(date.getTime())) {
-            if (isThisWeek(date, { weekStartsOn: 1 })) { // weekStartsOn: 1 for Monday
+            // Using string comparison for dates to simplify the week logic, as date-fns isThisWeek
+            // can be tricky with timezones without explicit start of week options.
+            // For simplicity, we'll categorize based on the day.
+            const formattedPlanDate = format(dateInLocalTimezone, 'yyyy-MM-dd');
+
+            if (formattedPlanDate >= startOfThisWeekInLocalTimezone && formattedPlanDate < startOfNextWeekInLocalTimezone) {
               group = 'This Week';
-            } else if (isBefore(date, nextWeekStart)) {
-              group = 'Next Week';
+            } else if (isBefore(dateInLocalTimezone, nowInLocalTimezone)) { // If it's in the past
+                group = 'Past'; // You might want to handle past messages differently or filter them out
+            } else if (formattedPlanDate >= startOfNextWeekInLocalTimezone && formattedPlanDate < format(addWeeks(nowInLocalTimezone, 2), 'yyyy-MM-dd')) {
+                group = 'Next Week';
+            } else {
+                group = 'Later';
             }
         } else {
              console.warn(`Invalid date parsed for plan ID ${plan.id}: ${plan.send_datetime_utc}`);
              group = 'Later';
         }
 
+        // Initialize group array if it doesn't exist
+        if (!acc[group]) {
+          acc[group] = [];
+        }
         acc[group].push(plan);
         return acc;
 
       } catch (error) {
          console.error(`Error processing date for plan ID ${plan.id}:`, error);
+         if (!acc['Later']) {
+           acc['Later'] = [];
+         }
          acc['Later'].push(plan);
          return acc;
       }

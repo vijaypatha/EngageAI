@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight, Target, Users, ListChecks, CalendarCheck, Smile, Zap, Heart, MapPin, Route, CheckSquare, Bot, MessageCircleHeart  } from "lucide-react"; // Added Heart
+import { ArrowRight, Target, Users, ListChecks, CalendarCheck, Smile, Zap, Heart, MapPin, Route, CheckSquare, Bot, MessageCircleHeart  } from "lucide-react";
 
 // Define a type for your testimonial data for better structure
 interface Testimonial {
@@ -68,48 +68,37 @@ export default function LandingPage() {
     <main
       className={`min-h-screen w-full flex flex-col justify-start transition-opacity duration-1000 ${
         mounted ? "opacity-100" : "opacity-0"
-      } bg-gradient-to-b from-black via-gray-900 to-gray-800 text-gray-200`} // Base text color
+      } bg-gradient-to-b from-black via-gray-900 to-gray-800 text-gray-200`}
     >
       {/* Hero Section */}
       <section className="w-full bg-nudge-gradient flex flex-col items-center justify-center py-28 md:py-36 lg:py-48 text-center min-h-[75vh] md:min-h-[65vh] px-4">
         <div className="max-w-4xl mx-auto">
-        <div className="flex justify-center mb-10 md:mb-12">
-            <div className="relative overflow-hidden group rounded-lg"> {/* Added rounded-lg if logo has rounded corners and you want shine to respect that */}
+          <div className="flex justify-center mb-10 md:mb-12">
+            {/* Animation class removed from this div */}
+            <div className="relative group rounded-lg"> 
               <Image
-                src="/AI Nudge Logo.png"
+                src="/AI Nudge Logo.png" 
                 alt="AI Nudge Logo"
-                width={800}
+                width={800} 
                 height={160}
                 priority
-                className="block drop-shadow-2xl max-w-full h-auto" // 'block' can sometimes help with layout
+                className="block drop-shadow-2xl max-w-full h-auto" 
               />
-              {/* The Shine Element Overlay */}
-              <div
-                className="absolute inset-0 w-full h-full 
-                           animate-logo-shine 
-                           bg-gradient-to-r from-transparent via-white/10 to-transparent
-                           opacity-75 group-hover:opacity-90 transition-opacity duration-300"
-                // NOTES:
-                // 'animate-logo-shine' applies the keyframes.
-                // 'inset-0' makes this overlay exactly cover the parent (which is the Image's effective space).
-                // 'from-transparent via-white/10 to-transparent': Soft white shine (10% opacity).
-                //    Adjust via-white/XX for intensity. e.g., via-white/5 for very subtle, via-white/20 for more noticeable.
-                //    You can also use your brand colors: e.g., via-emerald-400/10
-                // The keyframes will move this gradient from left to right.
-                // The 'overflow-hidden' on the parent div is CRITICAL to clip the shine
-                // so it only appears over the area of the logo.
-              ></div>
-              {/* Logo shine effect applied. */}
+              {/* The overlay div for gentle-logo-pulse was here, it's removed if you don't want any overlay effect. 
+                  If you had a different overlay for other purposes, it would go here.
+                  For turning off the 'animate-gentle-logo-pulse' specifically, 
+                  if it was on the overlay, that overlay div or its animation class would be removed.
+                  If the 'animate-logo-container-glow' was on this parent div, that class is now removed.
+              */}
             </div>
           </div>
-          {/* Main Tagline - First Sentence */}
+          
           <h2 className="text-2xl md:text-3xl lg:text-4xl text-gray-100 mb-4 leading-tight max-w-3xl mx-auto font-semibold">
             Client Engagement, Back to Basics. <span className="whitespace-nowrap">Powered by AI.</span>
           </h2>
 
-          {/* Sub-Tagline - Second Sentence */}
           <p className="text-lg md:text-xl lg:text-2xl text-gray-400 mb-12 leading-relaxed max-w-2xl mx-auto">
-          We help your customers remember you with timely, personal SMS messages, automatically and in <span className="text-gradient">your authentic style</span>.
+            We help your customers remember you with timely, personal SMS messages, automatically and in <span className="text-gradient">your authentic style</span>.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
             <Link href="/onboarding" passHref>
@@ -117,13 +106,6 @@ export default function LandingPage() {
                 🚀 Try It Free — No Login Needed
               </button>
             </Link>
-            {/* Example for a secondary button - uncomment and style if needed
-            <Link href="#how-it-works" passHref>
-              <button className="text-gray-300 hover:text-white font-medium py-4 px-10 rounded-lg transition-colors border-2 border-gray-700 hover:border-gray-500 w-full sm:w-auto flex items-center justify-center text-lg md:text-xl">
-                Learn How <ArrowRight className="inline-block ml-2 w-5 h-5" />
-              </button>
-            </Link>
-            */}
           </div>
           <p className="mt-12 text-gray-400 text-base">
             Already using AI Nudge?{" "}
@@ -137,7 +119,7 @@ export default function LandingPage() {
       </section>
 
       {/* AI Nudge is Your GPS Section */}
-      <section id="how-it-works-gps" className="py-16 md:py-28 bg-gray-900">
+      <section id="how-it-works-gps" className="py-16 md:py-28 bg-black">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-14 md:mb-20">
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight text-white">
@@ -148,9 +130,7 @@ export default function LandingPage() {
             </p>
           </div>
 
-          {/* GPS Steps */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 lg:gap-10">
-            {/* Step 1: Set Destination */}
             <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-primary/50">
               <div className="p-4 bg-gradient-to-br from-red-500/10 via-pink-500/10 to-orange-500/10 rounded-full mb-6">
                 <MapPin className="w-10 h-10 text-red-400" />
@@ -161,7 +141,6 @@ export default function LandingPage() {
               </p>
             </div>
 
-            {/* Step 2: See the Route */}
             <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-secondary/50">
               <div className="p-4 bg-gradient-to-br from-blue-500/10 via-sky-500/10 to-cyan-500/10 rounded-full mb-6">
                 <Route className="w-10 h-10 text-blue-400" />
@@ -172,7 +151,6 @@ export default function LandingPage() {
               </p>
             </div>
 
-            {/* Step 3: Follow or Adjust */}
             <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-emerald-500/50">
               <div className="p-4 bg-gradient-to-br from-emerald-500/10 via-green-500/10 to-teal-500/10 rounded-full mb-6">
                 <CheckSquare className="w-10 h-10 text-emerald-400" />
@@ -184,7 +162,6 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* Sub-tagline for the GPS analogy */}
           <p className="mt-16 md:mt-20 text-xl md:text-2xl text-center text-gray-300 font-medium max-w-3xl mx-auto leading-relaxed">
             AI Nudge <span className="text-gradient">learns your style</span>,
             sounds like <span className="text-gradient">you</span>,
@@ -194,7 +171,7 @@ export default function LandingPage() {
       </section>
 
       {/* Testimonials Section */}
-      <section className="py-16 md:py-28 bg-dark-lighter">
+      <section className="py-16 md:py-28 bg-dark">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-14 md:mb-20">
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4 text-white">
@@ -224,7 +201,7 @@ export default function LandingPage() {
             <Image
               src="/AI Nudge Logo.png"
               alt="AI Nudge Footer Logo"
-              width={220} // Slightly larger footer logo
+              width={220} 
               height={44}
             />
           </div>
@@ -233,7 +210,7 @@ export default function LandingPage() {
           <a href="mailto:support@ainudge.app" className="block text-blue-400 hover:text-blue-300 underline transition-colors text-lg">
             support@ainudge.app
           </a>
-          <p className="text-gray-400 mt-2"> {/* Added mt-2 for a little space */}
+          <p className="text-gray-400 mt-2">
             Nudge us with questions like "what is AI Nudge?" or "How will AI Nudge help my business grow?" @ <a href="sms:+14352721987" className="text-blue-400 hover:text-blue-300 underline transition-colors">435-272-1987</a>
           </p>
 

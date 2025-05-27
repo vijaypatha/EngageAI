@@ -25,7 +25,10 @@ interface NudgeBlock {
   message: string;
   customerIds: number[]; // Holds the IDs SELECTED from the filtered list
   schedule: boolean;
-  datetime: string; // Store as string YYYY-MM-DDTHH:mm
+  datetime: string; // Store as string (YYYY-MM-DDTHH:mm)
+  isAppointmentProposal: boolean; // Added for the UI to toggle this
+  proposedDatetimeUtc: string; // For the proposed appointment time
+  appointmentNotes: string; // For any additional notes
   // Status tracking
   isDrafting?: boolean;
   isSending?: boolean;
@@ -61,7 +64,7 @@ export default function InstantNudgePage() {
   const { business_name: businessSlug } = useParams(); // Use slug
   const [businessId, setBusinessId] = useState<number | null>(null);
   const [nudgeBlocks, setNudgeBlocks] = useState<NudgeBlock[]>([
-    { id: crypto.randomUUID(), topic: "", message: "", customerIds: [], schedule: false, datetime: "" }
+    { id: crypto.randomUUID(), topic: "", message: "", customerIds: [], schedule: false, datetime: "", isAppointmentProposal: false, proposedDatetimeUtc: "", appointmentNotes: "" }
   ]);
   const [allOptedInContacts, setAllOptedInContacts] = useState<Customer[]>([]);
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
@@ -142,7 +145,7 @@ export default function InstantNudgePage() {
        const block = { ...copy[index] }; // Create copy of the block
        (block as any)[field] = value; // Update the field
        // Reset status flags if relevant fields change
-       if (['topic', 'message', 'customerIds', 'schedule', 'datetime'].includes(field as string)) {
+       if (['topic', 'message', 'customerIds', 'schedule', 'datetime', 'isAppointmentProposal', 'proposedDatetimeUtc', 'appointmentNotes'].includes(field as string)) {
            block.isDrafting = false; block.isSending = false;
            block.isScheduled = false; block.isSent = false; block.error = null;
        }
@@ -169,10 +172,22 @@ export default function InstantNudgePage() {
     const block = nudgeBlocks[index];
     if (!businessId || !block.message || block.customerIds.length === 0) { updateNudgeBlock(index, 'error', 'Message & recipients required.'); return; }
     if (block.schedule && !block.datetime) { updateNudgeBlock(index, 'error', 'Select schedule date/time.'); return; }
+    // Validate proposed datetime for appointment proposals
+    if (block.isAppointmentProposal && !block.proposedDatetimeUtc) {
+        updateNudgeBlock(index, 'error', 'Proposed appointment date/time is required for appointment proposals.');
+        return;
+    }
+
     updateNudgeBlock(index, 'isSending', true); updateNudgeBlock(index, 'error', null);
     const payload = {
-      customer_ids: block.customerIds, message: block.message, business_id: businessId,
-      send_datetime_utc: block.schedule && block.datetime ? new Date(block.datetime).toISOString() : null
+      customer_ids: block.customerIds,
+      message: block.message,
+      business_id: businessId,
+      send_datetime_utc: block.schedule && block.datetime ? new Date(block.datetime).toISOString() : null,
+      is_appointment_proposal: block.isAppointmentProposal,
+      proposed_datetime_utc: block.isAppointmentProposal && block.proposedDatetimeUtc
+        ? new Date(block.proposedDatetimeUtc).toISOString() : null,
+      appointment_notes: block.appointmentNotes || null,
     };
     try {
       const res = await apiClient.post<{ status: string; details: any }>("/instant-nudge/send-batch", payload);
@@ -183,7 +198,7 @@ export default function InstantNudgePage() {
     } finally { updateNudgeBlock(index, 'isSending', false); }
   };
 
-   const addNudgeBlock = () => setNudgeBlocks(prev => [...prev, { id: crypto.randomUUID(), topic: "", message: "", customerIds: [], schedule: false, datetime: "" }]);
+   const addNudgeBlock = () => setNudgeBlocks(prev => [...prev, { id: crypto.randomUUID(), topic: "", message: "", customerIds: [], schedule: false, datetime: "", isAppointmentProposal: false, proposedDatetimeUtc: "", appointmentNotes: "" }]);
    const removeNudgeBlock = (index: number) => setNudgeBlocks(prev => prev.filter((_, i) => i !== index));
    const handleFilterTagToggle = (tag: Tag) => setSelectedFilterTags(prev => prev.some(t => t.id === tag.id) ? prev.filter(t => t.id !== tag.id) : [...prev, tag]);
    const handleSelectAllFiltered = (index: number) => {
@@ -319,7 +334,52 @@ export default function InstantNudgePage() {
                   )}
                 </div>
             </div>
-           {/* --- End Scheduling Options --- */}
+            
+           {/* --- Appointment Proposal Options --- */}
+           <div className="mb-4">
+             <Label className="text-sm font-medium text-gray-300 block mb-2">4. Message Type</Label>
+             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+               <Label className="text-white flex items-center gap-2 cursor-pointer">
+                 <input
+                   type="checkbox"
+                   className="accent-blue-500"
+                   checked={block.isAppointmentProposal}
+                   onChange={e => updateNudgeBlock(index, 'isAppointmentProposal', e.target.checked)}
+                   disabled={block.isSent || block.isScheduled || block.isSending}
+                 />
+                 This is an Appointment Proposal
+               </Label>
+             </div>
+             {block.isAppointmentProposal && (
+               <div className="mt-3 grid grid-cols-1 gap-3">
+                 <div>
+                   <Label htmlFor={`proposed-datetime-${index}`} className="text-sm font-medium text-gray-300 block mb-1">Proposed Appointment Time</Label>
+                   <Input
+                     id={`proposed-datetime-${index}`}
+                     type="datetime-local"
+                     className="bg-[#1f2937]/70 text-white p-1 rounded border border-gray-600/50 w-full text-sm h-8"
+                     value={block.proposedDatetimeUtc}
+                     onChange={e => updateNudgeBlock(index, 'proposedDatetimeUtc', e.target.value)}
+                     min={new Date(Date.now() + 60000).toISOString().slice(0, 16)} // Min 1 min from now
+                     disabled={block.isSent || block.isScheduled || block.isSending}
+                     required={block.isAppointmentProposal}
+                   />
+                 </div>
+                 <div>
+                   <Label htmlFor={`appointment-notes-${index}`} className="text-sm font-medium text-gray-300 block mb-1">Appointment Notes (Optional)</Label>
+                   <Textarea
+                     id={`appointment-notes-${index}`}
+                     placeholder="e.g., A quick reminder about free yoga session this Tuesday at 7AM. Please RSVP."
+                     className="bg-[#1f2937]/70 border-gray-600/50 text-white min-h-[60px]"
+                     value={block.appointmentNotes}
+                     onChange={e => updateNudgeBlock(index, 'appointmentNotes', e.target.value)}
+                     disabled={block.isSent || block.isScheduled || block.isSending}
+                   />
+                 </div>
+               </div>
+             )}
+           </div>
+           {/* --- End Appointment Proposal Options --- */}
 
            {/* Actions and Status */}
            <div className="flex justify-end items-center gap-2 border-t border-gray-700/50 pt-3 mt-3 flex-wrap">
@@ -330,7 +390,15 @@ export default function InstantNudgePage() {
                <Button
                  className={`px-5 py-2 rounded-md font-semibold text-white transition-all duration-200 ${ (block.isSent || block.isScheduled) ? 'bg-gray-500 cursor-not-allowed' : block.schedule ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700' }`}
                  onClick={() => handleSendOrSchedule(index)}
-                 disabled={block.isSent || block.isScheduled || block.isSending || !block.message || block.customerIds.length === 0 || (block.schedule && !block.datetime)}
+                 disabled={
+                   block.isSent ||
+                   block.isScheduled ||
+                   block.isSending ||
+                   !block.message ||
+                   block.customerIds.length === 0 ||
+                   (block.schedule && !block.datetime) ||
+                   (block.isAppointmentProposal && !block.proposedDatetimeUtc) // Disable if it's an appointment proposal and time is missing
+                 }
                >
                  {block.isSending ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : null}
                  {block.isSent ? "Sent" : block.isScheduled ? "Scheduled" : block.schedule ? "Schedule Nudge" : "Send Nudge Now"}

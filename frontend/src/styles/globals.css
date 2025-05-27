@@ -1,100 +1,97 @@
+/* frontend/src/styles/globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --gradient-primary: linear-gradient(to right, #22c55e, #60a5fa);
-  --gradient-background: radial-gradient(circle at top, #1A1D2D, #0C0F1F);
-  --spacing-base: 1rem;
-  --spacing-lg: 1.5rem;
-  --spacing-xl: 2rem;
-}
-
-html, body {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow-x: hidden;
-}
-
 @layer base {
-  body {
-    @apply bg-[#0C0F1F] text-white antialiased;
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%; /* Default: Dark text on light background */
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 222.2 47.4% 11.2%; /* Default primary (often dark blue/black) */
+    --primary-foreground: 210 40% 98%; /* Text on primary (often light) */
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%; /* Light mode border */
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%; /* Focus ring color */
+
+    --radius: 0.5rem; /* Default border radius */
   }
 
-  input, select, textarea {
-    @apply focus:outline-none;
+  .dark { /* Your dark theme variables */
+    --background: 222.2 84% 4.9%; /* Example: Very dark blue/black */
+    --foreground: 210 40% 98%;   /* Example: Light gray/white text */
+
+    --card: 222.2 84% 4.9%; /* Match background or slightly different dark */
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    /* For dark theme, primary might be a lighter color, or a vibrant accent */
+    --primary: 142.1 70.6% 45.3%; /* Example: Your emerald green for primary actions */
+    --primary-foreground: 222.2 84% 4.9%; /* Text on primary (dark if primary is light) */
+    /* Or if your primary is meant to be dark even in dark mode:
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    */
+
+    --secondary: 217.2 32.6% 17.5%; /* Darker shade for secondary elements */
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%; /* Lighter muted text for dark bg */
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%; /* Darker destructive color */
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;   /* Dark mode border (e.g., your #2A2F45) */
+    --input: 217.2 32.6% 17.5%;    /* Dark mode input background/border */
+    --ring: 142.1 70.6% 45.3%;     /* Focus ring (e.g., your emerald green) */
+  }
+}
+
+/* Apply base styles */
+@layer base {
+  * {
+    @apply border-border; /* This applies border-color: hsl(var(--border)) */
+  }
+  body {
+    @apply bg-background text-foreground;
   }
 }
 
 @layer components {
-  .bg-nudge-gradient {
-    background: var(--gradient-background);
-    @apply min-h-screen;
-  }
-
-  .text-gradient {
-    @apply bg-gradient-to-r from-emerald-400 to-blue-500 bg-clip-text text-transparent;
-  }
-
   .btn-primary {
-    @apply bg-gradient-to-r from-emerald-400 to-blue-500 
-           hover:opacity-90 transition-all 
-           font-semibold text-white shadow-lg 
-           disabled:opacity-50 
-           hover:shadow-xl hover:scale-[1.02] 
-           active:scale-[0.98] 
-           disabled:hover:scale-100
-           rounded-lg py-3 px-6;
-  }
-
-  .card {
-    @apply rounded-xl border border-white/10 
-           bg-gradient-to-b from-[#0C0F1F] to-[#111629] 
-           shadow-2xl backdrop-blur-sm;
-  }
-
-  .input-field {
-    @apply w-full border border-white/10 rounded-lg p-3 
-           text-black placeholder-gray-500 bg-white/95 
-           focus:ring-2 focus:ring-emerald-400/50 
-           focus:border-transparent transition-all duration-200;
+    @apply inline-flex items-center justify-center rounded-full font-semibold transition-all duration-300 ease-in-out
+           text-white /* Ensure text is visible on the dark gradient */
+           shadow-lg hover:shadow-xl hover:shadow-emerald-500/40
+           border-2 border-transparent hover:border-emerald-400
+           active:scale-95; 
+           
+    /* Updated: Gradient from Emerald to Sky Blue to match AI Nudge colors */
+    background-image: linear-gradient(to bottom right, theme('colors.emerald.500'), theme('colors.sky.500')); 
+    background-color: theme('colors.emerald.500'); /* Fallback solid color, now matching the start of the gradient */
   }
 }
-
-/* Animations */
-@keyframes float {
-  0% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
-  100% {
-    transform: translateY(0px);
-  }
-}
-
-.animate-float {
-  animation: float 3s ease-in-out infinite;
-}
-
-/* Scrollbar Styling */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  @apply bg-[#1A1E2E];
-}
-
-::-webkit-scrollbar-thumb {
-  @apply bg-gradient-to-b from-emerald-400 to-blue-500 rounded-full;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply from-emerald-500 to-blue-600;
-}
-
