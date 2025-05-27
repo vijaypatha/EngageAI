@@ -242,8 +242,10 @@ async def handle_instant_nudge_batch(
                     # Use the TwilioService instance initialized earlier
                     sent_sid = await twilio_service.send_sms(
                          to=customer.phone,
-                         message=personalized_message,
-                         business=business # Pass the fetched business object
+                         message_body=personalized_message, # <<< CORRECTED ARGUMENT NAME
+                         business=business, # Pass the fetched business object
+                         customer=customer, # Recommended: Also pass the customer object for consistency with consent checks
+                         is_direct_reply=False # Assuming instant nudges are proactive, not direct replies
                          )
 
                     # Update status and sent_at on successful send attempt
