@@ -4,14 +4,14 @@
 from fastapi import HTTPException, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import desc # Ensure desc is imported
-from app.models import Customer, ConsentLog, BusinessProfile # Ensure all are imported
-# Schemas might not be directly needed in this service file unless used for internal validation
-# from app.schemas import ConsentCreate
+from sqlalchemy import desc
+from app.models import Customer, ConsentLog, BusinessProfile, Message, Conversation # MODIFIED: Added Message, Conversation
+from app.models import MessageTypeEnum, MessageStatusEnum, OptInStatus # ADDED
 from app.services.twilio_service import TwilioService
-from typing import Optional, List, Dict, Any # Ensure all are imported
+from typing import Optional, List, Dict, Any
 import logging
-from datetime import datetime, timezone # Ensure timezone is imported
+from datetime import datetime, timezone
+import uuid # ADDED
 
 logger = logging.getLogger(__name__)
 
@@ -22,56 +22,138 @@ class ConsentService:
 
     async def send_double_optin_sms(self, customer_id: int, business_id: int) -> Dict[str, Any]:
         """
-        Send a double opt-in SMS to a customer requesting consent.
+        Send a double opt-in SMS to a customer requesting consent and save the message.
         """
-        try:
-            customer = self.db.query(Customer).filter(Customer.id == customer_id).first()
-            if not customer:
-                logger.error(f"[ConsentService] Customer {customer_id} not found for double opt-in.")
-                return {"success": False, "message": "Customer not found"}
+        customer = self.db.query(Customer).filter(Customer.id == customer_id).first()
+        if not customer:
+            logger.error(f"[ConsentService] Customer {customer_id} not found for double opt-in.")
+            return {"success": False, "message": "Customer not found"}
 
-            business = self.db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
-            if not business:
-                logger.error(f"[ConsentService] Business {business_id} not found for double opt-in.")
-                return {"success": False, "message": "Business not found"}
+        business = self.db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
+        if not business:
+            logger.error(f"[ConsentService] Business {business_id} not found for double opt-in.")
+            return {"success": False, "message": "Business not found"}
 
-            rep_name = business.representative_name or business.business_name
-            greeting_name = customer.customer_name or "there"
+        # Find or create conversation
+        conversation = self.db.query(Conversation).filter(
+            Conversation.customer_id == customer_id,
+            Conversation.business_id == business_id
+        ).order_by(Conversation.started_at.desc()).first()
 
-            message_content = (
-                f"Hi {greeting_name}! This is {rep_name} from {business.business_name}. "
-                f"We'd love to send you helpful updates & special offers via SMS. "
-                f"To confirm, please reply YES. "
-                f"Msg&Data rates may apply. Reply STOP at any time to unsubscribe."
+        if not conversation:
+            conversation = Conversation(
+                id=uuid.uuid4(),
+                customer_id=customer_id,
+                business_id=business_id,
+                status="active" # Ensure 'active' is a valid status for your Conversation model
             )
+            self.db.add(conversation)
+            # Will be committed along with message and consent_log or rolled back
 
+        rep_name = business.representative_name or business.business_name
+        greeting_name = customer.customer_name or "there"
+
+        message_content = (
+            f"Hi {greeting_name}! This is {rep_name} from {business.business_name}. "
+            f"We'd love to send you helpful updates & special offers via SMS. "
+            f"To confirm, please reply YES. "
+            f"Msg&Data rates may apply. Reply STOP at any time to unsubscribe."
+        )
+
+        # Create Message record for the opt-in request
+        opt_in_message = Message(
+            conversation_id=conversation.id,
+            business_id=business_id,
+            customer_id=customer_id,
+            content=message_content,
+            message_type=MessageTypeEnum.OUTBOUND.value,
+            status=MessageStatusEnum.QUEUED.value, # Initial status before sending
+            message_metadata={"source": "opt_in_request", "method": "double_optin_initial"},
+            is_hidden=False
+        )
+        self.db.add(opt_in_message)
+
+        sid = None
+        sms_sent_successfully = False
+        sent_timestamp = None
+        consent_log_id = None # For returning in response
+        message_db_id_to_return = None # Initialize
+
+        try:
+            # Attempt to send SMS via Twilio
             sid = await self.twilio_service.send_sms(
                 to=customer.phone,
                 message_body=message_content,
                 business=business,
-                is_direct_reply=True
+                customer=customer,
+                is_direct_reply=True # Opt-in is a direct interaction
             )
 
-            if not sid:
-                logger.error(f"[ConsentService] Failed to send double opt-in SMS to customer {customer_id} (Twilio send failed).")
-                return {"success": False, "message": "Failed to send opt-in SMS via provider."}
+            # Refresh opt_in_message to get its ID if it was generated by DB sequence before commit (though unlikely for this setup)
+            # This is more relevant after a flush or if ID is a serial. For UUID, it's known.
+            # Let's ensure opt_in_message has an ID before logging it if possible.
+            # A flush might be needed if the ID is required before commit and is auto-generated.
+            # For now, we'll get the ID after commit.
 
+            if sid:
+                sms_sent_successfully = True
+                sent_timestamp = datetime.now(timezone.utc)
+                opt_in_message.status = MessageStatusEnum.SENT.value
+                opt_in_message.sent_at = sent_timestamp
+                opt_in_message.message_metadata['twilio_message_sid'] = sid
+                if conversation: # Ensure conversation object exists to update
+                    conversation.last_message_at = sent_timestamp
+                # Defer logging of opt_in_message.id until after commit or refresh
+            else:
+                # SMS sending failed (twilio_service returned None without raising an exception)
+                opt_in_message.status = MessageStatusEnum.FAILED.value
+                opt_in_message.message_metadata['failure_reason'] = "Failed to send opt-in SMS via provider (no SID returned)."
+                # Defer logging of opt_in_message.id
+
+            # Create ConsentLog regardless of SMS success, status reflects attempt
+            consent_log_sent_at = sent_timestamp if sms_sent_successfully else datetime.now(timezone.utc)
             consent_log = ConsentLog(
                 customer_id=customer_id, business_id=business_id,
-                method="sms_double_optin", phone_number=customer.phone, message_sid=sid,
-                status="pending_confirmation", sent_at=datetime.now(timezone.utc)
+                method="sms_double_optin", phone_number=customer.phone, message_sid=sid, # sid can be None
+                status="pending_confirmation", # Stays pending even if SMS send fails, as an attempt was made
+                sent_at=consent_log_sent_at
             )
             self.db.add(consent_log)
-            self.db.commit()
-            logger.info(f"[ConsentService] Double opt-in SMS sent to customer {customer_id}. SID: {sid}")
-            return {"success": True, "message": "Opt-in SMS sent successfully", "message_sid": sid }
 
-        except ValueError as ve:
+            self.db.commit()
+
+            # Refresh objects to get DB-generated IDs and updated fields
+            if opt_in_message and opt_in_message.id:
+                 self.db.refresh(opt_in_message)
+                 message_db_id_to_return = opt_in_message.id
+            if consent_log and consent_log.id:
+                self.db.refresh(consent_log)
+                consent_log_id = consent_log.id
+            if conversation and conversation.id: self.db.refresh(conversation)
+
+            # Now log with IDs
+            if sid:
+                 logger.info(f"[ConsentService] Double opt-in SMS sent to customer {customer_id}. SID: {sid}. Message DB ID: {message_db_id_to_return}")
+            else:
+                 logger.error(f"[ConsentService] Failed to send double opt-in SMS to customer {customer_id} (Twilio send failed, no SID). Message DB ID: {message_db_id_to_return}")
+
+
+            if sms_sent_successfully:
+                return {"success": True, "message": "Opt-in SMS sent successfully", "message_sid": sid, "message_db_id": message_db_id_to_return, "consent_log_id": consent_log_id}
+            else:
+                return {"success": False, "message": "Failed to send opt-in SMS via provider.", "message_db_id": message_db_id_to_return, "consent_log_id": consent_log_id}
+
+        except HTTPException as http_exc: # Specifically from twilio_service.send_sms
+            self.db.rollback()
+            logger.error(f"[ConsentService] HTTPException during double opt-in SMS to customer {customer_id}: {http_exc.detail}", exc_info=True)
+            return {"success": False, "message": f"Failed to send opt-in SMS: {http_exc.detail}"}
+        except ValueError as ve: # From initial checks or other ValueErrors
+            self.db.rollback() # Rollback if conversation/message was added to session
             logger.error(f"[ConsentService] Error in send_double_optin_sms setup: {ve}")
             return {"success": False, "message": str(ve)}
         except Exception as e:
+            self.db.rollback()
             logger.error(f"[ConsentService] Unexpected error in send_double_optin_sms: {e}", exc_info=True)
-            self.db.rollback() # Ensure rollback on unexpected error during DB ops
             return {"success": False, "message": "An unexpected error occurred."}
 
 
@@ -83,7 +165,7 @@ class ConsentService:
             consent_log = self.db.query(ConsentLog).filter(
                 ConsentLog.phone_number == phone_number,
                 ConsentLog.status.in_(["pending_confirmation", "pending"])
-            ).order_by(desc(ConsentLog.sent_at)).first() # Added desc import
+            ).order_by(desc(ConsentLog.sent_at)).first()
 
             if not consent_log:
                 logger.info(f"[ConsentService] No pending consent log for {phone_number} to process response: '{response}'. Allowing other handlers.")
@@ -92,7 +174,8 @@ class ConsentService:
             customer = self.db.query(Customer).filter(Customer.id == consent_log.customer_id).first()
             if not customer:
                 logger.error(f"[ConsentService] Customer not found (ID: {consent_log.customer_id}) for consent log {consent_log.id}.")
-                return None
+                # Potentially create a consent log indicating an orphaned response if business rules require.
+                return None # Or an appropriate error response if this should not happen.
 
             normalized_response = response.strip("!.,? ").lower()
 
@@ -100,38 +183,51 @@ class ConsentService:
             decline_keywords = ["no", "no!", "nope", "nah", "decline", "i decline", "do not"]
             global_opt_out_keywords = ["stop", "stopall", "unsubscribe", "cancel", "end", "quit"]
 
+            # Ensure customer.opted_in_at is updated correctly
+            now_utc = datetime.now(timezone.utc)
+
             if normalized_response in opt_in_keywords:
                 customer.opted_in = True
-                customer.opted_in_at = datetime.now(timezone.utc)
+                customer.opted_in_at = now_utc # Set opt-in time
+                customer.sms_opt_in_status = OptInStatus.OPTED_IN.value # Update main customer status
                 consent_log.status = "opted_in"
-                consent_log.replied_at = datetime.now(timezone.utc)
+                consent_log.replied_at = now_utc
                 self.db.commit()
                 logger.info(f"[ConsentService] Customer {customer.id} OPTED IN via SMS: '{response}'. Log ID: {consent_log.id}")
                 return PlainTextResponse("Thanks for confirming! You're opted in. Reply STOP to unsubscribe.", status_code=status.HTTP_200_OK)
 
             elif normalized_response in decline_keywords:
                 customer.opted_in = False
+                # customer.opted_in_at = None # Optionally clear if you only store opt-in time
+                customer.sms_opt_in_status = OptInStatus.NOT_SET.value # Or a "declined" status if you have one
                 consent_log.status = "declined"
-                consent_log.replied_at = datetime.now(timezone.utc)
+                consent_log.replied_at = now_utc
                 self.db.commit()
                 logger.info(f"[ConsentService] Customer {customer.id} DECLINED consent via SMS: '{response}'. Log ID: {consent_log.id}")
                 return PlainTextResponse("Okay, you won't receive these messages. Thanks.", status_code=status.HTTP_200_OK)
 
             elif normalized_response in global_opt_out_keywords:
                 customer.opted_in = False
+                # customer.opted_in_at = None # Optionally clear
+                customer.sms_opt_in_status = OptInStatus.OPTED_OUT.value # Update main customer status
                 consent_log.status = "opted_out"
-                consent_log.replied_at = datetime.now(timezone.utc)
-                # consent_log.method = "sms_global_stop" # Optional refinement
+                consent_log.replied_at = now_utc
+                # consent_log.method = "sms_global_stop" # Optional refinement if method changes
                 self.db.commit()
                 logger.info(f"[ConsentService] Customer {customer.id} OPTED OUT via global keyword: '{response}'. Log ID: {consent_log.id}")
                 return PlainTextResponse("You have successfully been unsubscribed. You will not receive any more messages from this number. Reply START to resubscribe.", status_code=status.HTTP_200_OK)
 
             logger.info(f"[ConsentService] SMS response '{response}' from {phone_number} did not match consent keywords for log {consent_log.id}.")
+            # If response doesn't match any consent keyword, it might be a regular message.
+            # Returning None allows other webhook handlers (e.g., general message processing) to take over.
             return None
 
         except Exception as e:
             logger.error(f"[ConsentService] Error processing SMS response from {phone_number}: {e}", exc_info=True)
             self.db.rollback()
+            # For an unhandled exception during SMS response processing, returning None might be too silent.
+            # Depending on Twilio's expectations, a 500 error response might be better if no other handler is intended.
+            # However, to allow other handlers, None is often used.
             return None
 
 
@@ -142,18 +238,20 @@ class ConsentService:
                 Customer.business_id == business_id
             ).first()
             if not customer: return False
-            return customer.opted_in
+            # Check the authoritative sms_opt_in_status
+            return customer.sms_opt_in_status == OptInStatus.OPTED_IN.value
         except Exception as e:
             logger.error(f"[ConsentService] Error checking consent for {phone_number}, business {business_id}: {e}", exc_info=True)
+            # Avoid raising HTTPException directly from service layer if it can be handled by the route
+            # For now, re-raising as per original or assume route handles it.
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to check consent status")
 
-    # Corrected Type Hint: Use lowercase list and dict for Python 3.9+ compatibility
     async def get_consent_history(self, customer_id: int, business_id: int) -> list[dict[str, Any]]:
         try:
             logs = self.db.query(ConsentLog).filter(
                 ConsentLog.customer_id == customer_id,
                 ConsentLog.business_id == business_id
-            ).order_by(desc(ConsentLog.sent_at)).all() # Added desc import
+            ).order_by(desc(ConsentLog.sent_at)).all()
             return [
                 {
                     "id": log.id, "status": log.status, "method": log.method,
@@ -170,27 +268,34 @@ class ConsentService:
         logger.info(f"[ConsentService] Manually handling opt-in for customer {customer_id} by {method}.")
         customer = self.db.query(Customer).filter(Customer.id == customer_id, Customer.business_id == business_id).first()
         if not customer:
+            # This should ideally raise an error that the route can catch and turn into a 404.
             raise ValueError(f"Customer {customer_id} not found for business {business_id}")
 
+        now_utc = datetime.now(timezone.utc)
         customer.opted_in = True
-        customer.opted_in_at = datetime.now(timezone.utc)
+        customer.opted_in_at = now_utc
+        customer.sms_opt_in_status = OptInStatus.OPTED_IN.value # Ensure this is also set
 
+        # Consider if an existing "pending" log should be updated or a new one created.
+        # For manual override, creating a new log is usually clearest.
         consent_log = ConsentLog(
-            phone_number=phone_number, business_id=business_id, customer_id=customer_id,
+            phone_number=phone_number, # Should be customer.phone for consistency
+            business_id=business_id, customer_id=customer_id,
             status="opted_in", method=method,
-            replied_at=datetime.now(timezone.utc),
-            sent_at=datetime.now(timezone.utc) # Consider if sent_at is appropriate here
+            replied_at=now_utc, # 'replied_at' signifies when consent was given
+            sent_at=now_utc # 'sent_at' might be less relevant for manual, but using now_utc for consistency
         )
-        self.db.add(customer) # Ensure customer changes are staged
+        # self.db.add(customer) # Customer is already part of the session, changes will be picked up.
         self.db.add(consent_log)
         try:
             self.db.commit()
             self.db.refresh(consent_log)
-            # self.db.refresh(customer) # Refresh customer if its changes are critical for immediate use
+            self.db.refresh(customer)
             return consent_log
         except Exception as e:
             self.db.rollback()
             logger.error(f"[ConsentService] Error during manual opt-in for customer {customer_id}: {e}", exc_info=True)
+            # Let the route handle turning this into an HTTP response.
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to record opt-in")
 
 
@@ -200,21 +305,24 @@ class ConsentService:
         if not customer:
             raise ValueError(f"Customer {customer_id} not found for business {business_id}")
 
+        now_utc = datetime.now(timezone.utc)
         customer.opted_in = False
         # customer.opted_in_at = None # Optionally clear opt-in timestamp
+        customer.sms_opt_in_status = OptInStatus.OPTED_OUT.value # Ensure this is also set
 
         consent_log = ConsentLog(
-            phone_number=phone_number, business_id=business_id, customer_id=customer_id,
+            phone_number=phone_number, # Should be customer.phone
+            business_id=business_id, customer_id=customer_id,
             status="opted_out", method=method,
-            replied_at=datetime.now(timezone.utc),
-            sent_at=datetime.now(timezone.utc) # Consider if sent_at is appropriate
+            replied_at=now_utc, # 'replied_at' for when opt-out was actioned
+            sent_at=now_utc
         )
-        self.db.add(customer) # Ensure customer changes are staged
+        # self.db.add(customer)
         self.db.add(consent_log)
         try:
             self.db.commit()
             self.db.refresh(consent_log)
-            # self.db.refresh(customer)
+            self.db.refresh(customer)
             return consent_log
         except Exception as e:
             self.db.rollback()
@@ -224,9 +332,11 @@ class ConsentService:
 
     async def send_opt_in_sms(self, phone_number: str, business_id: int, customer_id: int) -> Dict[str, Any]:
         """
-        Sends a personalized opt-in SMS (e.g., for resend). Fetches customer name internally.
+        Sends a personalized opt-in SMS (e.g., for resend) and saves the message.
         """
-        logger.info(f"[ConsentService] Preparing opt-in SMS for customer {customer_id}, business {business_id}.")
+        logger.info(f"[ConsentService] Preparing to resend opt-in SMS for customer {customer_id}, business {business_id}.")
+        message_db_id_to_return = None # Initialize
+
         try:
             business = self.db.query(BusinessProfile).filter(BusinessProfile.id == business_id).first()
             if not business:
@@ -238,9 +348,23 @@ class ConsentService:
                 logger.error(f"[ConsentService] Customer (ID: {customer_id}) not found for send_opt_in_sms.")
                 raise ValueError(f"Customer not found with ID {customer_id}")
 
+            # Find or create conversation
+            conversation = self.db.query(Conversation).filter(
+                Conversation.customer_id == customer_id,
+                Conversation.business_id == business_id
+            ).order_by(Conversation.started_at.desc()).first()
+
+            if not conversation:
+                conversation = Conversation(
+                    id=uuid.uuid4(),
+                    customer_id=customer_id,
+                    business_id=business_id,
+                    status="active" # Ensure 'active' is valid
+                )
+                self.db.add(conversation)
+
             rep_name = business.representative_name or business.business_name
             greeting_name = customer.customer_name or "there"
-
             message_content = (
                 f"Hi {greeting_name}, this is {rep_name} from {business.business_name}. "
                 f"We'd love to send you helpful updates and offers! "
@@ -248,25 +372,76 @@ class ConsentService:
                 f"We respect your privacy. Msg&Data rates may apply. Reply STOP to unsubscribe."
             )
 
+            resent_opt_in_message = Message(
+                conversation_id=conversation.id,
+                business_id=business_id,
+                customer_id=customer_id,
+                content=message_content,
+                message_type=MessageTypeEnum.OUTBOUND.value,
+                status=MessageStatusEnum.QUEUED.value,
+                message_metadata={"source": "opt_in_request", "method": "resend"},
+                is_hidden=False
+            )
+            self.db.add(resent_opt_in_message)
+
+            sid = None
+            sms_sent_successfully = False
+            sent_timestamp = None
+
+            # Attempt to send SMS
             sid = await self.twilio_service.send_sms(
-                to=phone_number, 
-                message_body=message_content, 
+                to=phone_number,
+                message_body=message_content,
                 business=business,
-                is_direct_reply=True
+                customer=customer,
+                is_direct_reply=True # Resending opt-in is a direct action
             )
 
-            if not sid:
-                logger.error(f"[ConsentService] Twilio failed to send opt-in SMS to {phone_number} (Cust {customer_id}).")
-                return {"success": False, "message_sid": None, "error": "SMS provider failed to send."}
 
-            logger.info(f"[ConsentService] Opt-in SMS sent to {phone_number} (Cust {customer_id}). SID: {sid}")
-            # Note: This method doesn't create a ConsentLog. The calling route should handle that if it's a new request.
-            return {"success": True, "message_sid": sid}
+            if sid:
+                sms_sent_successfully = True
+                sent_timestamp = datetime.now(timezone.utc)
+                resent_opt_in_message.status = MessageStatusEnum.SENT.value
+                resent_opt_in_message.sent_at = sent_timestamp
+                resent_opt_in_message.message_metadata['twilio_message_sid'] = sid
+                if conversation: # Ensure conversation object exists to update
+                    conversation.last_message_at = sent_timestamp
+                # Defer logging ID until after commit
+            else:
+                resent_opt_in_message.status = MessageStatusEnum.FAILED.value
+                resent_opt_in_message.message_metadata['failure_reason'] = "Twilio failed to send opt-in SMS (no SID returned)."
+                # Defer logging ID
 
-        except ValueError as ve:
+            self.db.commit() # Commit conversation (if new) and message
+
+            if resent_opt_in_message and resent_opt_in_message.id:
+                self.db.refresh(resent_opt_in_message)
+                message_db_id_to_return = resent_opt_in_message.id
+            if conversation and conversation.id: self.db.refresh(conversation)
+
+            # Now log with IDs
+            if sid:
+                logger.info(f"[ConsentService] Resent Opt-in SMS recorded (MsgID: {message_db_id_to_return}) and sent to {phone_number}. SID: {sid}")
+            else:
+                logger.error(f"[ConsentService] Twilio failed to send resent opt-in SMS to {phone_number} (Cust {customer_id}). Message DB ID: {message_db_id_to_return}")
+
+
+            if sms_sent_successfully:
+                return {"success": True, "message_sid": sid, "message_db_id": message_db_id_to_return}
+            else: # SMS send failed (no SID), but message is logged as FAILED
+                return {"success": False, "message_sid": None, "error": "SMS provider failed to send.", "message_db_id": message_db_id_to_return}
+
+        except HTTPException as http_exc: # From twilio_service.send_sms
+            self.db.rollback()
+            logger.error(f"[ConsentService] HTTPException in send_opt_in_sms for {phone_number}: {http_exc.detail}", exc_info=True)
+            return {"success": False, "message_sid": None, "error": f"SMS provider error: {http_exc.detail}", "message": f"SMS provider error: {http_exc.detail}", "message_db_id": message_db_id_to_return}
+        except ValueError as ve: # From initial customer/business check or other ValueErrors
+            self.db.rollback() # Rollback if conversation/message was added
             logger.error(f"[ConsentService] Value error in send_opt_in_sms: {ve}")
-            return {"success": False, "message": str(ve)} # Return the error message
-        except Exception as e:
+            # Match original return structure pattern
+            return {"success": False, "message_sid": None, "error": str(ve), "message": str(ve), "message_db_id": message_db_id_to_return}
+        except Exception as e: # Catch any other unexpected error
+            self.db.rollback()
             logger.error(f"[ConsentService] Unexpected error in send_opt_in_sms for {phone_number}: {e}", exc_info=True)
-            self.db.rollback() # Rollback any potential DB changes if this method did any
-            return {"success": False, "message": "An unexpected server error occurred."}
+            # Match original return structure pattern
+            return {"success": False, "message_sid": None, "error": "An unexpected server error occurred.", "message": "An unexpected server error occurred.", "message_db_id": message_db_id_to_return}
