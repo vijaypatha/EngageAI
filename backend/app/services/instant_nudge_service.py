@@ -24,6 +24,7 @@ from app.models import BusinessProfile, Message, Engagement, Customer, Conversat
 from app.celery_tasks import process_scheduled_message_task # Assuming this task exists
 from app.services.style_service import get_style_guide # Assuming async
 from app.services.twilio_service import TwilioService # Import the service class
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 

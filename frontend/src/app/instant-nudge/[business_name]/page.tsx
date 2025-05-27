@@ -167,20 +167,82 @@ export default function InstantNudgePage() {
 
   const handleSendOrSchedule = async (index: number) => {
     const block = nudgeBlocks[index];
-    if (!businessId || !block.message || block.customerIds.length === 0) { updateNudgeBlock(index, 'error', 'Message & recipients required.'); return; }
-    if (block.schedule && !block.datetime) { updateNudgeBlock(index, 'error', 'Select schedule date/time.'); return; }
-    updateNudgeBlock(index, 'isSending', true); updateNudgeBlock(index, 'error', null);
+    if (!businessId || !block.message || block.customerIds.length === 0) {
+      updateNudgeBlock(index, 'error', 'Business ID, Message, and at least one Recipient are required.');
+      return;
+    }
+    if (block.schedule && !block.datetime) {
+      updateNudgeBlock(index, 'error', 'Please select a date and time for scheduling.');
+      return;
+    }
+  
+    updateNudgeBlock(index, 'isSending', true);
+    updateNudgeBlock(index, 'error', null); // Clear previous errors
+  
     const payload = {
-      customer_ids: block.customerIds, message: block.message, business_id: businessId,
+      customer_ids: block.customerIds,
+      message: block.message,
+      business_id: businessId,
       send_datetime_utc: block.schedule && block.datetime ? new Date(block.datetime).toISOString() : null
     };
+  
     try {
       const res = await apiClient.post<{ status: string; details: any }>("/instant-nudge/send-batch", payload);
-      if (block.schedule) updateNudgeBlock(index, 'isScheduled', true);
-      else updateNudgeBlock(index, 'isSent', true);
-      if (res.data.details?.processed_message_ids) updateNudgeBlock(index, 'processedMessageIds', res.data.details.processed_message_ids);
-    } catch (err: any) { console.error("❌ Send/Schedule failed:", err); updateNudgeBlock(index, 'error', err?.response?.data?.detail || "Send/Schedule failed.");
-    } finally { updateNudgeBlock(index, 'isSending', false); }
+      
+      const { details } = res.data; // res.data.details should contain { processed_message_ids, sent_count, scheduled_count, failed_count }
+  
+      if (details) {
+        // Update with processed message IDs if available
+        if (details.processed_message_ids) {
+          updateNudgeBlock(index, 'processedMessageIds', details.processed_message_ids);
+        }
+  
+        if (block.schedule) {
+          if (details.scheduled_count > 0 && details.scheduled_count === block.customerIds.length) {
+            updateNudgeBlock(index, 'isScheduled', true);
+            updateNudgeBlock(index, 'error', null); // Clear error if fully successful
+          } else if (details.scheduled_count > 0 && details.scheduled_count < block.customerIds.length) {
+            updateNudgeBlock(index, 'isScheduled', true); // Mark as scheduled if at least one succeeded
+            updateNudgeBlock(index, 'error', `Scheduled for ${details.scheduled_count} of ${block.customerIds.length} recipients. ${details.failed_count} failed.`);
+          } else if (details.failed_count > 0) {
+            updateNudgeBlock(index, 'isScheduled', false);
+            updateNudgeBlock(index, 'error', `Scheduling failed for ${details.failed_count} of ${block.customerIds.length} recipient(s).`);
+          } else {
+            updateNudgeBlock(index, 'isScheduled', false);
+            updateNudgeBlock(index, 'error', 'No recipients were scheduled. Please check selections or logs.');
+          }
+        } else { // Instant send
+          if (details.sent_count > 0 && details.sent_count === block.customerIds.length) {
+            updateNudgeBlock(index, 'isSent', true);
+             updateNudgeBlock(index, 'error', null); // Clear error if fully successful
+          } else if (details.sent_count > 0 && details.sent_count < block.customerIds.length) {
+            updateNudgeBlock(index, 'isSent', true); // Mark as sent if at least one succeeded
+            updateNudgeBlock(index, 'error', `Sent to ${details.sent_count} of ${block.customerIds.length} recipients. ${details.failed_count} failed.`);
+          } else if (details.failed_count > 0) {
+            updateNudgeBlock(index, 'isSent', false);
+            updateNudgeBlock(index, 'error', `Send failed for ${details.failed_count} of ${block.customerIds.length} recipient(s).`);
+          } else {
+            updateNudgeBlock(index, 'isSent', false);
+            updateNudgeBlock(index, 'error', 'Message not sent to any recipients. Please check selections or logs.');
+          }
+        }
+      } else {
+        // Fallback if details are unexpectedly missing
+        updateNudgeBlock(index, 'error', 'Unexpected response from server. Check backend logs.');
+        if (block.schedule) updateNudgeBlock(index, 'isScheduled', false);
+        else updateNudgeBlock(index, 'isSent', false);
+      }
+  
+    } catch (err: any) {
+      console.error("❌ Send/Schedule API call failed:", err);
+      // More specific error from backend if available
+      const errorDetail = err?.response?.data?.detail || "Send/Schedule operation failed. Check connection or server logs.";
+      updateNudgeBlock(index, 'error', errorDetail);
+      if (block.schedule) updateNudgeBlock(index, 'isScheduled', false);
+      else updateNudgeBlock(index, 'isSent', false);
+    } finally {
+      updateNudgeBlock(index, 'isSending', false);
+    }
   };
 
    const addNudgeBlock = () => setNudgeBlocks(prev => [...prev, { id: crypto.randomUUID(), topic: "", message: "", customerIds: [], schedule: false, datetime: "" }]);

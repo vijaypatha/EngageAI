@@ -104,7 +104,7 @@ export default function ContactEngagementPage() {
       });
       await fetchEngagementData(); // Refetch data after regeneration
     } catch (err: any) {
-      console.error("Failed to regenerate engagement plan:", err);
+      console.error("Failed to regenerate nudge plan:", err);
       setError(err.response?.data?.detail || "Failed to regenerate plan.");
     } finally {
       setLoading(false);
@@ -293,7 +293,7 @@ export default function ContactEngagementPage() {
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6 bg-gradient-to-br from-slate-900 to-slate-800 text-white min-h-screen font-sans">
       <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">📬 Engagement Plan: {customerName}</h1>
+        <h1 className="text-3xl font-bold tracking-tight">📬 Nudge Plan: {customerName}</h1>
         <div className="flex items-center space-x-4">
             <span className={`text-sm font-medium px-3 py-1 rounded-full ${
                 optedIn === "opted_in" ? "bg-green-500/20 text-green-300 border border-green-500/30" :

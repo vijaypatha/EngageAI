@@ -351,7 +351,7 @@ export default function AllEngagementPlansPage() {
       <div className="max-w-7xl mx-auto">
         <div className="flex flex-col sm:flex-row justify-between items-center mb-10">
             <h1 className="text-4xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 mb-4 sm:mb-0">
-                📬 All Engagement Plans
+                📬 Nudge Strategies for Your Community
             </h1>
             {business_name && <p className="text-sm text-slate-400">For: {decodeURIComponent(business_name)}</p>}
         </div>
