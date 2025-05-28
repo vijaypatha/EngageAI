@@ -204,17 +204,17 @@ export default function ContactsPage() {
                         {customer.tags.slice(0, 3).map((tag) => (
                           <span
                             key={tag.id}
-                            className="bg-slate-700 hover:bg-slate-600 cursor-default text-slate-300 text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap transition-colors"
+                            className="bg-purple-600 text-white text-xs font-semibold px-3 py-1 rounded-full                    whitespace-nowrap uppercase tracking-wider cursor-default"
                             title={tag.name}
                           >
-                            {tag.name}
+                            {tag.name} {/* The `uppercase` class will handle text transformation */}
                           </span>
-                        ))}
-                        {customer.tags.length > 3 && (
-                            <span className="text-xs text-slate-500 ml-1" title={customer.tags.slice(3).map(t=>t.name).join(', ')}>+{customer.tags.length - 3} more</span>
-                        )}
-                      </div>
-                    )}
+                          ))}
+                          {customer.tags.length > 3 && (
+                              <span className="text-xs text-slate-500 ml-1" title={customer.tags.slice(3).map(t=>t.name).join                     (', ')}>+{customer.tags.length - 3} more</span>
+                          )}
+                        </div>
+                      )}
                 </div>
 
                 <div className="flex flex-col gap-2.5 mt-4 pt-4 border-t border-slate-700/70">
