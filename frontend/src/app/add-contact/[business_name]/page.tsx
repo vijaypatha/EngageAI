@@ -35,7 +35,7 @@ const LIFECYCLE_STAGES = ["New Lead", "Active Client", "Past Client", "Prospect"
 
 // Updated and Expanded Suggestion Lists:
 const COMMON_PAIN_POINTS_SUGGESTIONS = [
-  "Price might too expensive",
+  "Price sensitivity",
   "Too busy to find time",
   "Afraid of contracts",
   "Needs Follow-ups",

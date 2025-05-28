@@ -26,7 +26,7 @@ interface ContactFormData {
 // Consistent suggestions with AddContactPage
 const LIFECYCLE_STAGES = ["New Lead", "Active Client", "Past Client", "Prospect", "VIP"];
 const COMMON_PAIN_POINTS_SUGGESTIONS = [
-  "Price might too expensive",
+  "Price sensitivity",
   "Too busy to find time",
   "Afraid of contracts",
   "Needs Follow-ups",
