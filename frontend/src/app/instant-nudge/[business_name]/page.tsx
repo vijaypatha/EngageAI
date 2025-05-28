@@ -1,49 +1,36 @@
 "use client";
-// Instant Nudge page with Tag Filtering - CORRECTED
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-// Import necessary API functions and types
-// Import API functions
-import { apiClient, getBusinessTags, getCustomersByBusiness } from "@/lib/api"; 
-// Import Types
-import { Tag, Customer } from "@/types"; 
+import { apiClient, getBusinessTags, getCustomersByBusiness } from "@/lib/api";
+import { Tag, Customer } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label"; // Ensure Label is imported
-import { Loader2, Info, Trash2 } from "lucide-react"; // Added Info, Trash2
-import { cn } from "@/lib/utils"; // Ensure correct path
-
-// Assuming OptInStatus is defined somewhere, otherwise remove its usage or define it
-// Example placeholder: type OptInStatus = 'opted_in' | 'opted_out' | 'pending' | 'waiting' | 'error';
-// const getOptInStatus = (customer: Customer): OptInStatus => { /* ... your logic ... */ return 'opted_in'; };
+import { Label } from "@/components/ui/label";
+import { Loader2, Info, Trash2, MessageSquarePlus, Settings2, CalendarClock, Send, CheckCircle2, Clock3 } from "lucide-react"; // Added more icons
+import { cn } from "@/lib/utils";
 
 interface NudgeBlock {
-  id: string; // Unique ID for React keys
+  id: string;
   topic: string;
   message: string;
-  customerIds: number[]; // Holds the IDs SELECTED from the filtered list
+  customerIds: number[];
   schedule: boolean;
-  datetime: string; // Store as string YYYY-MM-DDTHH:mm
-  // Status tracking
+  datetime: string;
   isDrafting?: boolean;
   isSending?: boolean;
   isScheduled?: boolean;
   isSent?: boolean;
   error?: string | null;
-  // Backend reference
   processedMessageIds?: number[];
 }
 
-// Helper function (move to utils if used elsewhere)
+// Helper function (remains the same)
 function getLocalDateForInput(isoDate?: string | null): string {
   if (!isoDate) return '';
   try {
-    // Handles both 'Z' and offset like '+00:00' by parsing then formatting
     const dt = new Date(isoDate);
-    // Format to YYYY-MM-DDTHH:mm suitable for datetime-local input
-    // Need to adjust for local timezone offset implicitly handled by Date object here
     const year = dt.getFullYear();
     const month = (dt.getMonth() + 1).toString().padStart(2, '0');
     const day = dt.getDate().toString().padStart(2, '0');
@@ -52,13 +39,12 @@ function getLocalDateForInput(isoDate?: string | null): string {
     return `${year}-${month}-${day}T${hours}:${minutes}`;
   } catch (e) {
     console.error("Error formatting date for input:", e);
-    return ""; // Fallback
+    return "";
   }
 }
 
-
 export default function InstantNudgePage() {
-  const { business_name: businessSlug } = useParams(); // Use slug
+  const { business_name: businessSlug } = useParams();
   const [businessId, setBusinessId] = useState<number | null>(null);
   const [nudgeBlocks, setNudgeBlocks] = useState<NudgeBlock[]>([
     { id: crypto.randomUUID(), topic: "", message: "", customerIds: [], schedule: false, datetime: "" }
@@ -69,13 +55,18 @@ export default function InstantNudgePage() {
   const [isLoadingContacts, setIsLoadingContacts] = useState(true);
   const [isLoadingTags, setIsLoadingTags] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter(); // If needed for navigation
+  const router = useRouter();
 
-  // --- Fetch Business ID ---
+  // --- Fetch Business ID (logic remains same) ---
   useEffect(() => {
     const slugParam = Array.isArray(businessSlug) ? businessSlug[0] : businessSlug;
-    if (!slugParam) return;
-    setIsLoadingContacts(true); // Use combined loading indicator
+    if (!slugParam) {
+        setError("Business identifier missing from URL.");
+        setIsLoadingContacts(false);
+        setIsLoadingTags(false);
+        return;
+    }
+    setIsLoadingContacts(true);
     setIsLoadingTags(true);
     setError(null);
     apiClient
@@ -83,33 +74,29 @@ export default function InstantNudgePage() {
       .then((res) => setBusinessId(res.data.business_id))
       .catch((err) => {
         console.error("❌ Failed to resolve business ID:", err);
-        setError("Could not load business identifier.");
+        setError("Could not load business identifier. Please check the URL or try again.");
         setIsLoadingContacts(false);
         setIsLoadingTags(false);
       });
   }, [businessSlug]);
 
-  // --- Fetch Contacts and Tags ---
+  // --- Fetch Contacts and Tags (logic remains same) ---
   useEffect(() => {
     if (!businessId) return;
     let isMounted = true;
     const fetchData = async () => {
       setIsLoadingContacts(true);
       setIsLoadingTags(true);
-      setError(null); // Clear previous errors on new fetch
+      setError(null);
       try {
         const [customersData, tagsData] = await Promise.all([
-          getCustomersByBusiness(businessId), // Fetches customers (includes tags)
-          getBusinessTags(businessId)         // Fetches all tags
+          getCustomersByBusiness(businessId),
+          getBusinessTags(businessId)
         ]);
         if (!isMounted) return;
-
-        // Filter for opted-in based on your logic (adjust if needed)
         const optedIn = customersData.filter(c => c.latest_consent_status === 'opted_in');
         setAllOptedInContacts(optedIn);
         setAvailableTags(tagsData);
-        console.log(`📞 Fetched ${optedIn.length} opted-in contacts. 🏷️ Fetched ${tagsData.length} tags.`);
-
       } catch (err: any) {
         console.error("❌ Failed to fetch contacts or tags:", err);
         if (isMounted) setError(err?.response?.data?.detail || "Failed to load contacts or tags.");
@@ -124,7 +111,7 @@ export default function InstantNudgePage() {
     return () => { isMounted = false };
   }, [businessId]);
 
-  // --- Filtering Logic (Remains the same) ---
+  // --- Filtering Logic (remains same) ---
   const filteredContacts = useMemo(() => {
     if (selectedFilterTags.length === 0) return allOptedInContacts;
     const selectedTagIds = new Set(selectedFilterTags.map(t => t.id));
@@ -134,115 +121,69 @@ export default function InstantNudgePage() {
     });
   }, [allOptedInContacts, selectedFilterTags]);
 
-  // --- Handlers (Keep updateNudgeBlock, handleDraft, handleSendOrSchedule, addNudgeBlock, removeNudgeBlock, handleFilterTagToggle, handleSelectAllFiltered, handleCustomerSelectionChange) ---
-  // Ensure these functions correctly update the state based on the NudgeBlock interface
-   const updateNudgeBlock = (index: number, field: keyof NudgeBlock, value: any) => {
+  // --- Handlers (logic remains same, ensure state updates are correct) ---
+  const updateNudgeBlock = (index: number, field: keyof NudgeBlock, value: any) => {
      setNudgeBlocks(prev => {
        const copy = [...prev];
-       const block = { ...copy[index] }; // Create copy of the block
-       (block as any)[field] = value; // Update the field
-       // Reset status flags if relevant fields change
+       const block = { ...copy[index] };
+       (block as any)[field] = value;
        if (['topic', 'message', 'customerIds', 'schedule', 'datetime'].includes(field as string)) {
            block.isDrafting = false; block.isSending = false;
            block.isScheduled = false; block.isSent = false; block.error = null;
        }
-       copy[index] = block; // Replace the block in the copied array
+       copy[index] = block;
        return copy;
      });
    };
 
-  const handleDraft = async (index: number) => {
+  const handleDraft = async (index: number) => { /* ... (existing logic) ... */
     const block = nudgeBlocks[index];
-    if (!block.topic || !businessId) { updateNudgeBlock(index, 'error', 'Topic is required.'); return; }
+    if (!block.topic || !businessId) { updateNudgeBlock(index, 'error', 'Topic is required to draft a message.'); return; }
     updateNudgeBlock(index, 'isDrafting', true); updateNudgeBlock(index, 'error', null);
     try {
       const res = await apiClient.post<{ message_draft?: string }>("/instant-nudge/generate-targeted-draft", {
-        topic: block.topic, business_id: businessId, customer_ids: block.customerIds, filter_tags: null,
+        topic: block.topic, business_id: businessId, customer_ids: block.customerIds, filter_tags: null, // Assuming filter_tags is handled or null for now
       });
       if (res.data.message_draft) updateNudgeBlock(index, 'message', res.data.message_draft);
-      else throw new Error("AI did not return a message draft.");
-    } catch (err: any) { console.error("❌ Draft failed:", err); updateNudgeBlock(index, 'error', err?.response?.data?.detail || "Draft failed.");
+      else throw new Error("AI did not return a message draft. Please try a different topic or write manually.");
+    } catch (err: any) { console.error("❌ Draft failed:", err); updateNudgeBlock(index, 'error', err?.response?.data?.detail || "Draft generation failed.");
     } finally { updateNudgeBlock(index, 'isDrafting', false); }
   };
 
-  const handleSendOrSchedule = async (index: number) => {
+  const handleSendOrSchedule = async (index: number) => { /* ... (existing logic, check status updates) ... */
     const block = nudgeBlocks[index];
     if (!businessId || !block.message || block.customerIds.length === 0) {
-      updateNudgeBlock(index, 'error', 'Business ID, Message, and at least one Recipient are required.');
-      return;
+      updateNudgeBlock(index, 'error', 'Message and at least one Recipient are required.'); return;
     }
     if (block.schedule && !block.datetime) {
-      updateNudgeBlock(index, 'error', 'Please select a date and time for scheduling.');
-      return;
+      updateNudgeBlock(index, 'error', 'Please select a date and time for scheduling.'); return;
     }
-  
-    updateNudgeBlock(index, 'isSending', true);
-    updateNudgeBlock(index, 'error', null); // Clear previous errors
-  
+    updateNudgeBlock(index, 'isSending', true); updateNudgeBlock(index, 'error', null);
     const payload = {
-      customer_ids: block.customerIds,
-      message: block.message,
-      business_id: businessId,
+      customer_ids: block.customerIds, message: block.message, business_id: businessId,
       send_datetime_utc: block.schedule && block.datetime ? new Date(block.datetime).toISOString() : null
     };
-  
     try {
       const res = await apiClient.post<{ status: string; details: any }>("/instant-nudge/send-batch", payload);
-      
-      const { details } = res.data; // res.data.details should contain { processed_message_ids, sent_count, scheduled_count, failed_count }
-  
+      const { details } = res.data;
       if (details) {
-        // Update with processed message IDs if available
-        if (details.processed_message_ids) {
-          updateNudgeBlock(index, 'processedMessageIds', details.processed_message_ids);
-        }
-  
+        if (details.processed_message_ids) updateNudgeBlock(index, 'processedMessageIds', details.processed_message_ids);
         if (block.schedule) {
-          if (details.scheduled_count > 0 && details.scheduled_count === block.customerIds.length) {
-            updateNudgeBlock(index, 'isScheduled', true);
-            updateNudgeBlock(index, 'error', null); // Clear error if fully successful
-          } else if (details.scheduled_count > 0 && details.scheduled_count < block.customerIds.length) {
-            updateNudgeBlock(index, 'isScheduled', true); // Mark as scheduled if at least one succeeded
-            updateNudgeBlock(index, 'error', `Scheduled for ${details.scheduled_count} of ${block.customerIds.length} recipients. ${details.failed_count} failed.`);
-          } else if (details.failed_count > 0) {
-            updateNudgeBlock(index, 'isScheduled', false);
-            updateNudgeBlock(index, 'error', `Scheduling failed for ${details.failed_count} of ${block.customerIds.length} recipient(s).`);
-          } else {
-            updateNudgeBlock(index, 'isScheduled', false);
-            updateNudgeBlock(index, 'error', 'No recipients were scheduled. Please check selections or logs.');
-          }
+          if (details.scheduled_count > 0 && details.scheduled_count === block.customerIds.length) { updateNudgeBlock(index, 'isScheduled', true); updateNudgeBlock(index, 'error', null); }
+          else if (details.scheduled_count > 0) { updateNudgeBlock(index, 'isScheduled', true); updateNudgeBlock(index, 'error', `Scheduled for ${details.scheduled_count}/${block.customerIds.length}. ${details.failed_count} failed.`); }
+          else { updateNudgeBlock(index, 'isScheduled', false); updateNudgeBlock(index, 'error', `Scheduling failed. ${details.failed_count > 0 ? `${details.failed_count} recipient(s) failed.` : 'No recipients scheduled.'}`);}
         } else { // Instant send
-          if (details.sent_count > 0 && details.sent_count === block.customerIds.length) {
-            updateNudgeBlock(index, 'isSent', true);
-             updateNudgeBlock(index, 'error', null); // Clear error if fully successful
-          } else if (details.sent_count > 0 && details.sent_count < block.customerIds.length) {
-            updateNudgeBlock(index, 'isSent', true); // Mark as sent if at least one succeeded
-            updateNudgeBlock(index, 'error', `Sent to ${details.sent_count} of ${block.customerIds.length} recipients. ${details.failed_count} failed.`);
-          } else if (details.failed_count > 0) {
-            updateNudgeBlock(index, 'isSent', false);
-            updateNudgeBlock(index, 'error', `Send failed for ${details.failed_count} of ${block.customerIds.length} recipient(s).`);
-          } else {
-            updateNudgeBlock(index, 'isSent', false);
-            updateNudgeBlock(index, 'error', 'Message not sent to any recipients. Please check selections or logs.');
-          }
+          if (details.sent_count > 0 && details.sent_count === block.customerIds.length) { updateNudgeBlock(index, 'isSent', true); updateNudgeBlock(index, 'error', null); }
+          else if (details.sent_count > 0) { updateNudgeBlock(index, 'isSent', true); updateNudgeBlock(index, 'error', `Sent to ${details.sent_count}/${block.customerIds.length}. ${details.failed_count} failed.`); }
+          else { updateNudgeBlock(index, 'isSent', false); updateNudgeBlock(index, 'error', `Send failed. ${details.failed_count > 0 ? `${details.failed_count} recipient(s) failed.` : 'Message not sent.'}`);}
         }
-      } else {
-        // Fallback if details are unexpectedly missing
-        updateNudgeBlock(index, 'error', 'Unexpected response from server. Check backend logs.');
-        if (block.schedule) updateNudgeBlock(index, 'isScheduled', false);
-        else updateNudgeBlock(index, 'isSent', false);
-      }
-  
+      } else { updateNudgeBlock(index, 'error', 'Unexpected response from server.'); if (block.schedule) updateNudgeBlock(index, 'isScheduled', false); else updateNudgeBlock(index, 'isSent', false); }
     } catch (err: any) {
       console.error("❌ Send/Schedule API call failed:", err);
-      // More specific error from backend if available
-      const errorDetail = err?.response?.data?.detail || "Send/Schedule operation failed. Check connection or server logs.";
+      const errorDetail = err?.response?.data?.detail || "Operation failed. Check connection or server logs.";
       updateNudgeBlock(index, 'error', errorDetail);
-      if (block.schedule) updateNudgeBlock(index, 'isScheduled', false);
-      else updateNudgeBlock(index, 'isSent', false);
-    } finally {
-      updateNudgeBlock(index, 'isSending', false);
-    }
+      if (block.schedule) updateNudgeBlock(index, 'isScheduled', false); else updateNudgeBlock(index, 'isSent', false);
+    } finally { updateNudgeBlock(index, 'isSending', false); }
   };
 
    const addNudgeBlock = () => setNudgeBlocks(prev => [...prev, { id: crypto.randomUUID(), topic: "", message: "", customerIds: [], schedule: false, datetime: "" }]);
@@ -250,8 +191,8 @@ export default function InstantNudgePage() {
    const handleFilterTagToggle = (tag: Tag) => setSelectedFilterTags(prev => prev.some(t => t.id === tag.id) ? prev.filter(t => t.id !== tag.id) : [...prev, tag]);
    const handleSelectAllFiltered = (index: number) => {
        const block = nudgeBlocks[index]; const allFilteredIds = filteredContacts.map(c => c.id);
-       const allSelected = block.customerIds.length === allFilteredIds.length && allFilteredIds.every(id => block.customerIds.includes(id));
-       updateNudgeBlock(index, 'customerIds', allSelected ? [] : allFilteredIds);
+       const allSelectedCurrently = block.customerIds.length === allFilteredIds.length && allFilteredIds.every(id => block.customerIds.includes(id));
+       updateNudgeBlock(index, 'customerIds', allSelectedCurrently ? [] : allFilteredIds);
    };
    const handleCustomerSelectionChange = (index: number, customerId: number) => {
         const block = nudgeBlocks[index]; const currentIds = new Set(block.customerIds);
@@ -259,162 +200,235 @@ export default function InstantNudgePage() {
         updateNudgeBlock(index, 'customerIds', Array.from(currentIds));
    };
 
+  const isLoadingInitial = (isLoadingContacts || isLoadingTags) && !businessId;
+  const initialError = error && !businessId;
 
-  // --- Loading / Error / Empty States ---
-  const isLoading = isLoadingContacts || isLoadingTags;
-  if (isLoading && !businessId) {
-    return <div className="flex min-h-screen bg-nudge-gradient items-center justify-center text-white">Loading...</div>;
+  if (isLoadingInitial) {
+    return (
+        <div className="flex-1 p-6 bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center font-sans">
+          <div className="text-center">
+              <Loader2 className="animate-spin h-12 w-12 text-purple-400 mx-auto mb-6" />
+              <h1 className="text-2xl font-bold text-slate-300">Loading Nudge Setup...</h1>
+              <p className="text-slate-400">Getting things ready for you.</p>
+          </div>
+        </div>
+    );
   }
-  if (error && !businessId) {
-    return <div className="flex min-h-screen bg-nudge-gradient items-center justify-center text-red-400 p-5 text-center">{error}</div>;
+  if (initialError) {
+    return (
+      <div className="flex-1 p-6 bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center font-sans">
+        <div className="max-w-md mx-auto text-center bg-slate-800 p-8 rounded-xl shadow-2xl border border-slate-700">
+          <Info className="h-16 w-16 text-red-500 mx-auto mb-6" /> {/* Changed icon */}
+          <h2 className="text-2xl font-semibold text-red-400 mb-3">Initialization Error</h2>
+          <p className="text-slate-300 mb-6 bg-red-900/30 border border-red-700/50 p-3 rounded-md">
+            {error}
+          </p>
+           <Button
+            onClick={() => window.location.reload()}
+            className="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-6 py-2 rounded-lg shadow-md hover:shadow-purple-500/30 transition-all"
+           >
+            Retry
+           </Button>
+        </div>
+      </div>
+    );
   }
-
 
   return (
-    <div className="max-w-3xl mx-auto py-10 px-4">
-      {/* ... (Header and Info Banner - Keep as is) ... */}
-       <h1 className="text-3xl font-bold text-center text-white mb-2">Instant Nudge</h1>
-       <p className="text-center text-gray-400 mb-6">Target specific customer segments with tags, draft a message, and send instantly or schedule.</p>
-       <div className="bg-blue-900/50 border border-blue-500/50 rounded-lg p-4 mb-8 text-sm text-blue-200">
-         <p className="flex items-center"><Info className="h-5 w-5 mr-2 flex-shrink-0" /><span>Only showing contacts who have opted in to receive messages ({allOptedInContacts.length} total).</span></p>
+    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 md:py-12">
+        <header className="text-center mb-10">
+            <h1 className="text-4xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 mb-3">
+                Instant Nudge Composer
+            </h1>
+            <p className="text-slate-400 max-w-2xl mx-auto">
+                Target specific customer segments, draft tailored messages with AI, and send instantly or schedule for later.
+            </p>
+        </header>
+
+       <div className="bg-sky-800/20 border border-sky-700/40 rounded-xl p-4 mb-8 text-sm text-sky-200 shadow-lg">
+         <p className="flex items-center"><Info className="h-5 w-5 mr-3 flex-shrink-0 text-sky-400" />
+            <span>Only opted-in contacts are available for messaging ({allOptedInContacts.length} total). Filters apply to this list.</span>
+         </p>
        </div>
 
-
-      {/* --- Tag Filter Section (Keep as is) --- */}
-      <div className="mb-8 p-4 bg-zinc-800/50 rounded-lg border border-neutral-700">
-        <label className="block text-sm font-medium text-gray-300 mb-3">Filter Opted-In Customers by Tags (Optional)</label>
-        {isLoadingTags ? <p className="text-gray-400 text-sm">Loading tags...</p> : availableTags.length > 0 ? (
+      <div className="mb-10 p-5 bg-slate-800/70 rounded-xl border border-slate-700/80 shadow-xl">
+        <label className="block text-lg font-semibold text-slate-200 mb-4">Filter Opted-In Customers by Tags</label>
+        {isLoadingTags ? <Loader2 className="h-5 w-5 animate-spin text-purple-400" /> : availableTags.length > 0 ? (
             <div className="flex flex-wrap gap-2">
-                {availableTags.map(tag => ( <Button key={tag.id} variant={selectedFilterTags.some(t => t.id === tag.id) ? "default" : "secondary"} size="sm" onClick={() => handleFilterTagToggle(tag)} className={cn("rounded-full h-7 px-3", selectedFilterTags.some(t => t.id === tag.id) && "bg-blue-600 hover:bg-blue-700")}>{tag.name}</Button>))}
-            </div> ) : ( <p className="text-gray-400 text-sm">No tags created yet.</p> )
+                {availableTags.map(tag => {
+                    const isSelected = selectedFilterTags.some(t => t.id === tag.id);
+                    return (
+                        <Button
+                            key={tag.id}
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleFilterTagToggle(tag)}
+                            className={cn(
+                                "rounded-full text-xs font-medium px-3.5 py-1.5 h-auto transition-all duration-200",
+                                isSelected
+                                ? "bg-purple-600 border-purple-500 text-white hover:bg-purple-700"
+                                : "bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600 hover:border-slate-500"
+                            )}
+                        >
+                            {tag.name}
+                        </Button>
+                    );
+                })}
+            </div>
+         ) : ( <p className="text-slate-400 text-sm">No tags created for this business yet.</p> )
         }
-         {selectedFilterTags.length > 0 && (<Button variant="ghost" size="sm" className="text-xs text-blue-400 mt-2 p-0 h-auto" onClick={() => setSelectedFilterTags([])}>Clear Filters</Button> )}
+         {selectedFilterTags.length > 0 && (
+            <Button variant="ghost" size="sm" className="text-xs text-purple-400 hover:text-purple-300 mt-4 p-0 h-auto" onClick={() => setSelectedFilterTags([])}>
+                Clear All Filters
+            </Button>
+         )}
       </div>
 
-      {/* --- Nudge Blocks --- */}
       {nudgeBlocks.map((block, index) => (
-        // Container Div (Keep outer div structure and conditional styling)
-        <div key={block.id} className={`p-4 rounded-xl mb-6 border shadow-lg transition-all duration-300 relative ${ block.isSent ? "bg-green-950/80 border-green-700/50" : block.isScheduled ? "bg-blue-950/80 border-blue-700/50" : "bg-[#111827]/80 border-gray-700/50" }`}>
+        <div
+            key={block.id}
+            className={cn(
+                "p-5 rounded-xl mb-8 border shadow-xl transition-all duration-300 relative backdrop-blur-sm",
+                block.isSent ? "bg-green-800/30 border-green-700/50" :
+                block.isScheduled ? "bg-sky-800/30 border-sky-700/50" :
+                "bg-slate-800/60 border-slate-700/70 hover:border-purple-500/50 hover:shadow-purple-500/10"
+            )}
+        >
+            <h2 className="text-xl font-semibold text-slate-200 mb-5 border-b border-slate-700 pb-3">Message Block #{index + 1}</h2>
 
-          {/* Customer Selection */}
-           <label className="text-sm font-medium text-gray-300 block mb-2">Select Customers ({filteredContacts.length} matching filters)</label>
-           <div className="bg-[#1f2937]/70 rounded p-3 border border-gray-600/50 mb-4 max-h-48 overflow-y-auto">
-             {/* ... (Keep customer selection logic/JSX using filteredContacts) ... */}
-              {filteredContacts.length > 0 ? ( <>
-                 <label className="flex items-center text-white mb-2 font-medium cursor-pointer hover:bg-gray-700/50 p-1 rounded">
-                   <input type="checkbox" className="mr-2 accent-blue-500" checked={filteredContacts.length > 0 && block.customerIds.length === filteredContacts.length && filteredContacts.every(fc => block.customerIds.includes(fc.id))} ref={el => { if (el) el.indeterminate = block.customerIds.length > 0 && block.customerIds.length < filteredContacts.length; }} onChange={() => handleSelectAllFiltered(index)} disabled={block.isSent || block.isScheduled || isLoadingContacts} />
-                   Select All ({block.customerIds.length} / {filteredContacts.length})
-                 </label> <hr className="border-gray-600 my-1"/> {filteredContacts.map(c => (
-                   <label key={c.id} className="flex items-center text-white mb-1 cursor-pointer hover:bg-gray-700/50 p-1 rounded">
-                     <input type="checkbox" className="mr-2 accent-blue-500" value={c.id} checked={block.customerIds.includes(c.id)} onChange={() => handleCustomerSelectionChange(index, c.id)} disabled={block.isSent || block.isScheduled || isLoadingContacts} />
-                     <span className="ml-2">{c.customer_name}</span>
-                   </label>))} </>
-             ) : ( <p className="text-gray-400 text-sm text-center py-2"> {isLoadingContacts ? "Loading contacts..." : selectedFilterTags.length > 0 ? "No opted-in contacts match selected tags." : "No opted-in contacts found."} </p> )}
-           </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+                {/* Left Column: Customer Selection & Topic */}
+                <div className="space-y-5">
+                    <div>
+                        <Label className="text-base font-medium text-slate-300 block mb-2">Target Customers <span className="text-sm text-slate-400">({filteredContacts.length} matching)</span></Label>
+                        <div className="bg-slate-700/50 rounded-lg p-3 border border-slate-600/60 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-700/50">
+                        {isLoadingContacts ? <Loader2 className="h-5 w-5 animate-spin text-purple-400 mx-auto" /> : filteredContacts.length > 0 ? ( <>
+                            <label className="flex items-center text-slate-100 mb-2 font-medium cursor-pointer hover:bg-slate-600/50 p-1.5 rounded-md transition-colors">
+                            <input type="checkbox" className="mr-2.5 h-4 w-4 accent-purple-500 bg-slate-800 border-slate-600 rounded focus:ring-purple-500 focus:ring-offset-slate-700"
+                                checked={filteredContacts.length > 0 && block.customerIds.length === filteredContacts.length && filteredContacts.every(fc => block.customerIds.includes(fc.id))}
+                                ref={el => { if (el) el.indeterminate = block.customerIds.length > 0 && block.customerIds.length < filteredContacts.length; }}
+                                onChange={() => handleSelectAllFiltered(index)}
+                                disabled={block.isSent || block.isScheduled || isLoadingContacts} />
+                            Select All ({block.customerIds.length})
+                            </label> <hr className="border-slate-600 my-1.5"/>
+                            {filteredContacts.map(c => (
+                            <label key={c.id} className="flex items-center text-slate-200 mb-1 cursor-pointer hover:bg-slate-600/50 p-1.5 rounded-md transition-colors text-sm">
+                                <input type="checkbox" className="mr-2.5 h-4 w-4 accent-purple-500 bg-slate-800 border-slate-600 rounded focus:ring-purple-500 focus:ring-offset-slate-700"
+                                value={c.id} checked={block.customerIds.includes(c.id)}
+                                onChange={() => handleCustomerSelectionChange(index, c.id)}
+                                disabled={block.isSent || block.isScheduled || isLoadingContacts} />
+                                {c.customer_name}
+                            </label>))} </>
+                        ) : ( <p className="text-slate-400 text-sm text-center py-2"> {selectedFilterTags.length > 0 ? "No opted-in contacts match selected tags." : "No opted-in contacts found."} </p> )}
+                        </div>
+                    </div>
+                    <div>
+                        <Label htmlFor={`topic-input-${index}`} className="text-base font-medium text-slate-300 block mb-1.5">AI Topic</Label>
+                        <Input id={`topic-input-${index}`} placeholder="e.g., July 4th Promo, New Product Alert"
+                            className="bg-slate-700 border-slate-600 text-slate-100 placeholder:text-slate-400 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 rounded-md shadow-sm"
+                            value={block.topic} onChange={e => updateNudgeBlock(index, 'topic', e.target.value)}
+                            disabled={block.isSent || block.isScheduled || block.isSending || block.isDrafting} />
+                    </div>
+                    <Button
+                        variant="outline"
+                        className="w-full border-sky-600/80 bg-sky-700/20 hover:bg-sky-600/40 text-sky-200 hover:text-sky-100 rounded-md shadow transition-colors group"
+                        onClick={() => handleDraft(index)}
+                        disabled={!block.topic || !businessId || block.isSent || block.isScheduled || block.isSending || block.isDrafting}
+                    >
+                        {block.isDrafting ? <Loader2 className="h-5 w-5 mr-2 animate-spin" /> : <Settings2 className="h-5 w-5 mr-2 text-sky-400 group-hover:rotate-45 transition-transform duration-300" />}
+                        {block.isDrafting ? "Drafting with AI..." : "Generate Draft with AI"}
+                    </Button>
+                </div>
 
-           {/* Topic */}
-           <div className="mb-3">
-             <Label htmlFor={`topic-input-${index}`} className="text-sm font-medium text-gray-300 block mb-1">1. Topic for AI</Label>
-             <Input id={`topic-input-${index}`} placeholder="e.g., Follow up, Special holiday offer" className="bg-[#1f2937]/70 border-gray-600/50 text-white" value={block.topic} onChange={e => updateNudgeBlock(index, 'topic', e.target.value)} disabled={block.isSent || block.isScheduled || block.isSending || block.isDrafting} />
-           </div>
-
-           {/* Draft Button */}
-           <Button variant="ghost" className="mb-4 text-white border-blue-500/50 hover:bg-blue-500/20" onClick={() => handleDraft(index)} disabled={!block.topic || !businessId || block.isSent || block.isScheduled || block.isSending || block.isDrafting} size="sm" >
-             {block.isDrafting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : "✍️ "} Draft with AI
-           </Button>
-
-           {/* Message */}
-           <div className="mb-4">
-              {/* --- CORRECTED Label htmlFor --- */}
-              <Label htmlFor={`message-textarea-${index}`} className="text-sm font-medium text-gray-300 block mb-1">2. Message</Label>
-              <Textarea
-                id={`message-textarea-${index}`} // ID matches htmlFor
-                placeholder="Draft message with AI or write your own. Use {customer_name} for personalization." // Corrected placeholder text
-                className="bg-[#1f2937]/70 border-gray-600/50 text-white min-h-[100px]" // Corrected bg color/opacity syntax
-                value={block.message}
-                onChange={e => updateNudgeBlock(index, 'message', e.target.value)} // Corrected onChange syntax
-                disabled={block.isSent || block.isScheduled || block.isSending}
-              />
-              {/* --- CORRECTED classname and removed trailing p tag --- */}
-              <p className="text-xs text-gray-400 mt-1">{block.message.length} characters</p>
-            </div>
-
-           {/* --- Scheduling Options (Corrected) --- */}
-           <div className="mb-4">
-                <Label className="text-sm font-medium text-gray-300 block mb-2">3. Send Options</Label>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                  {/* Send Now Radio */}
-                  <Label className="text-white flex items-center gap-2 cursor-pointer">
-                    <input
-                        type="radio"
-                        name={`schedule-option-${index}`}
-                        className="accent-blue-500" // standard class for radio
-                        checked={!block.schedule}
-                        onChange={() => updateNudgeBlock(index, 'schedule', false)} // Correct syntax
-                        disabled={block.isSent || block.isScheduled || block.isSending}
-                     /> {/* Self-close input */}
-                     Send Now
-                  </Label>
-                  {/* Schedule Radio */}
-                  <Label className="text-white flex items-center gap-2 cursor-pointer">
-                    <input
-                         type="radio"
-                         name={`schedule-option-${index}`}
-                         className="accent-blue-500" // standard class for radio
-                         checked={block.schedule}
-                         onChange={() => updateNudgeBlock(index, 'schedule', true)} // Correct syntax
-                         disabled={block.isSent || block.isScheduled || block.isSending}
-                    /> {/* Self-close input */}
-                     Schedule
-                  </Label>
-                  {/* Datetime Input (shows only when schedule is true) */}
-                  {block.schedule && (
-                    <Input
-                        type="datetime-local"
-                        className="bg-[#1f2937]/70 text-white p-1 rounded border border-gray-600/50 w-auto text-sm h-8" // Added height class
-                        value={block.datetime} // Bind value
-                        onChange={e => updateNudgeBlock(index, 'datetime', e.target.value)} // Correct onChange
-                        min={new Date(Date.now() + 60000).toISOString().slice(0, 16)} // Min 1 min from now
-                        disabled={block.isSent || block.isScheduled || block.isSending}
-                        required={block.schedule} // Make required only if scheduling
-                    />
-                  )}
+                {/* Right Column: Message & Scheduling */}
+                <div className="space-y-5">
+                    <div>
+                        <Label htmlFor={`message-textarea-${index}`} className="text-base font-medium text-slate-300 block mb-1.5">Message Content</Label>
+                        <Textarea
+                            id={`message-textarea-${index}`}
+                            placeholder="AI will generate a draft here, or you can write your own. Use {customer_name} for personalization."
+                            className="bg-slate-700 border-slate-600 text-slate-100 placeholder:text-slate-400 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 rounded-md shadow-sm min-h-[120px] scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-700/50"
+                            value={block.message}
+                            onChange={e => updateNudgeBlock(index, 'message', e.target.value)}
+                            disabled={block.isSent || block.isScheduled || block.isSending}
+                        />
+                        <p className="text-xs text-slate-400 mt-1.5 text-right">{block.message.length} characters</p>
+                    </div>
+                    <div>
+                        <Label className="text-base font-medium text-slate-300 block mb-2">Send Options</Label>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-x-4 gap-y-3 p-3 bg-slate-700/50 border border-slate-600/60 rounded-lg">
+                            <Label className="text-slate-200 flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name={`schedule-option-${index}`}
+                                    className="h-4 w-4 accent-pink-500 bg-slate-800 border-slate-600 focus:ring-pink-500 focus:ring-offset-slate-700"
+                                    checked={!block.schedule} onChange={() => updateNudgeBlock(index, 'schedule', false)}
+                                    disabled={block.isSent || block.isScheduled || block.isSending} /> Send Now
+                            </Label>
+                            <Label className="text-slate-200 flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name={`schedule-option-${index}`}
+                                     className="h-4 w-4 accent-purple-500 bg-slate-800 border-slate-600 focus:ring-purple-500 focus:ring-offset-slate-700"
+                                    checked={block.schedule} onChange={() => updateNudgeBlock(index, 'schedule', true)}
+                                    disabled={block.isSent || block.isScheduled || block.isSending} /> Schedule Later
+                            </Label>
+                            {block.schedule && (
+                                <Input type="datetime-local"
+                                    className="bg-slate-700 border-slate-600 text-slate-100 placeholder:text-slate-400 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 rounded-md shadow-sm p-1.5 text-sm h-9 sm:ml-auto"
+                                    value={block.datetime} onChange={e => updateNudgeBlock(index, 'datetime', e.target.value)}
+                                    min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                                    disabled={block.isSent || block.isScheduled || block.isSending} required={block.schedule}
+                                />
+                            )}
+                        </div>
+                    </div>
                 </div>
             </div>
-           {/* --- End Scheduling Options --- */}
 
-           {/* Actions and Status */}
-           <div className="flex justify-end items-center gap-2 border-t border-gray-700/50 pt-3 mt-3 flex-wrap">
-                {block.error && <p className="text-xs text-red-400 mr-auto basis-full text-right mb-1">{block.error}</p>}
-                {block.isSent && <span className="text-xs font-medium mr-auto px-2 py-0.5 rounded bg-green-500/20 text-green-300">Sent</span>}
-                {block.isScheduled && <span className="text-xs font-medium mr-auto px-2 py-0.5 rounded bg-blue-500/20 text-blue-300">Scheduled</span>}
-
-               <Button
-                 className={`px-5 py-2 rounded-md font-semibold text-white transition-all duration-200 ${ (block.isSent || block.isScheduled) ? 'bg-gray-500 cursor-not-allowed' : block.schedule ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700' }`}
-                 onClick={() => handleSendOrSchedule(index)}
-                 disabled={block.isSent || block.isScheduled || block.isSending || !block.message || block.customerIds.length === 0 || (block.schedule && !block.datetime)}
-               >
-                 {block.isSending ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : null}
-                 {block.isSent ? "Sent" : block.isScheduled ? "Scheduled" : block.schedule ? "Schedule Nudge" : "Send Nudge Now"}
-               </Button>
-               {/* Remove Button */}
-               {!block.isSent && !block.isScheduled && nudgeBlocks.length > 1 && (
-                   <Button variant="ghost" size="icon" className="text-gray-400 hover:text-red-500 hover:bg-red-500/10 h-8 w-8" onClick={() => removeNudgeBlock(index)} title="Remove this message block">
-                       <Trash2 size={16}/>
-                   </Button>
-               )}
+           <div className="flex flex-col sm:flex-row justify-end items-center gap-3 border-t border-slate-700 pt-4 mt-6">
+                {block.error && <p className="text-sm text-red-400 mr-auto text-left basis-full sm:basis-auto mb-2 sm:mb-0">{block.error}</p>}
+                <div className="flex items-center gap-3 ml-auto">
+                    {block.isSent && <span className="text-sm font-semibold px-3 py-1.5 rounded-md bg-green-500/20 text-green-300 flex items-center"><CheckCircle2 size={16} className="mr-1.5"/>Sent</span>}
+                    {block.isScheduled && <span className="text-sm font-semibold px-3 py-1.5 rounded-md bg-sky-500/20 text-sky-300 flex items-center"><Clock3 size={16} className="mr-1.5"/>Scheduled</span>}
+                    <Button
+                        className={cn(
+                            "px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition-all duration-200 shadow-md flex items-center justify-center min-w-[160px]",
+                            (block.isSent || block.isScheduled) ? 'bg-slate-600 text-slate-400 cursor-not-allowed' :
+                            block.schedule ? 'bg-purple-600 hover:bg-purple-700 focus-visible:ring-purple-400' :
+                            'bg-pink-600 hover:bg-pink-700 focus-visible:ring-pink-400'
+                        )}
+                        onClick={() => handleSendOrSchedule(index)}
+                        disabled={block.isSent || block.isScheduled || block.isSending || !block.message || block.customerIds.length === 0 || (block.schedule && !block.datetime)}
+                    >
+                        {block.isSending ? <Loader2 className="h-5 w-5 animate-spin mr-2"/> :
+                         block.isSent ? <CheckCircle2 size={18} className="mr-2"/> :
+                         block.isScheduled ? <Clock3 size={18} className="mr-2"/> :
+                         block.schedule ? <CalendarClock size={18} className="mr-2"/> : <Send size={18} className="mr-2"/>
+                        }
+                        {block.isSending ? (block.schedule ? "Scheduling..." : "Sending...") :
+                         block.isSent ? "Message Sent" :
+                         block.isScheduled ? "Message Scheduled" :
+                         block.schedule ? "Schedule Nudge" : "Send Nudge Now"}
+                    </Button>
+                    {!block.isSent && !block.isScheduled && nudgeBlocks.length > 1 && (
+                        <Button variant="ghost" size="icon" className="text-slate-400 hover:text-red-400 hover:bg-red-700/20 h-10 w-10 rounded-lg" onClick={() => removeNudgeBlock(index)} title="Remove this message block">
+                            <Trash2 size={18}/>
+                        </Button>
+                    )}
+                </div>
            </div>
-
-        </div> // End nudge block
+        </div>
       ))}
 
-      {/* Add Another Block Button */}
-      <div className="mt-8 text-center">
-        <Button id="add-another" variant="ghost" className="text-white border-dashed border-gray-600 hover:border-solid hover:bg-gray-700/50" onClick={addNudgeBlock}>
-          + Add Another Message Block
+      <div className="mt-10 text-center">
+        <Button
+            id="add-another"
+            variant="outline"
+            className="text-purple-300 border-2 border-dashed border-purple-500/60 hover:border-purple-400/80 hover:bg-purple-600/10 hover:text-purple-200 rounded-lg px-6 py-3 font-medium transition-all duration-200 group"
+            onClick={addNudgeBlock}
+        >
+          <MessageSquarePlus size={20} className="mr-2 transition-transform duration-300 group-hover:scale-110" /> Add Another Message Block
         </Button>
       </div>
-
-    </div> // End main container
+    </div>
+    </div>
   );
 }
