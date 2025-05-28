@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight, Target, Users, ListChecks, CalendarCheck, Smile, Zap, Heart, MapPin, Route, CheckSquare, Bot, MessageCircleHeart  } from "lucide-react";
+import { ArrowRight, Target, Users, ListChecks, CalendarCheck, Smile, Zap, Heart, MapPin, Route, CheckSquare, Bot, MessageCircleHeart  } from "lucide-react"; // Added Heart
 
 // Define a type for your testimonial data for better structure
 interface Testimonial {
@@ -28,9 +28,41 @@ export default function LandingPage() {
     setMounted(true);
   }, []);
 
-  // howItWorksSteps and testimonials data (remains the same)
-  const howItWorksSteps: HowItWorksStep[] = [ /* ... existing data ... */ ];
-  const testimonials: Testimonial[] = [ /* ... existing data ... */ ];
+  const howItWorksSteps: HowItWorksStep[] = [
+    { icon: Target, title: "1. Define Your Goals", description: "Clearly set what you want to achieve with client communication." },
+    { icon: Users, title: "2. Add Your Contacts", description: "Easily import or manually add your client information and key notes." },
+    { icon: ListChecks, title: "3. Create Nudge Plans", description: "Our AI helps craft personalized, multi-step message sequences." },
+    { icon: CalendarCheck, title: "4. Review & Schedule", description: "Approve AI-drafted messages and let the autopilot take over." },
+    { icon: Smile, title: "5. Build Connections", description: "Forge lasting relationships with timely, thoughtful, and personal nudges." },
+    { icon: Zap, title: "6. Send Instant Nudges", description: "Quickly send targeted one-off messages for announcements or offers." },
+  ];
+
+  const testimonials: Testimonial[] = [
+    {
+      name: "Dr. Eliza Stone",
+      title: "CareBridge Therapy",
+      img: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=300&h=300&q=80",
+      quote: "AI Nudge lets me stay in touch with clients in a way that feels authentic and saves me so much time. It's a game-changer for my practice."
+    },
+    {
+      name: "Marcus Bell",
+      title: "Bell Financial Planning",
+      img: "https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=300&h=300&q=80",
+      quote: "The reminders and check-ins are so personalized, they look like I wrote them myself. It builds incredible trust and keeps clients engaged."
+    },
+    {
+      name: "Sofia Tran",
+      title: "Red Rose Yoga Studio",
+      img: "https://images.unsplash.com/photo-1607746882042-944635dfe10e?auto=format&fit=crop&w=300&h=300&q=80",
+      quote: "I can focus on teaching and providing care to my students. AI Nudge handles the follow-ups with kindness and clarity, keeping everyone informed."
+    },
+    {
+      name: "Reggie Scott",
+      title: "Scott & Co. Realty",
+      img: "https://images.unsplash.com/photo-1573497491208-6b1acb260507?auto=format&fit=crop&w=300&h=300&q=80",
+      quote: "While I'm focused on closing deals for one client, AI Nudge is effortlessly connecting with all my other prospects and past clients. That's real ROI."
+    }
+  ];
 
   return (
     <main
@@ -55,8 +87,6 @@ export default function LandingPage() {
                 className="absolute inset-0 w-full h-full
                            animate-logo-shine
                            bg-gradient-to-r from-transparent via-white/5 to-transparent group-hover:via-pink-400/10 transition-all duration-500" // Subtle pink hint on hover in shine
-                // The shine itself is subtle. You can make the hover effect more pronounced if desired.
-                // For example: via-purple-400/15 on hover
               ></div>
             </div>
           </div>
@@ -73,6 +103,13 @@ export default function LandingPage() {
                 🚀 Try It Free — No Login Needed
               </button>
             </Link>
+            {/* Example for a secondary button - uncomment and style if needed
+            <Link href="#how-it-works" passHref>
+              <button className="text-gray-300 hover:text-white font-medium py-4 px-10 rounded-lg transition-colors border-2 border-gray-700 hover:border-gray-500 w-full sm:w-auto flex items-center justify-center text-lg md:text-xl">
+                Learn How <ArrowRight className="inline-block ml-2 w-5 h-5" />
+              </button>
+            </Link>
+            */}
           </div>
           <p className="mt-12 text-gray-400 text-base">
             Already using AI Nudge?{" "}
@@ -86,7 +123,7 @@ export default function LandingPage() {
       </section>
 
       {/* AI Nudge is Your GPS Section */}
-      <section id="how-it-works-gps" className="py-16 md:py-28 bg-gray-900"> {/* Kept bg-gray-900 for this section's base */}
+      <section id="how-it-works-gps" className="py-16 md:py-28 bg-gray-900">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-14 md:mb-20">
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight text-white">
@@ -98,8 +135,8 @@ export default function LandingPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 lg:gap-10">
-            {/* Step 1: Set Destination (Existing red/pink/orange subtle tones - good as is or can be tweaked) */}
-            <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-pink-500/50"> {/* Example hover border */}
+            {/* Step 1: Set Destination */}
+            <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-pink-500/50"> {/* Example pink hover border */}
               <div className="p-4 bg-gradient-to-br from-red-500/10 via-pink-500/10 to-orange-500/10 rounded-full mb-6">
                 <MapPin className="w-10 h-10 text-red-400" />
               </div>
@@ -120,7 +157,7 @@ export default function LandingPage() {
               </p>
             </div>
 
-            {/* Step 3: Follow or Adjust (Existing emerald/green tones - good as is) */}
+            {/* Step 3: Follow or Adjust */}
             <div className="card p-6 md:p-8 rounded-xl text-center flex flex-col items-center transform transition-all duration-300 hover:scale-105 hover:shadow-xl hover:border-emerald-500/50">
               <div className="p-4 bg-gradient-to-br from-emerald-500/10 via-green-500/10 to-teal-500/10 rounded-full mb-6">
                 <CheckSquare className="w-10 h-10 text-emerald-400" />
@@ -140,8 +177,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Testimonials Section */}
-      <section className="py-16 md:py-28 bg-gray-800"> {/* Changed bg-dark-lighter to bg-gray-800 for consistency with main theme */}
+      {/* Testimonials Section - THIS IS THE SECTION THAT WAS MISSING */}
+      <section className="py-16 md:py-28 bg-gray-800"> {/* Consistent background with main theme */}
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-14 md:mb-20">
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4 text-white">
@@ -171,7 +208,7 @@ export default function LandingPage() {
             <Image
               src="/AI Nudge Logo.png"
               alt="AI Nudge Footer Logo"
-              width={220}
+              width={220} // Slightly larger footer logo
               height={44}
             />
           </div>
@@ -190,7 +227,6 @@ export default function LandingPage() {
           </div>
 
           <div className="mt-10 space-y-2 text-gray-500 text-xs max-w-2xl mx-auto">
-            {/* ... existing footer disclaimers ... */}
             <p className="italic">Registered A2P 10DLC Messaging Provider (USA) · Fully compliant with carrier guidelines.</p>
             <p className="italic">All messages include opt-out language. Reply STOP to unsubscribe. Standard message rates may apply. Message frequency varies.</p>
             <p className="mt-3">Message and data rates may apply. Carriers are not liable for delayed or undelivered messages.</p>
