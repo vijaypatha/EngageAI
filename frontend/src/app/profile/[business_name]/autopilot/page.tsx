@@ -6,16 +6,16 @@ import { useParams, useRouter } from 'next/navigation';
 import { AxiosError } from 'axios';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'; // Assuming Card is styled by theme or overridden
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { FaqCard } from '@/components/FaqCard'; 
-import type { FaqItem as PageFaqItemType } from '@/components/FaqCard'; // Import the type
-import { PlusCircle, AlertTriangle, CheckCircle2, ArrowLeft } from 'lucide-react'; 
+import { Switch } from '@/components/ui/switch'; // Assuming Switch is styled by theme (e.g., accent color) or overridden
+import { FaqCard } from '@/components/FaqCard';
+import type { FaqItem as PageFaqItemType } from '@/components/FaqCard';
+import { PlusCircle, AlertTriangle, CheckCircle2, ArrowLeft, Loader2 } from 'lucide-react'; // Added Loader2
 
 import { apiClient } from '@/lib/api';
 
-// Backend interfaces
+// Backend interfaces (assuming these are correct and don't need branding changes)
 interface CustomFaqFromBackend {
   question: string;
   answer: string;
@@ -36,12 +36,11 @@ interface BusinessProfileFromBackend {
   structured_faq_data?: StructuredFaqDataFromBackend | null;
 }
 
-// Use the imported FaqItem type, potentially extending if page needs more info
 interface AutopilotPageFaqItem extends PageFaqItemType {}
 
 interface AutopilotPageState {
   enable_ai_faq_auto_reply: boolean;
-  faqs: AutopilotPageFaqItem[]; 
+  faqs: AutopilotPageFaqItem[];
 }
 
 export default function AutopilotSettingsPage() {
@@ -50,7 +49,7 @@ export default function AutopilotSettingsPage() {
   const businessSlug = params.business_name as string;
 
   const [businessId, setBusinessId] = useState<number | null>(null);
-  const [currentBusinessName, setCurrentBusinessName] = useState<string>('');
+  const [currentBusinessName, setCurrentBusinessName] = useState<string>(''); // Retained for potential use
   const [initialLoading, setInitialLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +57,7 @@ export default function AutopilotSettingsPage() {
 
   const [formState, setFormState] = useState<AutopilotPageState>({
     enable_ai_faq_auto_reply: false,
-    faqs: [ // Initialize with system FAQ structures
+    faqs: [
       { id: 'system-hours', type: 'system', questionText: 'What are your Operating Hours?', answerText: '', placeholder: 'e.g., Mon-Fri: 9am-6pm, Sat: 10am-4pm...' },
       { id: 'system-address', type: 'system', questionText: 'What is your Business Address?', answerText: '', placeholder: 'e.g., 123 Main Street, Anytown...' },
       { id: 'system-website', type: 'system', questionText: 'What is your Website URL?', answerText: '', placeholder: 'e.g., https://www.yourbusiness.com' },
@@ -93,7 +92,7 @@ export default function AutopilotSettingsPage() {
           ];
 
           const customFaqsFromBackend = (profileData.structured_faq_data?.custom_faqs || []).map((faq, index): AutopilotPageFaqItem => ({
-            id: `custom-${Date.now()}-${index}`,
+            id: `custom-${Date.now()}-${index}`, // Ensure unique ID generation strategy if needed
             type: 'custom',
             questionText: faq.question,
             answerText: faq.answer,
@@ -105,11 +104,11 @@ export default function AutopilotSettingsPage() {
             faqs: [...systemFaqs, ...customFaqsFromBackend],
           });
         } else {
-          setError(`Business profile not found for "${businessSlug}".`);
+          setError(`Business profile not found for "${decodeURIComponent(businessSlug)}".`);
         }
       } catch (err) {
         const axiosError = err as AxiosError<any>;
-        setError(axiosError.response?.data?.detail || `Failed to load settings for "${businessSlug}".`);
+        setError(axiosError.response?.data?.detail || `Failed to load settings for "${decodeURIComponent(businessSlug)}".`);
       } finally {
         setInitialLoading(false);
       }
@@ -184,7 +183,7 @@ export default function AutopilotSettingsPage() {
       };
       await apiClient.put(`/business-profile/${businessId}`, payload);
       setSuccessMessage("Autopilot settings saved successfully!");
-      setFormState(prev => ({ // Ensure isEditing flags are reset on successful save
+      setFormState(prev => ({
         ...prev,
         faqs: prev.faqs.map(f => ({...f, isEditing: false})) 
       }));
@@ -198,83 +197,105 @@ export default function AutopilotSettingsPage() {
 
   if (initialLoading) { 
     return (
-      <div className="flex flex-col justify-center items-center min-h-screen p-4 text-center">
-        <svg className="animate-spin h-8 w-8 text-blue-600 dark:text-blue-400 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-        <p className="text-slate-500 dark:text-slate-400">Loading Autopilot Settings...</p>
+      <div className="flex flex-col justify-center items-center min-h-screen p-4 text-center bg-slate-900 text-slate-100">
+        <Loader2 className="animate-spin h-10 w-10 text-purple-400 mb-4" />
+        <p className="text-xl text-slate-300">Loading Autopilot Settings...</p>
       </div>
     );
   }
+  
+  // Error state when profile couldn't be loaded (critical error)
   if (error && !businessId && !initialLoading) { 
     return (
-      <div className="container mx-auto p-4 md:p-8 text-center">
-        <Card className="max-w-md mx-auto mt-10 bg-white dark:bg-slate-800 shadow-lg">
+      <div className="min-h-screen bg-slate-900 py-8 text-slate-100 flex items-center justify-center">
+        <Card className="max-w-md mx-auto bg-slate-800 border border-slate-700 shadow-xl">
             <CardHeader>
-                <CardTitle className="text-red-600 dark:text-red-400 flex items-center justify-center">
+                <CardTitle className="text-red-400 flex items-center justify-center">
                     <AlertTriangle className="h-6 w-6 mr-2 shrink-0" /> Error Loading Settings
                 </CardTitle>
             </CardHeader>
-            <CardContent> <p className="text-slate-600 dark:text-slate-400">{error}</p> </CardContent>
-            <CardFooter> <Button onClick={() => router.back()} className="w-full"> <ArrowLeft className="mr-2 h-4 w-4" /> Go Back </Button> </CardFooter>
+            <CardContent> <p className="text-slate-300">{error}</p> </CardContent>
+            <CardFooter> 
+                <Button 
+                    onClick={() => router.back()} 
+                    variant="outline"
+                    className="w-full bg-slate-700 hover:bg-slate-600 border-slate-600 text-slate-100 hover:text-white"
+                > 
+                    <ArrowLeft className="mr-2 h-4 w-4" /> Go Back 
+                </Button> 
+            </CardFooter>
         </Card>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-900 py-8">
+    // Applied slate-900 background and default text color, font-sans assumed from global styles
+    <div className="min-h-screen bg-slate-900 text-slate-100 py-8 font-sans"> 
       <div className="container mx-auto max-w-4xl p-4 md:p-6">
-        <Button variant="ghost" onClick={() => router.back()} className="mb-6 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5">
+        <Button 
+            variant="ghost" 
+            onClick={() => router.back()} 
+            className="mb-6 text-sm text-purple-400 hover:text-purple-300 hover:bg-slate-700/50 px-3 py-1.5"
+        >
           <ArrowLeft className="mr-2 h-4 w-4" /> Back to Profile
         </Button>
         
         <div className="text-center mb-10">
-          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
+          {/* Title with gradient */}
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
             AI Nudge Autopilot
           </h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-2 text-lg max-w-2xl mx-auto">
-          AI Nudge is your sidekick—add Q&As and let it reply for you!
+          {/* Subtitle style adjusted */}
+          <p className="text-slate-400 mt-3 text-lg max-w-2xl mx-auto">
+            AI Nudge is your sidekick—add Q&As and let it reply for you!
           </p>
         </div>
 
+        {/* Alert styling adjusted for dark theme with accent colors */}
         {error && !successMessage && (
-          <div role="alert" className="mb-6 p-4 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-500/50 text-red-700 dark:text-red-400 text-sm rounded-lg flex items-center shadow">
-              <AlertTriangle className="h-5 w-5 mr-3 shrink-0" /> {error}
+          <div role="alert" className="mb-6 p-4 bg-red-700/20 border border-red-600/50 text-red-300 text-sm rounded-lg flex items-center shadow-lg">
+              <AlertTriangle className="h-5 w-5 mr-3 shrink-0 text-red-400" /> {error}
           </div>
         )}
         {successMessage && (
-          <div role="alert" className="mb-6 p-4 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-500/50 text-green-700 dark:text-green-400 text-sm rounded-lg flex items-center shadow">
-              <CheckCircle2 className="h-5 w-5 mr-3 shrink-0" /> {successMessage}
+          <div role="alert" className="mb-6 p-4 bg-green-700/20 border border-green-600/50 text-green-300 text-sm rounded-lg flex items-center shadow-lg">
+              <CheckCircle2 className="h-5 w-5 mr-3 shrink-0 text-green-400" /> {successMessage}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          <Card className="bg-white dark:bg-slate-800/80 shadow-lg border border-slate-200 dark:border-slate-700 rounded-xl">
+          {/* Card for AI Auto-Reply Toggle - styled like screenshot cards */}
+          <Card className="bg-slate-800 border border-slate-700 shadow-xl rounded-xl">
             <CardContent className="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
               <div className="mb-4 sm:mb-0 flex-grow">
-                <Label htmlFor="enable-ai-faq-auto-reply-switch" className="text-md font-semibold text-slate-800 dark:text-slate-100 block">
+                <Label htmlFor="enable-ai-faq-auto-reply-switch" className="text-md font-semibold text-slate-100 block">
                   Enable AI Auto-Replies for FAQs
                 </Label>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                <p className="text-xs text-slate-400 mt-1">
                   Allow AI Nudge to use the Q&As below to reply automatically.
                 </p>
               </div>
+              {/* Switch component - assuming it inherits accent color or is styled globally */}
               <Switch
                 id="enable-ai-faq-auto-reply-switch"
                 checked={formState.enable_ai_faq_auto_reply}
                 onCheckedChange={(checked) => setFormState(prev => ({ ...prev, enable_ai_faq_auto_reply: checked }))}
                 disabled={isSaving || initialLoading}
-                className="shrink-0"
+                className="shrink-0 data-[state=checked]:bg-purple-500 data-[state=unchecked]:bg-slate-600"
               />
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"> {/* Adjusted gap */}
+          {/* Grid for FaqCards - ensure FaqCard itself is styled according to the screenshot */}
+          {/* Inputs within FaqCard should be: bg-slate-700 border-slate-600 text-slate-100 focus:ring-purple-500 focus:border-purple-500 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {formState.faqs.map(faqItem => (
-                 <FaqCard
+                 <FaqCard // This component needs to be styled internally to match the theme.
                     key={faqItem.id}
+                    // Pass necessary props, possibly including theme-related classes if FaqCard is generic
+                    // For example: cardClassName="bg-slate-800 border border-slate-700 rounded-xl p-5 shadow-lg"
+                    // inputClassName="bg-slate-700 border-slate-600 text-slate-100 focus:ring-purple-500 focus:border-purple-500"
                     item={faqItem}
                     onAnswerChange={handleFaqAnswerChange}
                     onQuestionChange={faqItem.type === 'custom' ? handleFaqQuestionChange : undefined}
@@ -283,21 +304,28 @@ export default function AutopilotSettingsPage() {
                     initialEditing={faqItem.isEditing} 
                  />
             ))}
+            {/* "Add Custom Q&A" Card - styled like screenshot cards */}
             <Card 
               onClick={addCustomFaqCard}
-              className="flex flex-col items-center justify-center text-center p-4 border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-500 dark:hover:border-blue-400 cursor-pointer transition-all duration-200 min-h-[200px] sm:min-h-[240px] bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-xl shadow-sm hover:shadow-md"
+              className="flex flex-col items-center justify-center text-center p-4 border-2 border-dashed border-slate-600 hover:border-purple-500 cursor-pointer transition-all duration-200 min-h-[200px] sm:min-h-[240px] bg-slate-800/70 hover:bg-slate-700/90 rounded-xl shadow-lg hover:shadow-purple-500/20"
               role="button"
               tabIndex={0}
               onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') addCustomFaqCard();}}
             >
-              <PlusCircle className="h-10 w-10 sm:h-12 sm:w-12 text-slate-400 dark:text-slate-500 mb-2" />
-              <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Add Custom Q&A</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 px-2">Click to define a new question and its answer.</p>
+              <PlusCircle className="h-10 w-10 sm:h-12 sm:w-12 text-purple-400 mb-3" />
+              <p className="text-sm font-medium text-slate-300">Add Custom Q&A</p>
+              <p className="text-xs text-slate-400 mt-1 px-2">Click to define a new question and its answer.</p>
             </Card>
           </div>
           
-          <div className="pt-8 flex justify-center border-t border-slate-200 dark:border-slate-700 mt-10">
-            <Button type="submit" disabled={isSaving || initialLoading} className="w-full md:w-auto text-lg px-10 py-3">
+          <div className="pt-8 flex justify-center border-t border-slate-700 mt-10">
+            {/* Submit button with purple theme */}
+            <Button 
+              type="submit" 
+              disabled={isSaving || initialLoading} 
+              className="w-full md:w-auto text-lg px-10 py-3 bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-70 flex items-center justify-center"
+            >
+              {isSaving && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
               {isSaving ? 'Saving Autopilot...' : 'Save Autopilot Settings'}
             </Button>
           </div>
