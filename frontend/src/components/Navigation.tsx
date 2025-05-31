@@ -14,7 +14,9 @@ import {
   Zap,            // Icon for Instant Nudge
   MailCheck,      // Icon for Replies
   MoreHorizontal, // Icon for "More" on mobile
-  LogIn,          // Example for Logout, if needed in "More"
+  LogIn,
+  LucideSquareStack,
+  LayoutDashboard,          // Example for Logout, if needed in "More"
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
@@ -286,20 +288,21 @@ export function Navigation() {
               { name: "Plans", href: `/all-engagement-plans/${business_name}`, icon: CalendarCheck },
               { name: "Instant", href: `/instant-nudge/${business_name}`, icon: Zap },
               { name: "Inbox", href: `/inbox/${business_name}`, icon: MessageSquare },
-              {
-                name: "LogoToDashboard", // A unique name for the key
-                href: `/dashboard/${business_name}`, // Link destination
-                icon: () => ( // Render function for the icon
-                  <Image
-                    src="/AI Nudge Logo.png"
-                    alt="AI Nudge Dashboard"
-                    width={60}  // Adjust for compact mobile view
-                    height={12} // Adjust for compact mobile view
-                    className="opacity-90 group-hover:opacity-100" // Example styling
-                  />
-                ),
-                isLogo: true // Custom flag to identify this item
-              },
+              { name: "Dashboard", href: `/dashboard/${business_name}`, icon: LayoutDashboard },
+              // {
+              //   name: "LogoToDashboard", // A unique name for the key
+              //   href: `/dashboard/${business_name}`, // Link destination
+              //   icon: () => ( // Render function for the icon
+              //     <Image
+              //       src="/AI Nudge Logo.png"
+              //       alt="AI Nudge Dashboard"
+              //       width={60}  // Adjust for compact mobile view
+              //       height={12} // Adjust for compact mobile view
+              //       className="opacity-90 group-hover:opacity-100" // Example styling
+              //     />
+              //   ),
+              //   isLogo: true // Custom flag to identify this item
+              // },
           ].map((item) => {
             const safeHref = item.href || '#';
             const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
@@ -315,15 +318,10 @@ export function Navigation() {
                 )}
                 style={{ minWidth: '0' }}
               >
-                {item.isLogo ? (
-                  <item.icon /> // Render the Image component directly
-                ) : (
-                  <>
-                    <item.icon className="w-5 h-5 mb-0.5" />
-                    {/* Only render the name span if it's not the logo item */}
-                    <span className="text-[10px] leading-tight text-center font-medium">{item.name}</span>
-                  </>
-                )}
+                <>
+                  <item.icon className="w-5 h-5 mb-0.5" />
+                  <span className="text-[10px] leading-tight text-center font-medium">{item.name}</span>
+                </>
               </Link>
             );
           })}
