@@ -7,24 +7,23 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Trash2, Edit3, Save, XCircle } from 'lucide-react';
+import { Trash2, Edit3, Save, XCircle, Loader2 } from 'lucide-react'; // Added Loader2 for consistency
 
 export interface FaqItem {
   id: string;
-  type: 'system' | 'custom'; // Used by parent to know if question is editable & removable
-  questionText: string;     // This will ALWAYS be the title
+  type: 'system' | 'custom';
+  questionText: string;
   answerText: string;
-  isEditing?: boolean;       // For parent to suggest initial edit state
+  isEditing?: boolean;
   placeholder?: string;
-  // isPredefinedQuestion is effectively replaced by item.type === 'system' for parent's logic
 }
 
 interface FaqCardProps {
   item: FaqItem;
   onAnswerChange: (id: string, newAnswer: string) => void;
-  onQuestionChange?: (id: string, newQuestion: string) => void; // Only for type: 'custom'
-  onRemove?: (id: string) => void; // Only for type: 'custom'
-  isSavingOverall?: boolean;
+  onQuestionChange?: (id: string, newQuestion: string) => void;
+  onRemove?: (id: string) => void;
+  isSavingOverall?: boolean; // This prop signals if the PARENT form is submitting
   initialEditing?: boolean;
 }
 
@@ -39,23 +38,34 @@ export function FaqCard({
   const [isEditingThisCard, setIsEditingThisCard] = useState(
     initialEditing || item.isEditing || (item.type === "custom" && !item.questionText && !item.answerText)
   );
+  // Local saving state for this specific card's save action
+  const [isSavingThisCard, setIsSavingThisCard] = useState(false);
+
   const [currentAnswer, setCurrentAnswer] = useState(item.answerText);
   const [currentQuestion, setCurrentQuestion] = useState(item.questionText);
 
   useEffect(() => {
     setCurrentAnswer(item.answerText);
     setCurrentQuestion(item.questionText);
+    // Reflect parent-driven editing state changes if item.isEditing is explicitly passed and changes
     if (item.isEditing !== undefined && item.isEditing !== isEditingThisCard) {
       setIsEditingThisCard(item.isEditing);
     }
-  }, [item.answerText, item.questionText, item.isEditing]);
+  }, [item.answerText, item.questionText, item.isEditing]); // Removed isEditingThisCard from deps
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
+    setIsSavingThisCard(true); // Indicate this card is attempting to save
+    // Simulate async operation for visual feedback if needed, or directly call handlers
+    // For actual async, you'd await promises here:
+    // await new Promise(resolve => setTimeout(resolve, 500)); 
+
     if (item.type === "custom" && onQuestionChange) {
       onQuestionChange(item.id, currentQuestion.trim());
     }
     onAnswerChange(item.id, currentAnswer.trim());
+    
     setIsEditingThisCard(false);
+    setIsSavingThisCard(false); // Reset local saving state
   };
 
   const handleCancelEdit = () => {
@@ -64,112 +74,114 @@ export function FaqCard({
     setIsEditingThisCard(false);
   };
 
-  // Determine if the question field itself should be editable
   const isQuestionFieldActuallyEditable = item.type === 'custom' && onQuestionChange;
-
-  // Determine the text to display as the card's title
-  // For system cards, it's fixed. For custom, it's currentQuestion or a prompt if empty.
   const cardTitle = item.type === 'system' 
                     ? item.questionText 
-                    : (currentQuestion || "New Q&A (Click Edit to define)");
+                    : (currentQuestion || "New Q&A"); // Simplified placeholder for title
+
+  // Disable all interactions if the parent form is submitting OR this specific card is saving
+  const isDisabled = isSavingOverall || isSavingThisCard;
 
   return (
-    <Card className="flex flex-col justify-between w-full rounded-xl border border-border bg-background shadow-sm hover:shadow-md transition-shadow duration-200">
-      <CardHeader className="px-5 pt-4 pb-2"> {/* Consistent padding */}
+    <Card className="flex flex-col justify-between w-full rounded-xl border border-slate-700 bg-slate-800 shadow-lg hover:shadow-purple-500/20 transition-shadow duration-200 p-5">
+      <CardHeader className="p-0 mb-3">
         {isEditingThisCard && isQuestionFieldActuallyEditable ? (
-          // Editing the question of a CUSTOM FAQ
           <>
-            <Label htmlFor={`faq-q-${item.id}`} className="text-xs text-muted-foreground mb-1">
+            <Label htmlFor={`faq-q-${item.id}`} className="text-xs text-slate-400 mb-1.5">
               Customer Asks:
             </Label>
             <Input
               id={`faq-q-${item.id}`}
               value={currentQuestion}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setCurrentQuestion(e.target.value)}
-              disabled={isSavingOverall}
+              disabled={isDisabled}
               placeholder="Enter the customer's question..."
-              className="h-9 text-sm" // Use consistent input styling
+              className="h-10 text-sm bg-slate-700 border-slate-600 text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-purple-500 focus:border-purple-500"
             />
           </>
         ) : (
-          // Displaying the question as the title for ALL CARDS (system or custom)
-          <CardTitle className="text-base font-semibold text-foreground tracking-tight leading-snug">
+          <CardTitle className="text-md font-semibold text-slate-100 tracking-tight leading-snug">
             {cardTitle}
           </CardTitle>
         )}
       </CardHeader>
 
-      <CardContent className="px-5 py-2 text-sm flex-grow"> {/* flex-grow ensures content pushes footer down */}
+      <CardContent className="p-0 text-sm flex-grow mb-4">
         {isEditingThisCard ? (
-          // Editing the answer
           <>
-            <Label htmlFor={`faq-a-${item.id}`} className="text-xs text-muted-foreground mb-1 block mt-2"> {/* Added mt-2 if question also editable */}
+            <Label htmlFor={`faq-a-${item.id}`} className={`text-xs text-slate-400 mb-1.5 block ${isQuestionFieldActuallyEditable ? 'mt-3' : ''}`}>
               AI Nudge Should Answer:
             </Label>
             <Textarea
               id={`faq-a-${item.id}`}
               value={currentAnswer}
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setCurrentAnswer(e.target.value)}
-              disabled={isSavingOverall}
+              disabled={isDisabled}
               placeholder={item.placeholder || "Provide the answer AI should use..."}
-              rows={3}
-              className="text-sm" // Use consistent textarea styling
+              rows={4} // Increased rows for better editing space
+              className="text-sm bg-slate-700 border-slate-600 text-slate-100 placeholder:text-slate-500 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-700/50"
             />
           </>
         ) : (
-          // Displaying the answer
-          <p
-            className={`min-h-[40px] whitespace-pre-wrap ${ // Ensure some min height
-              currentAnswer ? "text-muted-foreground" : "italic text-muted-foreground/70"
-            }`}
-          >
-            {currentAnswer || "No answer yet. Click Edit to add one."}
-          </p>
+          <div className="min-h-[60px] h-28 overflow-y-auto p-3 bg-slate-800/50 rounded-md scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-800/80">
+            <p
+              className={`whitespace-pre-wrap ${
+                currentAnswer ? "text-slate-300" : "italic text-slate-500"
+              }`}
+            >
+              {currentAnswer || (item.type === 'custom' ? "No answer yet. Click 'Edit Answer' to add one." : "System-provided information will be used.")}
+            </p>
+          </div>
         )}
       </CardContent>
 
-      <CardFooter className="px-5 pb-4 pt-3 flex justify-end gap-2 border-t-0"> {/* Removed top border, adjusted padding */}
+      <CardFooter className="p-0 flex justify-end gap-2 border-t border-slate-700/50 pt-4">
         {isEditingThisCard ? (
           <>
             <Button
               size="sm"
               variant="ghost"
               onClick={handleCancelEdit}
-              disabled={isSavingOverall}
-              className="text-muted-foreground"
+              disabled={isDisabled}
+              className="text-slate-400 hover:text-slate-200 hover:bg-slate-700 px-3 py-1.5"
             >
               <XCircle className="w-4 h-4 mr-1.5" /> Cancel
             </Button>
             <Button
               size="sm"
               onClick={handleSaveEdit}
-              disabled={isSavingOverall}
-              className="bg-primary text-primary-foreground hover:bg-primary/90" // Assuming primary button style
+              disabled={isDisabled || (!currentQuestion && item.type === 'custom') || !currentAnswer } // Basic validation
+              className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 flex items-center disabled:opacity-70"
             >
-              <Save className="w-4 h-4 mr-1.5" /> Save
+              {isSavingThisCard ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin"/> : <Save className="w-4 h-4 mr-1.5" />}
+              Save
             </Button>
           </>
         ) : (
           <>
-            {item.type === "custom" && onRemove && ( // Remove button only for custom FAQs
+            {item.type === "custom" && onRemove && (
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => onRemove(item.id)}
-                disabled={isSavingOverall}
-                className="text-destructive hover:bg-destructive/10"
+                disabled={isDisabled}
+                title="Remove Q&A"
+                className="text-red-400 hover:text-red-300 hover:bg-red-700/30 p-2 disabled:opacity-70" 
               >
-                <Trash2 className="w-4 h-4 mr-1.5" /> Remove
+                <Trash2 className="w-4 h-4" /> 
+                {/* <span className="ml-1.5 sm:hidden md:inline">Remove</span> */}
               </Button>
             )}
             <Button
               size="sm"
-              variant="secondary" // Or outline, depending on your theme
+            //   variant="outline" // Using a purple-themed edit button
               onClick={() => setIsEditingThisCard(true)}
-              disabled={isSavingOverall}
+              disabled={isDisabled}
+              title={currentAnswer ? "Edit Answer" : "Add Answer"}
+              className="bg-blue-600/40 hover:bg-blue-500/60 text-blue-300 hover:text-blue-100 p-2 disabled:opacity-70"
             >
-              <Edit3 className="w-4 h-4 mr-1.5" />
-              {currentAnswer ? "Edit Answer" : "Add Answer"}
+              <Edit3 className="w-4 h-4" />
+              {/* <span className="ml-1.5 sm:hidden md:inline">{currentAnswer ? "Edit" : "Add"}</span> */}
             </Button>
           </>
         )}
