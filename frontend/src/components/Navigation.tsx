@@ -149,9 +149,9 @@ export function Navigation() {
         description: "Review & reply"
     },
     {
-      name: "Analytics",
+      name: "Dashboard",
       href: `/dashboard/${business_name}`,
-      icon: BarChart,
+      icon: LayoutDashboard,
       description: "Track performance"
     }
   ];
