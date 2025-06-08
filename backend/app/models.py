@@ -53,6 +53,23 @@ class MessageStatusEnum(str, enum.Enum):
     REJECTED_DRAFT = "rejected_draft" # if a draft is rejected by owner
     MANUALLY_SENT = "manually_sent" # if owner edits and sends a draft
     DRAFT = "draft"
+
+class NudgeTypeEnum(str, enum.Enum):
+    SENTIMENT_POSITIVE = "sentiment_positive"
+    SENTIMENT_NEGATIVE = "sentiment_negative"
+    POTENTIAL_TARGETED_EVENT = "potential_targeted_event" # AI detected a specific timed event opportunity
+    STRATEGIC_ENGAGEMENT_OPPORTUNITY = "strategic_engagement_opportunity" # AI suggests a plan for nuanced replies or other events
+    # MANUAL_APPOINTMENT_LOGGED = "manual_appointment_logged"
+    # POTENTIAL_APPOINTMENT = "potential_appointment"
+    GOAL_OPPORTUNITY = "goal_opportunity"
+    # Add other types as we iterate
+
+class NudgeStatusEnum(str, enum.Enum):
+    ACTIVE = "active"        # Nudge is new and actionable
+    ACTIONED = "actioned"    # User took primary action on the nudge
+    DISMISSED = "dismissed"  # User dismissed the nudge
+    EXPIRED = "expired"      # Nudge is no longer relevant (optional, for future use)
+    ERROR = "error"          # Error during nudge generation or processing
 # --- END MODIFICATION: Define proper Enums ---
 
 
@@ -84,6 +101,7 @@ class BusinessProfile(Base):
     notify_owner_on_reply_with_link = Column(Boolean, default=False, nullable=False)
     enable_ai_faq_auto_reply = Column(Boolean, default=False, nullable=False)
     structured_faq_data = Column(JSON, nullable=True)
+    review_platform_url = Column(String, nullable=True)
 
     customers = relationship("Customer", back_populates="business", cascade="all, delete-orphan") 
     conversations = relationship("Conversation", back_populates="business", cascade="all, delete-orphan") 
@@ -92,7 +110,9 @@ class BusinessProfile(Base):
     roadmap_messages = relationship("RoadmapMessage", back_populates="business", cascade="all, delete-orphan") 
     scheduled_sms = relationship("ScheduledSMS", back_populates="business", cascade="all, delete-orphan") 
     consent_logs = relationship("ConsentLog", back_populates="business", cascade="all, delete-orphan") 
-    
+    co_pilot_nudges = relationship("CoPilotNudge", back_populates="business", cascade="all, delete-orphan")
+    targeted_events = relationship("TargetedEvent", back_populates="business", cascade="all, delete-orphan")
+
     tags = relationship(
         "Tag",
         back_populates="business", 
@@ -123,7 +143,9 @@ class Customer(Base):
     roadmap_messages = relationship("RoadmapMessage", back_populates="customer", cascade="all, delete-orphan")
     scheduled_sms = relationship("ScheduledSMS", back_populates="customer", cascade="all, delete-orphan")
     consent_logs = relationship("ConsentLog", back_populates="customer", cascade="all, delete-orphan")
-    tags = relationship("Tag", secondary="customer_tags", back_populates="customers") 
+    tags = relationship("Tag", secondary="customer_tags", back_populates="customers")
+    co_pilot_nudges = relationship("CoPilotNudge", back_populates="customer", cascade="all, delete-orphan")
+    targeted_events = relationship("TargetedEvent", back_populates="customer", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("phone", "business_id", name="unique_customer_phone_per_business"),)
 
@@ -309,3 +331,73 @@ class CustomerTag(Base):
     __tablename__ = "customer_tags"
     customer_id = Column(Integer, ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True)
     tag_id = Column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+
+class CoPilotNudge(Base): # Renamed from AINudge
+    __tablename__ = "co_pilot_nudges" # New table name
+
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("business_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
+
+    nudge_type = Column(String, index=True, nullable=False) # Stores NudgeTypeEnum.value
+    status = Column(String, index=True, nullable=False, default=NudgeStatusEnum.ACTIVE.value) # Stores NudgeStatusEnum.value
+
+    message_snippet = Column(Text, nullable=True)
+    ai_suggestion = Column(Text, nullable=True)
+    
+    ai_evidence_snippet = Column(JSON, nullable=True) 
+    ai_suggestion_payload = Column(JSON, nullable=True) 
+
+    created_at = Column(TIMESTAMP(timezone=True), default=utc_now)
+    updated_at = Column(TIMESTAMP(timezone=True), default=utc_now, onupdate=utc_now)
+    
+    # --- Relationships ---
+    # Ensure backrefs are updated if they were specific, e.g., "co_pilot_nudges"
+    # backend/app/models.py - Inside CoPilotNudge class
+# ...
+    business = relationship("BusinessProfile", back_populates="co_pilot_nudges")
+    customer = relationship("Customer", back_populates="co_pilot_nudges")
+    # A nudge might directly result in the creation of one TargetedEvent
+    created_targeted_event = relationship("TargetedEvent", back_populates="nudge", uselist=False)
+# ...
+
+    # --- Table Arguments ---
+    __table_args__ = (
+        Index('idx_copilotnudge_business_type_status', 'business_id', 'nudge_type', 'status'), # Index name updated
+    )
+
+    def __repr__(self):
+        return f"<CoPilotNudge(id={self.id}, type='{self.nudge_type}', status='{self.status}', business_id={self.business_id})>"
+
+# opportunity for a specific, timed interaction has been identified and that the Co-Pilot will help you act on it.
+
+class TargetedEvent(Base):
+    __tablename__ = "targeted_events" # Changed table name
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("business_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    event_datetime_utc = Column(TIMESTAMP(timezone=True), nullable=False, index=True)
+    purpose = Column(Text, nullable=True) # E.g., "Bike Fit Consultation", "Follow-up on Tire Sealant", "Demo Call"
+
+    # Status examples: "AI_Suggested", "Owner_Confirmed_Pending_Customer", "Customer_Confirmed", "Completed", "Cancelled"
+    status = Column(String, default="AI_Suggested", nullable=False, index=True) 
+
+    notes = Column(Text, nullable=True) # Internal notes for the business owner
+
+    created_from_nudge_id = Column(Integer, ForeignKey("co_pilot_nudges.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    created_at = Column(TIMESTAMP(timezone=True), default=utc_now)
+    updated_at = Column(TIMESTAMP(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    business = relationship("BusinessProfile", back_populates="targeted_events")
+    customer = relationship("Customer", back_populates="targeted_events")
+    nudge = relationship("CoPilotNudge", back_populates="created_targeted_event") # A nudge might create one such event
+
+    __table_args__ = (
+        Index('idx_targetevent_biz_cust_dt', 'business_id', 'customer_id', 'event_datetime_utc'),
+    )
+
+    def __repr__(self):
+        return f"<TargetedEvent(id={self.id}, customer_id={self.customer_id}, datetime='{self.event_datetime_utc}', status='{self.status}')>"

@@ -9,7 +9,7 @@ import uuid
 import re
 
 # Import the new enums from app.models
-from app.models import MessageTypeEnum, MessageStatusEnum, OptInStatus # OptInStatus is already used
+from app.models import MessageTypeEnum, MessageStatusEnum, OptInStatus, NudgeStatusEnum, NudgeTypeEnum # OptInStatus is already used
 
 # Helper function to normalize phone numbers (YOUR ORIGINAL FUNCTION)
 def normalize_phone_number(v: Optional[str]) -> Optional[str]:
@@ -78,6 +78,7 @@ class BusinessProfileBase(BaseModel):
     primary_services: str; representative_name: str
     timezone: Optional[str] = "UTC"
     business_phone_number: Optional[str] = None
+    review_platform_url: Optional[str] = None 
 
     _normalize_bp_phone = validator('business_phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before') 
@@ -100,6 +101,7 @@ class BusinessProfileUpdate(BaseModel):
     notify_owner_on_reply_with_link: Optional[bool] = None
     enable_ai_faq_auto_reply: Optional[bool] = None
     structured_faq_data: Optional[StructuredFaqDataSchema] = None
+    review_platform_url: Optional[str] = None
 
     _normalize_bp_update_phone = validator('business_phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     _normalize_twilio_update_phone = validator('twilio_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number) # Added always=True
@@ -129,9 +131,13 @@ class BusinessPhoneUpdate(BaseModel):
 
 # --- Customer Schemas (No direct change needed for MessageTypeEnum/MessageStatusEnum) ---
 class CustomerBase(BaseModel):
-    # ... (your existing code) ...
-    customer_name: str; phone: str; lifecycle_stage: str; pain_points: str
-    interaction_history: str; business_id: int
+    customer_name: str
+    phone: str
+    lifecycle_stage: str
+    # MODIFICATION: Changed to Optional[str] to allow None values from the database
+    pain_points: Optional[str] = None
+    interaction_history: Optional[str] = None
+    business_id: int
     timezone: Optional[str] = None
     opted_in: Optional[bool] = False 
     is_generating_roadmap: Optional[bool] = False
@@ -371,3 +377,76 @@ class BusinessOwnerStyleResponse(BaseModel):
     id: int; business_id: int; scenario: str; response: str
     context_type: str; last_analyzed: Optional[datetime] = None
     class Config: from_attributes = True
+
+# --- CoPilot Nudge Schemas --- (Renamed from AINudge)
+class CoPilotNudgeBase(BaseModel):
+    business_id: int
+    customer_id: Optional[int] = None # Nudge might not always be customer-specific
+    nudge_type: NudgeTypeEnum # Using the Enum directly
+    status: NudgeStatusEnum = NudgeStatusEnum.ACTIVE # Default status
+    message_snippet: Optional[str] = None
+    ai_suggestion: Optional[str] = None
+    ai_evidence_snippet: Optional[Dict[str, Any]] = None
+    ai_suggestion_payload: Optional[Dict[str, Any]] = None
+
+class CoPilotNudgeCreate(CoPilotNudgeBase):
+    pass
+
+class CoPilotNudgeRead(CoPilotNudgeBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    customer_name: Optional[str] = None # Will be populated in the route logic
+
+    class Config:
+        from_attributes = True # Pydantic v2 way to enable ORM mode
+
+# --- Payload Schemas for Nudge Actions ---
+class DismissNudgePayload(BaseModel):
+    reason: Optional[str] = None
+
+class SentimentActionPayload(BaseModel):
+    action_type: str # e.g., "REQUEST_REVIEW"
+
+class ConfirmTimedCommitmentPayload(BaseModel):
+    # The owner confirms or provides the specific datetime for the event in UTC
+    confirmed_datetime_utc: datetime 
+    
+    # The owner confirms or provides the purpose of the event
+    confirmed_purpose: str = Field(..., min_length=1, max_length=500) # Purpose is required
+
+    class Config:
+        from_attributes = True # For Pydantic v2, if needed, though usually not for request bodies.
+
+# --- TargetedEvent Schemas ---
+class TargetedEventBase(BaseModel):
+    business_id: int
+    customer_id: int
+    event_datetime_utc: datetime
+    purpose: Optional[str] = None
+    status: str 
+    notes: Optional[str] = None
+    created_from_nudge_id: Optional[int] = None
+
+class TargetedEventCreate(TargetedEventBase): # For potential direct creation later
+    pass
+
+class TargetedEventRead(TargetedEventBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True # For Pydantic v2 ORM mode
+
+# --- NEW SCHEMAS FOR STRATEGIC ENGAGEMENT PLANS (ITERATION 4) ---
+
+# This schema defines a single message within an engagement plan payload
+class PlanMessage(BaseModel):
+    text: str = Field(..., min_length=1, description="The content of the SMS message.")
+    send_datetime_utc: datetime = Field(..., description="The absolute UTC datetime to send the message.")
+
+# This is the main payload for activating an AI-drafted engagement plan
+class ActivateEngagementPlanPayload(BaseModel):
+    customer_id: int = Field(..., description="The ID of the customer this plan is for.")
+    messages: List[PlanMessage] = Field(..., min_length=1, description="The list of messages to be scheduled as part of the plan.")

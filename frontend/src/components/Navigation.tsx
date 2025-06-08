@@ -16,7 +16,10 @@ import {
   MoreHorizontal, // Icon for "More" on mobile
   LogIn,
   LucideSquareStack,
-  LayoutDashboard,          // Example for Logout, if needed in "More"
+  LayoutDashboard,
+  Lightbulb,
+  BrainCircuit,
+  Sparkles          // Example for Logout, if needed in "More"
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
@@ -143,10 +146,10 @@ export function Navigation() {
       description: "View conversations"
     },
     {
-        name: "Replies",
-        href: `/replies/${business_name}`,
-        icon: MailCheck,
-        description: "Review & reply"
+        name: "Co-Pilot",
+        href: `/copilot/${business_name}`,
+        icon: Sparkles,
+        description: "Business growth assistant"
     },
     {
       name: "Dashboard",
@@ -360,7 +363,7 @@ export function Navigation() {
                 </Link>
               </div>
               {[
-                { name: "Replies", href: `/replies/${business_name}`, icon: MailCheck },
+                { name: "Co-Pilot", href: `/copilot/${business_name}`, icon: Sparkles },
                 { name: "Profile", href: `/profile/${business_name}`, icon: UserCircle },
               ].map((item) => (
                 <Link

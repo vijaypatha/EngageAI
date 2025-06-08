@@ -13,7 +13,6 @@ import uuid
 import pytz # For robust timezone handling
 from typing import Optional
 
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
