@@ -228,19 +228,7 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     mock_customer_instance.id = customer_id
     mock_customer_instance.business_id = expected_customer_business_id
     mock_customer_instance.phone = expected_customer_phone
-
-    # Configure __getattr__ to explicitly handle business_id, phone, and id
-    def customer_getattr_handler(name):
-        if name == 'business_id':
-            return expected_customer_business_id
-        elif name == 'phone':
-            return expected_customer_phone
-        elif name == 'id':
-            return customer_id
-        # For any other attribute, raise AttributeError to mimic real object behavior
-        raise AttributeError(f"Mock object for Customer has no attribute {name!r}")
-
-    mock_customer_instance.__getattr__.side_effect = customer_getattr_handler # Corrected assignment
+    # __getattr__ manipulation removed, relying on direct attribute assignment.
 
     mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
@@ -288,18 +276,7 @@ def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock
     mock_customer_instance.id = customer_id
     mock_customer_instance.business_id = expected_customer_business_id
     mock_customer_instance.phone = expected_customer_phone_failure
-
-    # Configure __getattr__
-    def customer_getattr_handler_failure(name): # Unique name for handler
-        if name == 'business_id':
-            return expected_customer_business_id
-        elif name == 'phone':
-            return expected_customer_phone_failure
-        elif name == 'id':
-            return customer_id
-        raise AttributeError(f"Mock object for Customer has no attribute {name!r}")
-
-    mock_customer_instance.__getattr__.side_effect = customer_getattr_handler_failure # Corrected assignment
+    # __getattr__ manipulation removed, relying on direct attribute assignment.
 
     mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
