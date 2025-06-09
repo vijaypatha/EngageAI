@@ -31,7 +31,7 @@ async def opt_in(
             business_id=consent.business_id,
             customer_id=consent.customer_id
         )
-        return ConsentResponse.from_orm(consent_log)
+        return ConsentResponse.model_validate(consent_log)
     except Exception as e:
         logger.error(f"Error processing opt-in: {str(e)}")
         raise HTTPException(
@@ -52,7 +52,7 @@ async def opt_out(
             business_id=consent.business_id,
             customer_id=consent.customer_id
         )
-        return ConsentResponse.from_orm(consent_log)
+        return ConsentResponse.model_validate(consent_log)
     except Exception as e:
         logger.error(f"Error processing opt-out: {str(e)}")
         raise HTTPException(
@@ -92,7 +92,7 @@ async def get_consent_logs(
     logs = db.query(ConsentLog).filter(
         ConsentLog.business_id == business_id
     ).offset(skip).limit(limit).all()
-    return [ConsentResponse.from_orm(log) for log in logs]
+    return [ConsentResponse.model_validate(log) for log in logs]
 
 @router.post("/resend-optin/{customer_id}")
 async def resend_opt_in(

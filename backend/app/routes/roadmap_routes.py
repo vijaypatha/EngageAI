@@ -26,7 +26,7 @@ async def generate_roadmap(
     """Generate a roadmap of SMS messages for a customer"""
     try:
         roadmap = await roadmap_service.generate_roadmap(data)
-        return [RoadmapMessageResponse.from_orm(msg) for msg in roadmap]
+        return [RoadmapMessageResponse.model_validate(msg) for msg in roadmap]
     except Exception as e:
         logger.error(f"Error generating roadmap: {str(e)}")
         raise HTTPException(
@@ -43,7 +43,7 @@ async def get_roadmap(
     """Get roadmap messages for a customer"""
     try:
         roadmap = await roadmap_service.get_roadmap(customer_id, business_id)
-        return [RoadmapMessageResponse.from_orm(msg) for msg in roadmap]
+        return [RoadmapMessageResponse.model_validate(msg) for msg in roadmap]
     except Exception as e:
         logger.error(f"Error getting roadmap: {str(e)}")
         raise HTTPException(
@@ -60,7 +60,7 @@ async def update_roadmap_status(
     """Update status of a roadmap message"""
     try:
         roadmap = await roadmap_service.update_roadmap_status(roadmap_id, status)
-        return RoadmapMessageResponse.from_orm(roadmap)
+        return RoadmapMessageResponse.model_validate(roadmap)
     except Exception as e:
         logger.error(f"Error updating roadmap status: {str(e)}")
         raise HTTPException(

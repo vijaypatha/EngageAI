@@ -20,7 +20,7 @@ def create_engagement(
     db.add(db_engagement)
     db.commit()
     db.refresh(db_engagement)
-    return Engagement.from_orm(db_engagement)
+    return Engagement.model_validate(db_engagement)
 
 @router.get("/", response_model=List[Engagement])
 def get_engagements(
@@ -29,14 +29,14 @@ def get_engagements(
     db: Session = Depends(get_db)
 ):
     engagements = db.query(EngagementModel).offset(skip).limit(limit).all()
-    return [Engagement.from_orm(engagement) for engagement in engagements]
+    return [Engagement.model_validate(engagement) for engagement in engagements]
 
 @router.get("/{engagement_id}", response_model=Engagement)
 def get_engagement(engagement_id: int, db: Session = Depends(get_db)):
     engagement = db.query(EngagementModel).filter(EngagementModel.id == engagement_id).first()
     if not engagement:
         raise HTTPException(status_code=404, detail="Engagement not found")
-    return Engagement.from_orm(engagement)
+    return Engagement.model_validate(engagement)
 
 @router.put("/{engagement_id}", response_model=Engagement)
 def update_engagement(
@@ -53,7 +53,7 @@ def update_engagement(
     
     db.commit()
     db.refresh(db_engagement)
-    return Engagement.from_orm(db_engagement)
+    return Engagement.model_validate(db_engagement)
 
 @router.delete("/{engagement_id}")
 def delete_engagement(engagement_id: int, db: Session = Depends(get_db)):

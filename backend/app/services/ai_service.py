@@ -2,9 +2,9 @@
 import re
 import json
 import logging
-from datetime import datetime, timedelta, time 
-from typing import Dict, Any, Optional 
-import pytz 
+from datetime import datetime, timedelta, time, timezone # Added timezone
+from typing import Dict, Any, Optional
+import pytz
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -99,7 +99,7 @@ def parse_customer_notes(notes: str) -> dict:
                 if month_num and 1 <= month_num <= 12 and 1 <= day <= 31:
                     parsed_info['birthday_month'] = month_num
                     parsed_info['birthday_day'] = day
-                    today = datetime.utcnow().date() 
+                    today = datetime.now(timezone.utc).date()
                     current_year = today.year
                     try:
                         bday_this_year = datetime(current_year, month_num, day).date()
@@ -216,7 +216,7 @@ class AIService:
                 "parsed_notes_for_events": customer_notes_info, # Parsed specific events like birthday
                 "customer_timezone": customer.timezone 
             }
-            current_date_str = datetime.utcnow().strftime("%Y-%m-%d")
+            current_date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             logger.debug(f"AI_SERVICE_GR_V6: Business Context: {json.dumps(business_context, indent=2)}")
             logger.info(f"AI_SERVICE_GR_V6: Customer Context (with parsed_notes): {json.dumps(customer_context, indent=2)}") # Changed to INFO
             logger.info(f"AI_SERVICE_GR_V6: Current UTC Date for AI: {current_date_str}")
@@ -347,7 +347,7 @@ Output ONLY the JSON object: {{"messages": [...]}}. Each object: {{"days_from_to
                     logger.debug(f"{log_msg_prefix}: SendUTC: {scheduled_utc.isoformat()} for: {purpose}")
                 except Exception as e_date:
                     logger.error(f"{log_msg_prefix}: Date calc error: {e_date}", exc_info=True)
-                    scheduled_utc = datetime.utcnow().replace(tzinfo=pytz.UTC) + timedelta(days=idx+1, hours=1)
+                    scheduled_utc = datetime.now(timezone.utc) + timedelta(days=idx+1, hours=1) # Changed here
                     logger.warning(f"{log_msg_prefix}: Fallback SendUTC: {scheduled_utc.isoformat()}")
 
                 draft = RoadmapMessage(
@@ -359,7 +359,7 @@ Output ONLY the JSON object: {{"messages": [...]}}. Each object: {{"days_from_to
                 try: self.db.flush(); self.db.refresh(draft) 
                 except Exception as e_flush: self.db.rollback(); logger.error(f"{log_msg_prefix}: DB Error flushing: {e_flush}", exc_info=True); continue 
                 try:
-                    roadmap_drafts_for_response.append(RoadmapMessageResponse.from_orm(draft))
+                    roadmap_drafts_for_response.append(RoadmapMessageResponse.model_validate(draft))
                     successful_parses += 1 
                 except Exception as e_val: logger.error(f"{log_msg_prefix}: Pydantic validation draft ID {draft.id} failed: {e_val}", exc_info=True)
             
