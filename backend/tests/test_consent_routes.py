@@ -228,9 +228,9 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     customer_id = 1
     mock_customer_instance = MagicMock(spec=Customer)
     mock_customer_instance.id = customer_id
-    mock_customer_instance.business_id = mock_current_user_fixture.id
-    mock_customer_instance.phone = "+1234567899"
-    mock_db_session.query(Customer).filter().first.return_value = mock_customer_instance
+    mock_customer_instance.business_id = mock_current_user_fixture.id # Ensured
+    mock_customer_instance.phone = "+1234567899" # Ensured
+    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance # Made filter more specific
 
     mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
     mock_business_instance_for_route.id = mock_current_user_fixture.id
@@ -270,9 +270,9 @@ def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock
     customer_id = 1
     mock_customer_instance = MagicMock(spec=Customer)
     mock_customer_instance.id = customer_id
-    mock_customer_instance.business_id = mock_current_user_fixture.id
-    mock_customer_instance.phone = "+1234560000"
-    mock_db_session.query(Customer).filter().first.return_value = mock_customer_instance
+    mock_customer_instance.business_id = mock_current_user_fixture.id # Ensured
+    mock_customer_instance.phone = "+1234560000" # Ensured
+    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance # Made filter more specific
 
     mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
     mock_business_instance_for_route.id = mock_current_user_fixture.id
