@@ -1,11 +1,14 @@
 # Placeholder for test_backend.py
 
-import sys # Added sys
-import os # Added os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))) # Added project root to sys.path
+import sys
+import os
+# Add project root to sys.path to allow imports like 'from backend.app...'
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # Corrected import
-from backend.app.main import app # Corrected import from app.main to backend.app.main
+from backend.main import app # Corrected: main.py is in backend/, not backend/app/
 
 import pytest
 from fastapi.testclient import TestClient

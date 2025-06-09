@@ -1,31 +1,35 @@
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+# Add project root to sys.path to allow imports like 'from backend.app...'
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch # AsyncMock not needed as routes are sync
-from sqlalchemy.orm import Session # Only for type hinting if needed, not for direct use in tests
+from fastapi.testclient import TestClient # Required for test_app_client_fixture type hint
+from unittest.mock import MagicMock, patch
+from sqlalchemy.orm import Session
 
-from backend.main import app
-from backend.app.models import Message as MessageModel # Alias to avoid clash with schema
-from backend.app.models import BusinessProfile # For mock_current_user
-from backend.app.schemas import Message, MessageCreate, MessageUpdate # Message schema for response validation
-from backend.app.database import get_db
-from backend.app.auth import get_current_user
+# from backend.main import app # REMOVED - app will come from test_app_client_fixture
+from backend.app.models import Message as MessageModel
+from backend.app.models import BusinessProfile
+from backend.app.schemas import Message, MessageCreate, MessageUpdate
+from backend.app.database import get_db # Still needed for override key
+from backend.app.auth import get_current_user # Still needed for override key
 
-client = TestClient(app)
+# client = TestClient(app) # REMOVED
 
 @pytest.fixture(autouse=True)
 def setup_api_test_overrides(mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
-    app.dependency_overrides[get_db] = lambda: mock_db_session
-    app.dependency_overrides[get_current_user] = lambda: mock_current_user_fixture
+    from backend.main import app as main_app_for_overrides # Import app for overrides
+    main_app_for_overrides.dependency_overrides[get_db] = lambda: mock_db_session
+    main_app_for_overrides.dependency_overrides[get_current_user] = lambda: mock_current_user_fixture
     yield
-    app.dependency_overrides.clear()
+    main_app_for_overrides.dependency_overrides.clear()
 
 # Test Cases for Message Routes
 
-def test_create_message_success(mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
+def test_create_message_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile): # Added test_app_client_fixture
     # Arrange
     message_data = {
         "conversation_id": "some-uuid-string", # Assuming UUID is stored as string if not converted
@@ -59,7 +63,7 @@ def test_create_message_success(mock_db_session: MagicMock, mock_current_user_fi
     mock_db_session.commit = MagicMock()
 
     # Act
-    response = client.post("/messages/", json=message_data)
+    response = test_app_client_fixture.post("/messages/", json=message_data) # Used fixture
 
     # Assert
     assert response.status_code == 200 # The route returns Message, typically 200 for POST if not specified 201
@@ -73,7 +77,7 @@ def test_create_message_success(mock_db_session: MagicMock, mock_current_user_fi
     mock_db_session.refresh.assert_called_once()
 
 
-def test_create_message_validation_error():
+def test_create_message_validation_error(test_app_client_fixture: TestClient): # Added test_app_client_fixture
     # Arrange - payload missing required fields (e.g., content)
     # MessageCreate schema likely requires content, conversation_id, business_id, customer_id, message_type
     invalid_payload = {
@@ -81,12 +85,12 @@ def test_create_message_validation_error():
         # "content": "missing",
     }
     # Act
-    response = client.post("/messages/", json=invalid_payload)
+    response = test_app_client_fixture.post("/messages/", json=invalid_payload) # Used fixture
     # Assert
     assert response.status_code == 422 # FastAPI validation error
 
 
-def test_get_messages_success(mock_db_session: MagicMock):
+def test_get_messages_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     mock_msg1_model = MagicMock(spec=MessageModel)
     mock_msg1_model.id = 1; mock_msg1_model.content = "Msg1"
@@ -104,7 +108,7 @@ def test_get_messages_success(mock_db_session: MagicMock):
     mock_db_session.query(MessageModel).offset(0).limit(100).all.return_value = [mock_msg1_model, mock_msg2_model]
 
     # Act
-    response = client.get("/messages/?skip=0&limit=10")
+    response = test_app_client_fixture.get("/messages/?skip=0&limit=10") # Used fixture
 
     # Assert
     assert response.status_code == 200
@@ -114,17 +118,17 @@ def test_get_messages_success(mock_db_session: MagicMock):
     assert json_response[1]["content"] == "Msg2"
 
 
-def test_get_messages_empty(mock_db_session: MagicMock):
+def test_get_messages_empty(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     mock_db_session.query(MessageModel).offset(0).limit(100).all.return_value = []
     # Act
-    response = client.get("/messages/")
+    response = test_app_client_fixture.get("/messages/") # Used fixture
     # Assert
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_get_message_by_id_success(mock_db_session: MagicMock):
+def test_get_message_by_id_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     message_id = 1
     mock_msg_model = MagicMock(spec=MessageModel)
@@ -136,7 +140,7 @@ def test_get_message_by_id_success(mock_db_session: MagicMock):
 
     mock_db_session.query(MessageModel).filter().first.return_value = mock_msg_model
     # Act
-    response = client.get(f"/messages/{message_id}")
+    response = test_app_client_fixture.get(f"/messages/{message_id}") # Used fixture
     # Assert
     assert response.status_code == 200
     json_response = response.json()
@@ -144,18 +148,18 @@ def test_get_message_by_id_success(mock_db_session: MagicMock):
     assert json_response["content"] == "Specific Message"
 
 
-def test_get_message_by_id_not_found(mock_db_session: MagicMock):
+def test_get_message_by_id_not_found(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     non_existent_message_id = 999
     mock_db_session.query(MessageModel).filter().first.return_value = None
     # Act
-    response = client.get(f"/messages/{non_existent_message_id}")
+    response = test_app_client_fixture.get(f"/messages/{non_existent_message_id}") # Used fixture
     # Assert
     assert response.status_code == 404
     assert response.json() == {"detail": "Message not found"}
 
 
-def test_update_message_success(mock_db_session: MagicMock):
+def test_update_message_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     message_id = 1
     update_data = {"content": "Updated content", "status": "read"}
@@ -175,7 +179,7 @@ def test_update_message_success(mock_db_session: MagicMock):
     mock_db_session.refresh = MagicMock()
 
     # Act
-    response = client.put(f"/messages/{message_id}", json=update_data)
+    response = test_app_client_fixture.put(f"/messages/{message_id}", json=update_data) # Used fixture
 
     # Assert
     assert response.status_code == 200
@@ -192,19 +196,19 @@ def test_update_message_success(mock_db_session: MagicMock):
     assert json_response["status"] == "read"
 
 
-def test_update_message_not_found(mock_db_session: MagicMock):
+def test_update_message_not_found(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     message_id = 999
     update_data = {"content": "Doesn't matter"}
     mock_db_session.query(MessageModel).filter().first.return_value = None
     # Act
-    response = client.put(f"/messages/{message_id}", json=update_data)
+    response = test_app_client_fixture.put(f"/messages/{message_id}", json=update_data) # Used fixture
     # Assert
     assert response.status_code == 404
     assert response.json() == {"detail": "Message not found"}
 
 
-def test_delete_message_success(mock_db_session: MagicMock):
+def test_delete_message_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     message_id = 1
     mock_msg_to_delete = MagicMock(spec=MessageModel)
@@ -215,7 +219,7 @@ def test_delete_message_success(mock_db_session: MagicMock):
     mock_db_session.commit = MagicMock()
 
     # Act
-    response = client.delete(f"/messages/{message_id}")
+    response = test_app_client_fixture.delete(f"/messages/{message_id}") # Used fixture
 
     # Assert
     assert response.status_code == 200
@@ -224,12 +228,12 @@ def test_delete_message_success(mock_db_session: MagicMock):
     mock_db_session.commit.assert_called_once()
 
 
-def test_delete_message_not_found(mock_db_session: MagicMock):
+def test_delete_message_not_found(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     message_id = 999
     mock_db_session.query(MessageModel).filter().first.return_value = None
     # Act
-    response = client.delete(f"/messages/{message_id}")
+    response = test_app_client_fixture.delete(f"/messages/{message_id}") # Used fixture
     # Assert
     assert response.status_code == 404
     assert response.json() == {"detail": "Message not found"}
