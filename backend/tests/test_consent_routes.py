@@ -1,7 +1,7 @@
 # sys.path modifications removed
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, AsyncMock # patch will not be needed directly in tests now
+from unittest.mock import MagicMock, AsyncMock
 from fastapi import HTTPException
 from datetime import datetime, timezone
 
@@ -10,18 +10,18 @@ from app.models import BusinessProfile, Customer, ConsentLog, OptInStatus
 from app.schemas import ConsentResponse, ConsentCreate
 from app.database import get_db
 from app.auth import get_current_user
-from app.services.consent_service import ConsentService # For spec
-from app.routes.consent_routes import get_consent_service # Actual dependency to override
+from app.services.consent_service import ConsentService
+from app.routes.consent_routes import get_consent_service
 
 @pytest.fixture
-def mock_consent_service_for_routes(): # New fixture to provide the mock service instance
+def mock_consent_service_for_routes():
     return MagicMock(spec=ConsentService)
 
 @pytest.fixture(autouse=True)
 def setup_api_test_overrides(
     mock_db_session: MagicMock,
     mock_current_user_fixture: BusinessProfile,
-    mock_consent_service_for_routes: MagicMock # Inject the new fixture
+    mock_consent_service_for_routes: MagicMock
 ):
     from main import app as main_app_for_overrides
 
@@ -37,7 +37,7 @@ def setup_api_test_overrides(
 
 def test_opt_in_success(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    consent_data = {"phone_number": "+11234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"} # Corrected phone_number
+    consent_data = {"phone_number": "+11234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"}
     mock_consent_log = MagicMock(spec=ConsentLog)
     mock_consent_log.id = 1
     mock_consent_log.customer_id = consent_data["customer_id"]
@@ -62,15 +62,13 @@ def test_opt_in_success(test_app_client_fixture: TestClient, mock_consent_servic
     assert json_response["customer_id"] == consent_data["customer_id"]
     assert json_response["status"] == OptInStatus.OPTED_IN.value
     mock_consent_service_for_routes.handle_opt_in.assert_called_once_with(
-        phone_number=consent_data["phone_number"], # Added
+        phone_number=consent_data["phone_number"],
         customer_id=consent_data["customer_id"],
         business_id=consent_data["business_id"]
-        # method is defaulted by service, not passed by route directly with this name
     )
 
 def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    # Phone number format for consistency, though this test focuses on service error
     consent_data = {"phone_number": "+11234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"}
 
     mock_consent_service_for_routes.handle_opt_in = AsyncMock(side_effect=HTTPException(status_code=500, detail="Service Error"))
@@ -80,11 +78,11 @@ def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_consent_
 
     # Assert
     assert response.status_code == 500
-    assert response.json() == {"detail": "500: Service Error"} # Corrected detail
+    assert response.json() == {"detail": "500: Service Error"}
 
 def test_opt_out_success(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    consent_data = {"phone_number": "+11234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"} # Corrected phone_number
+    consent_data = {"phone_number": "+11234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"}
     mock_consent_log = MagicMock(spec=ConsentLog)
     mock_consent_log.id = 2
     mock_consent_log.customer_id = consent_data["customer_id"]
@@ -109,15 +107,14 @@ def test_opt_out_success(test_app_client_fixture: TestClient, mock_consent_servi
     assert json_response["customer_id"] == consent_data["customer_id"]
     assert json_response["status"] == OptInStatus.OPTED_OUT.value
     mock_consent_service_for_routes.handle_opt_out.assert_called_once_with(
-        phone_number=consent_data["phone_number"], # Added
+        phone_number=consent_data["phone_number"],
         customer_id=consent_data["customer_id"],
         business_id=consent_data["business_id"]
-        # method is defaulted by service
     )
 
 def test_check_consent_status_true(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    phone_number = "+11234567890" # Corrected phone_number for consistency if service normalizes/expects E.164
+    phone_number = "+11234567890"
     business_id = mock_current_user_fixture.id
 
     mock_consent_service_for_routes.check_consent = AsyncMock(return_value=True)
@@ -132,7 +129,7 @@ def test_check_consent_status_true(test_app_client_fixture: TestClient, mock_con
 
 def test_check_consent_status_false(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    phone_number = "+11234567890" # Corrected phone_number for consistency
+    phone_number = "+11234567890"
     business_id = mock_current_user_fixture.id
 
     mock_consent_service_for_routes.check_consent = AsyncMock(return_value=False)
@@ -147,7 +144,7 @@ def test_check_consent_status_false(test_app_client_fixture: TestClient, mock_co
 
 def test_check_consent_status_service_error(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    phone_number = "+11234567890" # Corrected phone_number for consistency
+    phone_number = "+11234567890"
     business_id = mock_current_user_fixture.id
 
     mock_consent_service_for_routes.check_consent = AsyncMock(side_effect=HTTPException(status_code=500, detail="Service error"))
@@ -157,11 +154,9 @@ def test_check_consent_status_service_error(test_app_client_fixture: TestClient,
 
     # Assert
     assert response.status_code == 500
-    assert response.json() == {"detail": "500: Service error"} # Corrected detail
+    assert response.json() == {"detail": "500: Service error"}
 
 def test_get_consent_logs_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
-    # This test does not use ConsentService, it tests direct DB access by the route.
-    # So, it does not need mock_consent_service_for_routes.
     # Arrange
     business_id = mock_current_user_fixture.id
     mock_log_1 = MagicMock(spec=ConsentLog)
@@ -202,7 +197,6 @@ def test_get_consent_logs_success(test_app_client_fixture: TestClient, mock_db_s
     mock_db_session.query.assert_called_once_with(ConsentLog)
 
 def test_get_consent_logs_empty(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
-    # This test also does not use ConsentService.
     # Arrange
     business_id = mock_current_user_fixture.id
     mock_query = MagicMock()
@@ -226,19 +220,20 @@ def test_get_consent_logs_empty(test_app_client_fixture: TestClient, mock_db_ses
 def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
     customer_id = 1
+    expected_customer_business_id = mock_current_user_fixture.id
+
     mock_customer_instance = MagicMock(spec=Customer)
     mock_customer_instance.id = customer_id
-    mock_customer_instance.business_id = mock_current_user_fixture.id # Ensured
-    mock_customer_instance.phone = "+1234567899" # Ensured
-    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance # Made filter more specific
+    mock_customer_instance.business_id = expected_customer_business_id
+    mock_customer_instance.phone = "+1234567899"
+
+    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
     mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
-    mock_business_instance_for_route.id = mock_current_user_fixture.id
+    mock_business_instance_for_route.id = expected_customer_business_id
     mock_business_instance_for_route.representative_name = "Test Rep"
     mock_business_instance_for_route.business_name = "Test Business Name"
     mock_business_instance_for_route.twilio_number = "+15005550006"
-    # Make BusinessProfile query mock specific
-    expected_customer_business_id = mock_customer_instance.business_id # or mock_current_user_fixture.id
     mock_db_session.query(BusinessProfile).filter(BusinessProfile.id == expected_customer_business_id).first.return_value = mock_business_instance_for_route
 
     mock_consent_service_for_routes.send_opt_in_sms = AsyncMock(return_value={"success": True, "message_sid": "SMmockresend"})
@@ -255,10 +250,10 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
         customer_id=mock_customer_instance.id
     )
 
-def test_resend_opt_in_customer_not_found(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_consent_service_for_routes: MagicMock): # Added mock_consent_service_for_routes, though not used if customer not found
+def test_resend_opt_in_customer_not_found(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_consent_service_for_routes: MagicMock):
     # Arrange
     customer_id = 999
-    mock_db_session.query(Customer).filter().first.return_value = None
+    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = None # Ensure filter is specific
 
     # Act
     response = test_app_client_fixture.post(f"/consent/resend-optin/{customer_id}")
@@ -270,19 +265,20 @@ def test_resend_opt_in_customer_not_found(test_app_client_fixture: TestClient, m
 def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
     customer_id = 1
+    expected_customer_business_id = mock_current_user_fixture.id
+
     mock_customer_instance = MagicMock(spec=Customer)
     mock_customer_instance.id = customer_id
-    mock_customer_instance.business_id = mock_current_user_fixture.id # Ensured
-    mock_customer_instance.phone = "+1234560000" # Ensured
-    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance # Made filter more specific
+    mock_customer_instance.business_id = expected_customer_business_id
+    mock_customer_instance.phone = "+1234560000"
+
+    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
     mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
-    mock_business_instance_for_route.id = mock_current_user_fixture.id
+    mock_business_instance_for_route.id = expected_customer_business_id
     mock_business_instance_for_route.representative_name = "Test Rep"
     mock_business_instance_for_route.business_name = "Test Business Name"
     mock_business_instance_for_route.twilio_number = "+15005550006"
-    # Make BusinessProfile query mock specific
-    expected_customer_business_id = mock_customer_instance.business_id # or mock_current_user_fixture.id
     mock_db_session.query(BusinessProfile).filter(BusinessProfile.id == expected_customer_business_id).first.return_value = mock_business_instance_for_route
 
     mock_consent_service_for_routes.send_opt_in_sms = AsyncMock(return_value={"success": False, "error": "Resend Service Test Failure"})
