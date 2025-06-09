@@ -62,9 +62,10 @@ def test_opt_in_success(test_app_client_fixture: TestClient, mock_consent_servic
     assert json_response["customer_id"] == consent_data["customer_id"]
     assert json_response["status"] == OptInStatus.OPTED_IN.value
     mock_consent_service_for_routes.handle_opt_in.assert_called_once_with(
+        phone_number=consent_data["phone_number"], # Added
         customer_id=consent_data["customer_id"],
-        business_id=consent_data["business_id"],
-        method_detail="API Opt-In"
+        business_id=consent_data["business_id"]
+        # method is defaulted by service, not passed by route directly with this name
     )
 
 def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
@@ -78,7 +79,7 @@ def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_consent_
 
     # Assert
     assert response.status_code == 500
-    assert response.json() == {"detail": "Service Error"}
+    assert response.json() == {"detail": "500: Service Error"} # Corrected detail
 
 def test_opt_out_success(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
@@ -107,9 +108,10 @@ def test_opt_out_success(test_app_client_fixture: TestClient, mock_consent_servi
     assert json_response["customer_id"] == consent_data["customer_id"]
     assert json_response["status"] == OptInStatus.OPTED_OUT.value
     mock_consent_service_for_routes.handle_opt_out.assert_called_once_with(
+        phone_number=consent_data["phone_number"], # Added
         customer_id=consent_data["customer_id"],
-        business_id=consent_data["business_id"],
-        method_detail="API Opt-Out"
+        business_id=consent_data["business_id"]
+        # method is defaulted by service
     )
 
 def test_check_consent_status_true(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
@@ -154,7 +156,7 @@ def test_check_consent_status_service_error(test_app_client_fixture: TestClient,
 
     # Assert
     assert response.status_code == 500
-    assert response.json() == {"detail": "Service error"}
+    assert response.json() == {"detail": "500: Service error"} # Corrected detail
 
 def test_get_consent_logs_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
     # This test does not use ConsentService, it tests direct DB access by the route.
