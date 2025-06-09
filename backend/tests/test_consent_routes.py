@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import HTTPException
 
 # Imports adjusted for running pytest from backend/
-from app.models import BusinessProfile, Customer, ConsentLog, OptInStatus # Changed
-from app.schemas import ConsentResponse, ConsentStatusResponse, OptInRequest, OptOutRequest, ResendOptInRequest # Changed
-from app.database import get_db # Changed
-from app.auth import get_current_user # Changed
-from app.services.consent_service import ConsentService # Changed
+from app.models import BusinessProfile, Customer, ConsentLog, OptInStatus
+from app.schemas import ConsentResponse, ConsentCreate # Corrected schemas
+from app.database import get_db
+from app.auth import get_current_user
+from app.services.consent_service import ConsentService
 
 @pytest.fixture(autouse=True)
 def setup_api_test_overrides(mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
