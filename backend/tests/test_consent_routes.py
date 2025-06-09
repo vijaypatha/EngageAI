@@ -237,7 +237,9 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     mock_business_instance_for_route.representative_name = "Test Rep"
     mock_business_instance_for_route.business_name = "Test Business Name"
     mock_business_instance_for_route.twilio_number = "+15005550006"
-    mock_db_session.query(BusinessProfile).filter().first.return_value = mock_business_instance_for_route
+    # Make BusinessProfile query mock specific
+    expected_customer_business_id = mock_customer_instance.business_id # or mock_current_user_fixture.id
+    mock_db_session.query(BusinessProfile).filter(BusinessProfile.id == expected_customer_business_id).first.return_value = mock_business_instance_for_route
 
     mock_consent_service_for_routes.send_opt_in_sms = AsyncMock(return_value={"success": True, "message_sid": "SMmockresend"})
 
@@ -279,7 +281,9 @@ def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock
     mock_business_instance_for_route.representative_name = "Test Rep"
     mock_business_instance_for_route.business_name = "Test Business Name"
     mock_business_instance_for_route.twilio_number = "+15005550006"
-    mock_db_session.query(BusinessProfile).filter().first.return_value = mock_business_instance_for_route
+    # Make BusinessProfile query mock specific
+    expected_customer_business_id = mock_customer_instance.business_id # or mock_current_user_fixture.id
+    mock_db_session.query(BusinessProfile).filter(BusinessProfile.id == expected_customer_business_id).first.return_value = mock_business_instance_for_route
 
     mock_consent_service_for_routes.send_opt_in_sms = AsyncMock(return_value={"success": False, "error": "Resend Service Test Failure"})
 
