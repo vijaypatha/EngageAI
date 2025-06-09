@@ -21,42 +21,14 @@ from app.models import (
 # Helper Fixtures
 @pytest.fixture
 def consent_service_instance(db: Session):
-    return ConsentService(db_session=db)
+    return ConsentService(db=db) # Corrected parameter name
 
-@pytest.fixture
-def test_business(db: Session):
-    business = BusinessProfile(
-        business_name="Test Service Business",
-        industry="Testing",
-        business_goal="Service Test Goal",
-        primary_services="Service Testing Services",
-        representative_name="Service Test Rep",
-        timezone="UTC",
-        twilio_number="+15005550006" # Example Twilio number
-    )
-    db.add(business)
-    db.commit()
-    db.refresh(business)
-    return business
-
-@pytest.fixture
-def test_customer(db: Session, test_business: BusinessProfile):
-    customer = Customer(
-        customer_name="Test Service Customer",
-        phone="+15005550007", # Example customer number, must be different from business
-        lifecycle_stage="Service Lead",
-        business_id=test_business.id,
-        sms_opt_in_status=OptInStatus.NOT_SET.value # Default
-    )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+# Local test_business and test_customer fixtures removed, will use mock_business and mock_customer from conftest.py
 
 # Test Cases
 
 @pytest.mark.asyncio
-async def test_send_double_optin_sms_customer_not_found(consent_service_instance: ConsentService, test_business: BusinessProfile):
+async def test_send_double_optin_sms_customer_not_found(consent_service_instance: ConsentService, mock_business: BusinessProfile): # Changed to mock_business
     # Arrange
     non_existent_customer_id = 99999
 
@@ -70,7 +42,7 @@ async def test_send_double_optin_sms_customer_not_found(consent_service_instance
     assert result == {"success": False, "message": "Customer not found"}
 
 @pytest.mark.asyncio
-async def test_send_double_optin_sms_business_not_found(consent_service_instance: ConsentService, test_customer: Customer):
+async def test_send_double_optin_sms_business_not_found(consent_service_instance: ConsentService, mock_customer: Customer): # Changed to mock_customer
     # Arrange
     non_existent_business_id = 99998
 
@@ -85,7 +57,7 @@ async def test_send_double_optin_sms_business_not_found(consent_service_instance
 
 @pytest.mark.asyncio
 async def test_send_double_optin_sms_success_new_conversation(
-    db: Session, consent_service_instance: ConsentService, test_business: BusinessProfile, test_customer: Customer
+    db: Session, consent_service_instance: ConsentService, mock_business: BusinessProfile, mock_customer: Customer # Changed
 ):
     # Arrange
     mock_twilio_sid = "SMxxxxxxxxxxxxxx"
@@ -136,7 +108,7 @@ async def test_send_double_optin_sms_success_new_conversation(
 
 @pytest.mark.asyncio
 async def test_send_double_optin_sms_success_existing_conversation(
-    db: Session, consent_service_instance: ConsentService, test_business: BusinessProfile, test_customer: Customer
+    db: Session, consent_service_instance: ConsentService, mock_business: BusinessProfile, mock_customer: Customer # Changed
 ):
     # Arrange
     # Create existing conversation
@@ -190,7 +162,7 @@ async def test_send_double_optin_sms_success_existing_conversation(
 
 @pytest.mark.asyncio
 async def test_send_double_optin_sms_twilio_failure(
-    db: Session, consent_service_instance: ConsentService, test_business: BusinessProfile, test_customer: Customer
+    db: Session, consent_service_instance: ConsentService, mock_business: BusinessProfile, mock_customer: Customer # Changed
 ):
     # Arrange
     with patch('app.services.consent_service.TwilioService.send_sms', new_callable=AsyncMock) as mock_send_sms:
@@ -227,7 +199,7 @@ async def test_send_double_optin_sms_twilio_failure(
 
 @pytest.mark.asyncio
 async def test_process_sms_response_opt_in(
-    db: Session, consent_service_instance: ConsentService, test_business: BusinessProfile, test_customer: Customer
+    db: Session, consent_service_instance: ConsentService, mock_business: BusinessProfile, mock_customer: Customer # Changed
 ):
     # Arrange
     # Create a pending consent log
@@ -262,7 +234,7 @@ async def test_process_sms_response_opt_in(
 
 @pytest.mark.asyncio
 async def test_process_sms_response_opt_out_global(
-    db: Session, consent_service_instance: ConsentService, test_business: BusinessProfile, test_customer: Customer
+    db: Session, consent_service_instance: ConsentService, mock_business: BusinessProfile, mock_customer: Customer # Changed
 ):
     # Arrange
     # Customer might be opted-in or pending
@@ -303,7 +275,7 @@ async def test_process_sms_response_opt_out_global(
 
 @pytest.mark.asyncio
 async def test_process_sms_response_no_pending_log(
-    db: Session, consent_service_instance: ConsentService, test_customer: Customer
+    db: Session, consent_service_instance: ConsentService, mock_customer: Customer # Changed
 ):
     # Arrange
     # Ensure no 'pending_confirmation' log for this customer
@@ -320,7 +292,7 @@ async def test_process_sms_response_no_pending_log(
     assert response is None # Or specific response indicating no action taken if service handles it differently
 
 @pytest.mark.asyncio
-async def test_check_consent_true(consent_service_instance: ConsentService, test_customer: Customer, db: Session):
+async def test_check_consent_true(consent_service_instance: ConsentService, mock_customer: Customer, db: Session): # Changed
     # Arrange
     test_customer.sms_opt_in_status = OptInStatus.OPTED_IN.value
     db.commit()
@@ -333,7 +305,7 @@ async def test_check_consent_true(consent_service_instance: ConsentService, test
     assert result is True
 
 @pytest.mark.asyncio
-async def test_check_consent_false(consent_service_instance: ConsentService, test_customer: Customer, db: Session):
+async def test_check_consent_false(consent_service_instance: ConsentService, mock_customer: Customer, db: Session): # Changed
     # Arrange
     test_customer.sms_opt_in_status = OptInStatus.OPTED_OUT.value
     db.commit()
@@ -346,7 +318,7 @@ async def test_check_consent_false(consent_service_instance: ConsentService, tes
     assert result is False
 
 @pytest.mark.asyncio
-async def test_get_consent_history(db: Session, consent_service_instance: ConsentService, test_business: BusinessProfile, test_customer: Customer):
+async def test_get_consent_history(db: Session, consent_service_instance: ConsentService, mock_business: BusinessProfile, mock_customer: Customer): # Changed
     # Arrange
     log1 = ConsentLog(customer_id=test_customer.id, business_id=test_business.id, method="sms", status="pending_confirmation", phone_number=test_customer.phone)
     log2 = ConsentLog(customer_id=test_customer.id, business_id=test_business.id, method="sms", status="opted_in", phone_number=test_customer.phone)
@@ -366,7 +338,7 @@ async def test_get_consent_history(db: Session, consent_service_instance: Consen
 
 
 @pytest.mark.asyncio
-async def test_handle_opt_in_manual(db: Session, consent_service_instance: ConsentService, test_customer: Customer):
+async def test_handle_opt_in_manual(db: Session, consent_service_instance: ConsentService, mock_customer: Customer): # Changed
     # Arrange
     # Customer starts as not opted-in
     test_customer.sms_opt_in_status = OptInStatus.NOT_SET.value
@@ -392,7 +364,7 @@ async def test_handle_opt_in_manual(db: Session, consent_service_instance: Conse
     assert test_customer.opted_in is True
 
 @pytest.mark.asyncio
-async def test_handle_opt_out_manual(db: Session, consent_service_instance: ConsentService, test_customer: Customer):
+async def test_handle_opt_out_manual(db: Session, consent_service_instance: ConsentService, mock_customer: Customer): # Changed
     # Arrange
     # Customer starts as opted-in
     test_customer.sms_opt_in_status = OptInStatus.OPTED_IN.value

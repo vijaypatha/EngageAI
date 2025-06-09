@@ -9,7 +9,7 @@ import uuid
 # Mock the celery tasks to avoid circular imports
 @pytest.fixture(autouse=True)
 def mock_celery_tasks():
-    with patch('app.routes.review.schedule_sms_task') as mock_task:
+    with patch('app.celery_tasks.process_scheduled_message_task') as mock_task: # Corrected patch path
         yield mock_task
 
 @pytest.fixture

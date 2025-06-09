@@ -22,9 +22,11 @@ def setup_api_test_overrides(mock_db_session: MagicMock, mock_current_user_fixtu
 
 # Test Cases
 
+from datetime import datetime, timezone # Added for mock_log_1 attributes
+
 def test_opt_in_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1}
+    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"} # Added method
     mock_consent_log = MagicMock(spec=ConsentLog)
     mock_consent_log.id = 1
     mock_consent_log.customer_id = consent_data["customer_id"]
@@ -54,9 +56,9 @@ def test_opt_in_success(test_app_client_fixture: TestClient, mock_db_session: Ma
     )
 
 
-def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_current_user_fixture: BusinessProfile): # Added test_app_client_fixture
+def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1}
+    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"} # Added method
 
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.handle_opt_in = AsyncMock(side_effect=HTTPException(status_code=500, detail="Service Error"))
@@ -72,9 +74,9 @@ def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_current_
     assert response.json() == {"detail": "Service Error"}
 
 
-def test_opt_out_success(test_app_client_fixture: TestClient, mock_current_user_fixture: BusinessProfile): # Added test_app_client_fixture
+def test_opt_out_success(test_app_client_fixture: TestClient, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1}
+    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"} # Added method
     mock_consent_log = MagicMock(spec=ConsentLog)
     mock_consent_log.id = 2
     mock_consent_log.customer_id = consent_data["customer_id"]
@@ -166,7 +168,18 @@ def test_get_consent_logs_success(test_app_client_fixture: TestClient, mock_db_s
     # Arrange
     business_id = mock_current_user_fixture.id
     mock_log_1 = MagicMock(spec=ConsentLog)
-    mock_log_1.id = 1; mock_log_1.customer_id = 1; mock_log_1.business_id = business_id; mock_log_1.phone_number="111"; mock_log_1.status="opted_in"; mock_log_1.method="api"
+    # Ensure all fields for ConsentResponse.from_orm are present and correctly typed
+    mock_log_1.id = 1
+    mock_log_1.customer_id = 1
+    mock_log_1.business_id = business_id
+    mock_log_1.phone_number = "+1112223333"
+    mock_log_1.status = OptInStatus.OPTED_IN.value
+    mock_log_1.method = "api_test"
+    mock_log_1.message_sid = "SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" # String
+    mock_log_1.created_at = datetime.now(timezone.utc)
+    mock_log_1.updated_at = datetime.now(timezone.utc)
+    mock_log_1.sent_at = datetime.now(timezone.utc)
+    mock_log_1.replied_at = datetime.now(timezone.utc)
     # Make it suitable for ConsentResponse.from_orm
     # For from_orm to work on a MagicMock, the attributes must exist.
     # For simplicity, we can also mock the from_orm call if the object is complex,
@@ -236,24 +249,45 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
 
     # Mock DB query for customer
     mock_db_session.query(Customer).filter().first.return_value = mock_customer_instance
-    # Mock DB query for business (done by get_current_user fixture)
+    # Mock DB query for customer
+    mock_db_session.query(Customer).filter().first.return_value = mock_customer_instance
+
+    # Mock DB query for business, which is called by the route
+    mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
+    mock_business_instance_for_route.id = mock_current_user_fixture.id # or mock_customer_instance.business_id
+    mock_business_instance_for_route.representative_name = "Test Rep"
+    mock_business_instance_for_route.business_name = "Test Business Name"
+    mock_business_instance_for_route.twilio_number = "+15005550006" # Required by service
+
+    # Simulate the chained calls for business query
+    # This specific mock setup depends on how exactly the filter is constructed in the route.
+    # A more general .first() mock if the filter is complex:
+    mock_business_query = MagicMock()
+    mock_business_query.first.return_value = mock_business_instance_for_route
+    mock_db_session.query(BusinessProfile).filter().first.return_value = mock_business_instance_for_route
+
 
     mock_service_instance = MagicMock(spec=ConsentService)
-    # Assuming send_double_optin_sms is the correct method from previous tests
-    mock_service_instance.send_double_optin_sms = AsyncMock(return_value={"success": True, "message_sid": "SMxxxx"})
+    mock_service_instance.send_opt_in_sms = AsyncMock(return_value={"success": True, "message_sid": "SMxxxx"}) # Changed to send_opt_in_sms
 
-    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service:
         mock_get_service.return_value = mock_service_instance
 
         # Act (customer_id is a path parameter, no JSON body for this POST)
-        response = test_app_client_fixture.post(f"/consent/resend-optin/{customer_id}") # Used fixture
+        response = test_app_client_fixture.post(f"/consent/resend-optin/{customer_id}")
 
     # Assert
     assert response.status_code == 200
-    assert response.json() == {"message": "Opt-in request resent successfully."} # Match exact message from route
-    mock_service_instance.send_double_optin_sms.assert_called_once_with(
-        customer_id=customer_id,
-        business_id=mock_current_user_fixture.id
+    assert response.json() == {"message": "Opt-in request resent successfully."} # Added period
+    mock_service_instance.send_opt_in_sms.assert_called_once_with( # Changed to send_opt_in_sms
+        # The route calls: consent_service.send_opt_in_sms(phone_number=customer.phone, business_id=business.id, customer_id=customer.id)
+        # Need to ensure mock_customer_instance has phone attribute if this is to be more precise.
+        # For now, checking business_id and customer_id is a good start.
+        # The actual send_opt_in_sms service method might take different params than send_double_optin_sms.
+        # Based on current route code:
+        phone_number=mock_customer_instance.phone, # Assuming mock_customer_instance has .phone
+        business_id=mock_business_instance_for_route.id,
+        customer_id=mock_customer_instance.id
     )
 
 
@@ -276,21 +310,31 @@ def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock
     mock_customer_instance = MagicMock(spec=Customer)
     mock_customer_instance.id = customer_id
     mock_customer_instance.business_id = mock_current_user_fixture.id
+    mock_customer_instance.phone = "+1234560000" # Added for send_opt_in_sms call
     mock_db_session.query(Customer).filter().first.return_value = mock_customer_instance
 
-    mock_service_instance = MagicMock(spec=ConsentService)
-    mock_service_instance.send_double_optin_sms = AsyncMock(return_value={"success": False, "message": "Twilio down"})
-    # Or mock_service_instance.send_double_optin_sms = AsyncMock(side_effect=Exception("Service internal error"))
-    # The route checks for `if not result.get("success")`.
+    # Mock BusinessProfile query as in the success case
+    mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
+    mock_business_instance_for_route.id = mock_current_user_fixture.id
+    mock_business_instance_for_route.representative_name = "Test Rep"
+    mock_business_instance_for_route.business_name = "Test Business Name"
+    mock_business_instance_for_route.twilio_number = "+15005550006"
+    mock_db_session.query(BusinessProfile).filter().first.return_value = mock_business_instance_for_route
 
-    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
+    mock_service_instance = MagicMock(spec=ConsentService)
+    # Route uses `await consent_service.send_opt_in_sms(...)`
+    # and then `if not result or not result.get("success")`
+    # So service should return a dict like `{"success": False, "error": "reason"}`
+    mock_service_instance.send_opt_in_sms = AsyncMock(return_value={"success": False, "error": "Service Test Failure"}) # Changed to send_opt_in_sms and error key
+
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service:
         mock_get_service.return_value = mock_service_instance
 
         # Act
-        response = test_app_client_fixture.post(f"/consent/resend-optin/{customer_id}") # Used fixture
+        response = test_app_client_fixture.post(f"/consent/resend-optin/{customer_id}")
 
     # Assert
-    assert response.status_code == 500 # As per route's handling of service failure
-    assert response.json() == {"detail": "Failed to resend opt-in request. Reason: Twilio down"}
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Failed to resend opt-in request. Reason: Service Test Failure"} # Updated expected message
 
 # Final newline for PEP8
