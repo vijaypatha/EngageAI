@@ -1,6 +1,12 @@
-# sys.path modifications removed as pytest will be run from backend/
+import sys
+import os
+# Add the 'backend' directory to sys.path to allow 'from app...' imports
+BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
 import pytest # Ensure pytest is imported
-import os # os might still be used by other parts of the file (e.g., SQLALCHEMY_DATABASE_URL)
+# os is already imported above
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session

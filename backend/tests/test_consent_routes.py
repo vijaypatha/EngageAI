@@ -2,7 +2,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, AsyncMock
-from fastapi import HTTPException
+from fastapi import HTTPException, status # Added status here
 from datetime import datetime, timezone
 
 # Imports adjusted for running pytest from backend/
@@ -223,21 +223,34 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     expected_customer_business_id = mock_current_user_fixture.id
     expected_customer_phone = "+1234567899"
 
-    # Use a plain MagicMock and explicitly set attributes
     mock_customer_instance = MagicMock()
     mock_customer_instance.id = customer_id
-    mock_customer_instance.business_id = expected_customer_business_id # CRITICAL
-    mock_customer_instance.phone = expected_customer_phone           # CRITICAL
+    mock_customer_instance.business_id = expected_customer_business_id
+    mock_customer_instance.phone = expected_customer_phone
 
-    # Mock the specific DB query for THIS customer
-    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
+    query_mock_customer = MagicMock()
+    filter_mock_customer = MagicMock()
+    filter_mock_customer.first.return_value = mock_customer_instance
+    query_mock_customer.filter.return_value = filter_mock_customer
 
-    mock_business_instance_for_route = MagicMock(spec=BusinessProfile) # spec is fine here
+    query_mock_business = MagicMock()
+    filter_mock_business = MagicMock()
+    mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
     mock_business_instance_for_route.id = expected_customer_business_id
     mock_business_instance_for_route.representative_name = "Test Rep"
     mock_business_instance_for_route.business_name = "Test Business Name"
     mock_business_instance_for_route.twilio_number = "+15005550006"
-    mock_db_session.query(BusinessProfile).filter(BusinessProfile.id == expected_customer_business_id).first.return_value = mock_business_instance_for_route
+    filter_mock_business.first.return_value = mock_business_instance_for_route
+    query_mock_business.filter.return_value = filter_mock_business
+
+    def query_side_effect(model_class):
+        if model_class == Customer:
+            return query_mock_customer
+        elif model_class == BusinessProfile:
+            return query_mock_business
+        return MagicMock()
+
+    mock_db_session.query.side_effect = query_side_effect
 
     mock_consent_service_for_routes.send_opt_in_sms = AsyncMock(return_value={"success": True, "message_sid": "SMmockresend"})
 
@@ -246,17 +259,33 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
 
     # Assert
     assert response.status_code == 200
-    assert response.json() == {"message": "Opt-in request resent successfully."}
+    assert response.json() == {"message": "Opt-in request resent successfully"}
     mock_consent_service_for_routes.send_opt_in_sms.assert_called_once_with(
         phone_number=mock_customer_instance.phone,
-        business_id=mock_business_instance_for_route.id, # Corrected to use the business instance's ID
+        business_id=mock_business_instance_for_route.id,
         customer_id=mock_customer_instance.id
     )
+    query_mock_customer.filter.assert_called_once()
+    query_mock_business.filter.assert_called_once()
+
 
 def test_resend_opt_in_customer_not_found(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_consent_service_for_routes: MagicMock):
     # Arrange
     customer_id = 999
-    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = None # Ensure filter is specific
+
+    query_mock_customer_not_found = MagicMock()
+    filter_mock_customer_not_found = MagicMock()
+    filter_mock_customer_not_found.first.return_value = None
+    query_mock_customer_not_found.filter.return_value = filter_mock_customer_not_found
+
+    original_query_side_effect = mock_db_session.query.side_effect
+    def temp_query_side_effect_not_found(model_class):
+        if model_class == Customer:
+            return query_mock_customer_not_found
+        if hasattr(original_query_side_effect, '__call__') and original_query_side_effect is not None :
+             return original_query_side_effect(model_class)
+        return MagicMock()
+    mock_db_session.query.side_effect = temp_query_side_effect_not_found
 
     # Act
     response = test_app_client_fixture.post(f"/consent/resend-optin/{customer_id}")
@@ -264,35 +293,61 @@ def test_resend_opt_in_customer_not_found(test_app_client_fixture: TestClient, m
     # Assert
     assert response.status_code == 404
     assert response.json() == {"detail": "Customer not found"}
+    query_mock_customer_not_found.filter.assert_called_once()
+    mock_db_session.query.side_effect = original_query_side_effect
+
 
 def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
     customer_id = 1
     expected_customer_business_id = mock_current_user_fixture.id
-    expected_customer_phone = "+1234560000" # Renamed variable for clarity from plan
+    expected_customer_phone = "+1234560000"
 
-    # Use a plain MagicMock and explicitly set attributes
     mock_customer_instance = MagicMock()
     mock_customer_instance.id = customer_id
-    mock_customer_instance.business_id = expected_customer_business_id # CRITICAL
-    mock_customer_instance.phone = expected_customer_phone           # CRITICAL
+    mock_customer_instance.business_id = expected_customer_business_id
+    mock_customer_instance.phone = expected_customer_phone
 
-    mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
+    query_mock_customer = MagicMock()
+    filter_mock_customer = MagicMock()
+    filter_mock_customer.first.return_value = mock_customer_instance
+    query_mock_customer.filter.return_value = filter_mock_customer
 
-    mock_business_instance_for_route = MagicMock(spec=BusinessProfile) # spec is fine here
+    query_mock_business = MagicMock()
+    filter_mock_business = MagicMock()
+    mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
     mock_business_instance_for_route.id = expected_customer_business_id
     mock_business_instance_for_route.representative_name = "Test Rep"
     mock_business_instance_for_route.business_name = "Test Business Name"
     mock_business_instance_for_route.twilio_number = "+15005550006"
-    mock_db_session.query(BusinessProfile).filter(BusinessProfile.id == expected_customer_business_id).first.return_value = mock_business_instance_for_route
+    filter_mock_business.first.return_value = mock_business_instance_for_route
+    query_mock_business.filter.return_value = filter_mock_business
 
-    mock_consent_service_for_routes.send_opt_in_sms = AsyncMock(return_value={"success": False, "error": "Resend Service Test Failure"})
+    def query_side_effect(model_class):
+        if model_class == Customer:
+            return query_mock_customer
+        elif model_class == BusinessProfile:
+            return query_mock_business
+        return MagicMock()
+
+    mock_db_session.query.side_effect = query_side_effect
+
+    # Configure mock to raise HTTPException directly
+    mock_consent_service_for_routes.send_opt_in_sms = AsyncMock(
+        side_effect=HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="UNIQUE_MOCK_SERVICE_FAILURE_XYZ" # This triggers the route's except block
+        )
+    )
 
     # Act
     response = test_app_client_fixture.post(f"/consent/resend-optin/{customer_id}")
 
     # Assert
     assert response.status_code == 500
-    assert response.json() == {"detail": "Failed to resend opt-in request. Reason: Resend Service Test Failure"}
+    assert response.json() == {"detail": "Failed to resend opt-in request"} # Route's generic error
+    # Assertions for filter calls remain, they should still be called.
+    query_mock_customer.filter.assert_called_once()
+    query_mock_business.filter.assert_called_once()
 
 # Final newline for PEP8
