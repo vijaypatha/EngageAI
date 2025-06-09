@@ -1,27 +1,20 @@
-import sys
-import os
-# Add project root to sys.path to allow imports like 'from backend.app...'
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-import pytest
-from fastapi.testclient import TestClient # Required for test_app_client_fixture type hint
+# sys.path modifications removed
+import pytest # Ensure pytest is imported
+# import os # Not needed if sys.path block is removed
+from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
 from sqlalchemy.orm import Session
 
-# from backend.main import app # REMOVED - app will come from test_app_client_fixture
-from backend.app.models import Message as MessageModel
-from backend.app.models import BusinessProfile
-from backend.app.schemas import Message, MessageCreate, MessageUpdate
-from backend.app.database import get_db # Still needed for override key
-from backend.app.auth import get_current_user # Still needed for override key
-
-# client = TestClient(app) # REMOVED
+# Imports adjusted for running pytest from backend/
+from app.models import Message as MessageModel # Changed
+from app.models import BusinessProfile # Changed
+from app.schemas import Message, MessageCreate, MessageUpdate # Changed
+from app.database import get_db # Changed
+from app.auth import get_current_user # Changed
 
 @pytest.fixture(autouse=True)
 def setup_api_test_overrides(mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
-    from backend.main import app as main_app_for_overrides # Import app for overrides
+    from main import app as main_app_for_overrides # Changed from backend.main
     main_app_for_overrides.dependency_overrides[get_db] = lambda: mock_db_session
     main_app_for_overrides.dependency_overrides[get_current_user] = lambda: mock_current_user_fixture
     yield

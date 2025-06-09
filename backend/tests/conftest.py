@@ -1,15 +1,11 @@
-import sys # Added
-import os # Added
-# Add project root to sys.path to allow imports like 'from backend.app...'
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# sys.path modifications removed as pytest will be run from backend/
+import pytest # Ensure pytest is imported
+import os # os might still be used by other parts of the file (e.g., SQLALCHEMY_DATABASE_URL)
 
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from backend.app.database import Base # Corrected import
-from backend.app.models import BusinessProfile, Customer  # Corrected import
+from app.database import Base # Changed from backend.app.database
+from app.models import BusinessProfile, Customer  # Changed from backend.app.models
 from unittest.mock import MagicMock
 
 # Use SQLite for testing
@@ -89,12 +85,11 @@ def mock_current_user_fixture():
 
 # Added TestClient and app import for the new fixture
 from fastapi.testclient import TestClient
-# sys.path modification at the top of the file should handle path discovery for 'backend.main'
+# sys.path modification removed
 
 @pytest.fixture(scope="session") # Using session scope
 def test_app_client_fixture():
     # Imports app here to delay loading until fixture is used.
-    # This can help with issues related to model loading order or app configuration.
-    from backend.main import app # This import path is correct
+    from main import app # Changed from backend.main
     with TestClient(app) as client:
         yield client

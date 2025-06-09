@@ -1,30 +1,20 @@
-import sys
-import os
-# Add project root to sys.path to allow imports like 'from backend.app...'
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-import pytest
+# sys.path modifications removed
+import pytest # Ensure pytest is imported
+# import os # Not needed if sys.path block is removed
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import HTTPException
 
-# Adjust the import path for 'app' if your main.py is not in 'backend/' directory directly accessible as 'main'
-# Assuming 'backend' is the current working directory for tests or PYTHONPATH is set up accordingly.
-# from backend.main import app # REMOVED - app will come from test_app_client_fixture via conftest.py
-from backend.app.models import BusinessProfile, Customer, ConsentLog, OptInStatus
-from backend.app.schemas import ConsentResponse, ConsentStatusResponse, OptInRequest, OptOutRequest, ResendOptInRequest
-from backend.app.database import get_db # Still needed for override key
-from backend.app.auth import get_current_user # Corrected path, still needed for override key
-from backend.app.services.consent_service import ConsentService # For spec in mocks
-
-# client = TestClient(app) # REMOVED - client will be injected by test_app_client_fixture
+# Imports adjusted for running pytest from backend/
+from app.models import BusinessProfile, Customer, ConsentLog, OptInStatus # Changed
+from app.schemas import ConsentResponse, ConsentStatusResponse, OptInRequest, OptOutRequest, ResendOptInRequest # Changed
+from app.database import get_db # Changed
+from app.auth import get_current_user # Changed
+from app.services.consent_service import ConsentService # Changed
 
 @pytest.fixture(autouse=True)
 def setup_api_test_overrides(mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
-    # Import app here, similar to how test_app_client_fixture does it, to ensure consistency.
-    from backend.main import app as main_app_for_overrides # Use the correct app import path
+    from main import app as main_app_for_overrides # Changed from backend.main
     main_app_for_overrides.dependency_overrides[get_db] = lambda: mock_db_session
     main_app_for_overrides.dependency_overrides[get_current_user] = lambda: mock_current_user_fixture
     yield
@@ -32,7 +22,7 @@ def setup_api_test_overrides(mock_db_session: MagicMock, mock_current_user_fixtu
 
 # Test Cases
 
-def test_opt_in_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile): # Added test_app_client_fixture
+def test_opt_in_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
     consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1}
     mock_consent_log = MagicMock(spec=ConsentLog)
@@ -43,11 +33,10 @@ def test_opt_in_success(test_app_client_fixture: TestClient, mock_db_session: Ma
     mock_consent_log.status = OptInStatus.OPTED_IN.value
     mock_consent_log.method = "api_request"
 
-    # Mock the service that the route calls
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.handle_opt_in = AsyncMock(return_value=mock_consent_log)
 
-    with patch('backend.app.routes.consent_routes.get_consent_service') as mock_get_service:
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
         mock_get_service.return_value = mock_service_instance
 
         # Act
@@ -72,7 +61,7 @@ def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_current_
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.handle_opt_in = AsyncMock(side_effect=HTTPException(status_code=500, detail="Service Error"))
 
-    with patch('backend.app.routes.consent_routes.get_consent_service') as mock_get_service:
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
         mock_get_service.return_value = mock_service_instance
 
         # Act
@@ -97,7 +86,7 @@ def test_opt_out_success(test_app_client_fixture: TestClient, mock_current_user_
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.handle_opt_out = AsyncMock(return_value=mock_consent_log)
 
-    with patch('backend.app.routes.consent_routes.get_consent_service') as mock_get_service:
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
         mock_get_service.return_value = mock_service_instance
 
         # Act
@@ -123,7 +112,7 @@ def test_check_consent_status_true(test_app_client_fixture: TestClient, mock_cur
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.check_consent = AsyncMock(return_value=True)
 
-    with patch('backend.app.routes.consent_routes.get_consent_service') as mock_get_service:
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
         mock_get_service.return_value = mock_service_instance
 
         # Act
@@ -143,7 +132,7 @@ def test_check_consent_status_false(test_app_client_fixture: TestClient, mock_cu
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.check_consent = AsyncMock(return_value=False)
 
-    with patch('backend.app.routes.consent_routes.get_consent_service') as mock_get_service:
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
         mock_get_service.return_value = mock_service_instance
 
         # Act
@@ -162,7 +151,7 @@ def test_check_consent_status_service_error(test_app_client_fixture: TestClient,
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.check_consent = AsyncMock(side_effect=HTTPException(status_code=500, detail="Service error"))
 
-    with patch('backend.app.routes.consent_routes.get_consent_service') as mock_get_service:
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
         mock_get_service.return_value = mock_service_instance
 
         # Act
@@ -253,7 +242,7 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     # Assuming send_double_optin_sms is the correct method from previous tests
     mock_service_instance.send_double_optin_sms = AsyncMock(return_value={"success": True, "message_sid": "SMxxxx"})
 
-    with patch('backend.app.routes.consent_routes.get_consent_service') as mock_get_service:
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
         mock_get_service.return_value = mock_service_instance
 
         # Act (customer_id is a path parameter, no JSON body for this POST)
@@ -294,7 +283,7 @@ def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock
     # Or mock_service_instance.send_double_optin_sms = AsyncMock(side_effect=Exception("Service internal error"))
     # The route checks for `if not result.get("success")`.
 
-    with patch('backend.app.routes.consent_routes.get_consent_service') as mock_get_service:
+    with patch('app.routes.consent_routes.get_consent_service') as mock_get_service: # Changed patch path
         mock_get_service.return_value = mock_service_instance
 
         # Act

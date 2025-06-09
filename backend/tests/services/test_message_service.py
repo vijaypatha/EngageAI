@@ -1,28 +1,21 @@
-import sys
-import os
-# Add project root to sys.path to allow imports like 'from backend.app...'
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-import pytest
+# sys.path modifications removed
+import pytest # Ensure pytest is imported
+# import os # os might not be needed if PROJECT_ROOT and its usage is removed
 from unittest.mock import patch, AsyncMock, MagicMock
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from datetime import datetime, timedelta, timezone
 
-from backend.app.services.message_service import MessageService # Corrected import path
-from backend.app.models import (
+from app.services.message_service import MessageService # Changed from backend.app...
+from app.models import ( # Changed from backend.app...
     Message,
     Customer,
     BusinessProfile,
-    # Conversation, # Not directly used by MessageService methods
     RoadmapMessage,
-    # Engagement, # Not directly used
     ConsentLog,
     OptInStatus,
-    MessageTypeEnum, # Actual service uses string literals like "scheduled"
-    MessageStatusEnum # Actual service uses string literals like "sent"
+    MessageTypeEnum,
+    MessageStatusEnum
 )
 # Schemas are not directly used in service method signatures/returns shown
 
