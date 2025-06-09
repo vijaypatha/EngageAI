@@ -4,13 +4,16 @@ import pytest # Ensure pytest is imported
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
 from sqlalchemy.orm import Session
+import uuid # Added import for uuid
+from datetime import datetime, timezone # Added for datetime objects in mocks
 
 # Imports adjusted for running pytest from backend/
-from app.models import Message as MessageModel # Changed
-from app.models import BusinessProfile # Changed
-from app.schemas import Message, MessageCreate, MessageUpdate # Changed
-from app.database import get_db # Changed
-from app.auth import get_current_user # Changed
+from app.models import Message as MessageModel
+from app.models import BusinessProfile
+from app.models import MessageTypeEnum, MessageStatusEnum # Added enum imports
+from app.schemas import Message, MessageCreate, MessageUpdate
+from app.database import get_db
+from app.auth import get_current_user
 
 @pytest.fixture(autouse=True)
 def setup_api_test_overrides(mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
@@ -22,15 +25,15 @@ def setup_api_test_overrides(mock_db_session: MagicMock, mock_current_user_fixtu
 
 # Test Cases for Message Routes
 
-def test_create_message_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile): # Added test_app_client_fixture
+def test_create_message_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
     message_data = {
-        "conversation_id": "some-uuid-string", # Assuming UUID is stored as string if not converted
-        "business_id": mock_current_user_fixture.id, # Ensure business_id matches current_user or is authorized
+        "conversation_id": str(uuid.uuid4()), # Use a valid UUID string
+        "business_id": mock_current_user_fixture.id,
         "customer_id": 1,
         "content": "Hello from test_create_message_success",
-        "message_type": "outbound",
-        # status, parent_id, scheduled_time, sent_at, is_hidden, message_metadata can be omitted if optional
+        "message_type": MessageTypeEnum.OUTBOUND.value, # Use enum value
+        # status will use default from Pydantic model if not provided
     }
     # The route uses MessageModel(**message.model_dump())
     # The mock_db_session.add() will receive an instance of MessageModel.
@@ -86,17 +89,26 @@ def test_create_message_validation_error(test_app_client_fixture: TestClient): #
 def test_get_messages_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     mock_msg1_model = MagicMock(spec=MessageModel)
-    mock_msg1_model.id = 1; mock_msg1_model.content = "Msg1"
-    # Add all fields Message.from_orm would access
-    from datetime import datetime, timezone
-    mock_msg1_model.conversation_id = "uuid1"; mock_msg1_model.business_id = 1; mock_msg1_model.customer_id = 1;
-    mock_msg1_model.message_type = "outbound"; mock_msg1_model.status = "sent"; mock_msg1_model.created_at = datetime.now(timezone.utc)
-
+    mock_msg1_model.id = 1
+    mock_msg1_model.content = "Msg1"
+    mock_msg1_model.conversation_id = uuid.uuid4() # Use uuid.UUID object
+    mock_msg1_model.business_id = 1
+    mock_msg1_model.customer_id = 1
+    mock_msg1_model.message_type = MessageTypeEnum.OUTBOUND.value # Use enum value
+    mock_msg1_model.status = MessageStatusEnum.SENT.value # Use enum value
+    mock_msg1_model.created_at = datetime.now(timezone.utc)
+    mock_msg1_model.message_metadata = None # Set to None as it's optional
 
     mock_msg2_model = MagicMock(spec=MessageModel)
-    mock_msg2_model.id = 2; mock_msg2_model.content = "Msg2"
-    mock_msg2_model.conversation_id = "uuid2"; mock_msg2_model.business_id = 1; mock_msg2_model.customer_id = 2;
-    mock_msg2_model.message_type = "inbound"; mock_msg2_model.status = "delivered"; mock_msg2_model.created_at = datetime.now(timezone.utc)
+    mock_msg2_model.id = 2
+    mock_msg2_model.content = "Msg2"
+    mock_msg2_model.conversation_id = uuid.uuid4() # Use uuid.UUID object
+    mock_msg2_model.business_id = 1
+    mock_msg2_model.customer_id = 2
+    mock_msg2_model.message_type = MessageTypeEnum.INBOUND.value # Use enum value
+    mock_msg2_model.status = MessageStatusEnum.DELIVERED.value # Use enum value
+    mock_msg2_model.created_at = datetime.now(timezone.utc)
+    mock_msg2_model.message_metadata = None # Set to None
 
     mock_db_session.query(MessageModel).offset(0).limit(100).all.return_value = [mock_msg1_model, mock_msg2_model]
 
@@ -125,11 +137,15 @@ def test_get_message_by_id_success(test_app_client_fixture: TestClient, mock_db_
     # Arrange
     message_id = 1
     mock_msg_model = MagicMock(spec=MessageModel)
-    mock_msg_model.id = message_id; mock_msg_model.content = "Specific Message"
-    from datetime import datetime, timezone
-    mock_msg_model.conversation_id = "uuid1"; mock_msg_model.business_id = 1; mock_msg_model.customer_id = 1;
-    mock_msg_model.message_type = "outbound"; mock_msg_model.status = "sent"; mock_msg_model.created_at = datetime.now(timezone.utc)
-
+    mock_msg_model.id = message_id
+    mock_msg_model.content = "Specific Message"
+    mock_msg_model.conversation_id = uuid.uuid4() # Use uuid.UUID object
+    mock_msg_model.business_id = 1
+    mock_msg_model.customer_id = 1
+    mock_msg_model.message_type = MessageTypeEnum.OUTBOUND.value # Use enum value
+    mock_msg_model.status = MessageStatusEnum.SENT.value # Use enum value
+    mock_msg_model.created_at = datetime.now(timezone.utc)
+    mock_msg_model.message_metadata = None # Set to None
 
     mock_db_session.query(MessageModel).filter().first.return_value = mock_msg_model
     # Act
@@ -155,17 +171,19 @@ def test_get_message_by_id_not_found(test_app_client_fixture: TestClient, mock_d
 def test_update_message_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
     # Arrange
     message_id = 1
-    update_data = {"content": "Updated content", "status": "read"}
+    update_data = {"content": "Updated content", "status": MessageStatusEnum.DELIVERED.value} # Use enum value
 
     mock_existing_msg = MagicMock(spec=MessageModel)
     mock_existing_msg.id = message_id
     mock_existing_msg.content = "Original content"
-    mock_existing_msg.status = "sent"
-    # Add other fields needed for from_orm
-    from datetime import datetime, timezone
-    mock_existing_msg.conversation_id = "uuid1"; mock_existing_msg.business_id = 1; mock_existing_msg.customer_id = 1;
-    mock_existing_msg.message_type = "outbound"; mock_existing_msg.created_at = datetime.now(timezone.utc)
-
+    # Ensure mock_existing_msg has all fields needed for from_orm and valid types
+    mock_existing_msg.conversation_id = uuid.uuid4()
+    mock_existing_msg.business_id = 1
+    mock_existing_msg.customer_id = 1
+    mock_existing_msg.message_type = MessageTypeEnum.OUTBOUND.value # Initial valid type
+    mock_existing_msg.status = MessageStatusEnum.SENT.value # Initial valid status
+    mock_existing_msg.created_at = datetime.now(timezone.utc)
+    mock_existing_msg.message_metadata = None
 
     mock_db_session.query(MessageModel).filter().first.return_value = mock_existing_msg
     mock_db_session.commit = MagicMock()
@@ -179,14 +197,14 @@ def test_update_message_success(test_app_client_fixture: TestClient, mock_db_ses
     # Check that setattr was called on the mock_existing_msg (or that its attributes changed)
     # The route code does: for field, value in message.model_dump(exclude_unset=True).items(): setattr(db_message, field, value)
     assert mock_existing_msg.content == "Updated content"
-    assert mock_existing_msg.status == "read"
+    assert mock_existing_msg.status == MessageStatusEnum.DELIVERED.value # Check against new enum value
 
     mock_db_session.commit.assert_called_once()
     mock_db_session.refresh.assert_called_once_with(mock_existing_msg)
 
     json_response = response.json()
     assert json_response["content"] == "Updated content"
-    assert json_response["status"] == "read"
+    assert json_response["status"] == MessageStatusEnum.DELIVERED.value # Check against new enum value
 
 
 def test_update_message_not_found(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture

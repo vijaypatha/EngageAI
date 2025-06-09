@@ -49,7 +49,17 @@ async def test_create_message_success(db: Session, message_service_instance: Mes
     assert created_message.business_id == mock_business.id
     assert created_message.message_type == message_type
     assert created_message.status == "scheduled"
-    assert created_message.scheduled_time == scheduled_at
+
+    # Robust datetime comparison
+    if created_message.scheduled_time.tzinfo is None and scheduled_at.tzinfo is not None:
+        # If DB stores naive but it's meant to be UTC, compare after making test value naive UTC
+        assert created_message.scheduled_time == scheduled_at.replace(tzinfo=None)
+    elif created_message.scheduled_time.tzinfo is not None and scheduled_at.tzinfo is None:
+        # If DB stores aware but test value was naive UTC
+        assert created_message.scheduled_time == scheduled_at.replace(tzinfo=timezone.utc)
+    else:
+        # Both are naive or both are aware and should be comparable
+        assert created_message.scheduled_time == scheduled_at
 
     db_message = db.query(Message).get(created_message.id)
     assert db_message is not None
