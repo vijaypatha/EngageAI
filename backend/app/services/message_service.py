@@ -91,7 +91,7 @@ class MessageService:
             customer_id=customer_id,
             business_id=business_id,
             content=content,
-            scheduled_time=scheduled_time or datetime.utcnow(),
+            scheduled_time=scheduled_time or datetime.now(timezone.utc),
             message_type=message_type,
             status="scheduled"
         )
@@ -110,7 +110,7 @@ class MessageService:
         if message:
             message.status = status
             if status == "sent":
-                message.sent_at = datetime.utcnow()
+                message.sent_at = datetime.now(timezone.utc)
             self.db.commit()
             self.db.refresh(message)
         return message

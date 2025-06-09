@@ -2,7 +2,7 @@
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, text
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone # Added timezone
 from typing import List, Dict, Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import joinedload
@@ -54,8 +54,8 @@ class CoPilotGrowthOpportunityService:
         log_prefix = f"[GrowthSvc-Referral B:{business_id}]"
         logger.info(f"{log_prefix} Starting referral opportunity analysis.")
 
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-        sixty_days_ago = datetime.utcnow() - timedelta(days=60)
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        sixty_days_ago = datetime.now(timezone.utc) - timedelta(days=60)
 
         # Find customers with recent positive sentiment
         happy_customers_query = self.db.query(CoPilotNudge.customer_id).filter(
@@ -101,7 +101,7 @@ class CoPilotGrowthOpportunityService:
             logger.info(f"{log_prefix} All potential referral candidates are already in recent campaigns.")
             return []
 
-        business = self.db.query(BusinessProfile).get(business_id)
+        business = self.db.get(BusinessProfile, business_id)
         num_customers = len(final_customer_ids)
         customer_word = "customer" if num_customers == 1 else "customers"
 
@@ -175,7 +175,7 @@ class CoPilotGrowthOpportunityService:
              logger.warning(f"{log_prefix} Some customer IDs were not found or did not belong to the business.")
 
         drafts_created_count = 0
-        default_send_time = datetime.utcnow() + timedelta(days=1)
+        default_send_time = datetime.now(timezone.utc) + timedelta(days=1)
 
         for customer in customers_to_message:
             personalized_message = draft_message_template.replace('{customer_name}', customer.customer_name or 'there')
@@ -193,7 +193,7 @@ class CoPilotGrowthOpportunityService:
             drafts_created_count += 1
         
         nudge.status = NudgeStatusEnum.ACTIONED.value
-        nudge.updated_at = datetime.utcnow()
+        nudge.updated_at = datetime.now(timezone.utc)
         self.db.add(nudge)
 
         self.db.commit()
@@ -219,7 +219,7 @@ class CoPilotGrowthOpportunityService:
         log_prefix = f"[GrowthSvc-ReEngage B:{business_id}]"
         logger.info(f"{log_prefix} Starting re-engagement opportunity analysis.")
 
-        ninety_days_ago = datetime.utcnow() - timedelta(days=90)
+        ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
         
         # Find customers with 2 or more completed events ever
         high_value_customers_query = self.db.query(
@@ -274,7 +274,7 @@ class CoPilotGrowthOpportunityService:
             logger.info(f"{log_prefix} All potential re-engagement candidates are already in recent campaigns.")
             return []
 
-        business = self.db.query(BusinessProfile).get(business_id)
+        business = self.db.get(BusinessProfile, business_id)
         num_customers = len(final_customer_ids)
         customer_word = "customer" if num_customers == 1 else "customers"
 

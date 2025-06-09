@@ -14,7 +14,7 @@ from app.schemas import (
 )
 import re
 import logging
-from datetime import datetime, timedelta # Added timedelta back
+from datetime import datetime, timedelta, timezone # Added timezone, Added timedelta back
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ def create_business_profile(
         db.add(db_business)
         db.commit()
         db.refresh(db_business)
-        return BusinessProfile.from_orm(db_business)
+        return BusinessProfile.model_validate(db_business)
     except IntegrityError as e:
         db.rollback()
         logger.error(f"Database integrity error creating business profile '{business.business_name}': {e}", exc_info=True)
@@ -75,7 +75,7 @@ def get_business_profile(business_id: int, db: Session = Depends(get_db)):
     profile = db.query(BusinessProfileModel).filter(BusinessProfileModel.id == business_id).first()
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business profile not found")
-    return BusinessProfile.from_orm(profile)
+    return BusinessProfile.model_validate(profile)
 
 @router.put("/{business_id}", response_model=BusinessProfile)
 def update_business_profile(
@@ -125,7 +125,7 @@ def update_business_profile(
         db.refresh(profile)
         logger.info(f"Successfully updated and committed profile {business_id}.")
         logger.info(f"Profile {business_id} final enable_ai_faq_auto_reply state in DB: {profile.enable_ai_faq_auto_reply}")
-        return BusinessProfile.from_orm(profile)
+        return BusinessProfile.model_validate(profile)
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating business profile {business_id}: {e}", exc_info=True)
@@ -192,7 +192,7 @@ async def get_navigation_profile_by_slug(slug: str, db: Session = Depends(get_db
             logger.warning(f"No business found for navigation profile with slug: {slug}")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business profile not found for this slug (for navigation)")
         logger.info(f"Successfully found navigation profile for slug {slug}: ID {business.id}, Name: {business.business_name}")
-        return BusinessProfile.from_orm(business)
+        return BusinessProfile.model_validate(business)
     except HTTPException:
         raise
     except Exception as e:
@@ -221,7 +221,7 @@ def update_business_phone(
     try:
         db.commit()
         db.refresh(business)
-        return BusinessProfile.from_orm(business)
+        return BusinessProfile.model_validate(business)
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating business phone for business ID {business_id}: {e}", exc_info=True)
@@ -229,7 +229,7 @@ def update_business_phone(
 
 @router.delete("/abandoned", response_model=dict)
 def cleanup_abandoned_profiles(db: Session = Depends(get_db)):
-    cutoff_date = datetime.utcnow() - timedelta(days=7)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=7)
     
     query = db.query(BusinessProfileModel).filter(
         BusinessProfileModel.business_phone_number.is_(None),

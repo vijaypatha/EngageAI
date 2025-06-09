@@ -36,4 +36,4 @@ async def get_current_user(
             detail="Invalid session: Business profile not found",
         )
     
-    return BusinessProfileSchema.from_orm(user_orm)
+    return BusinessProfileSchema.model_validate(user_orm)

@@ -10,8 +10,7 @@
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base 
+from sqlalchemy.orm import sessionmaker, declarative_base
 import logging
 
 # Configure logger

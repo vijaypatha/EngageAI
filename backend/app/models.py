@@ -1,10 +1,11 @@
 # backend/app/models.py
 
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, Index, JSON, func
-from sqlalchemy.orm import relationship, backref 
+from sqlalchemy.orm import relationship, backref
 from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP
 from app.database import Base
 import datetime # Keep this, it's used by your utc_now and other models
+from datetime import timezone # Add timezone import
 import uuid # Keep this
 import json # Keep this
 import enum # Make sure enum is imported
@@ -17,7 +18,7 @@ class OptInStatus(str, enum.Enum):
     NOT_SET = "not_set" # Or a suitable default
 
 def utc_now(): # YOUR EXISTING FUNCTION
-    return datetime.datetime.utcnow()
+    return datetime.datetime.now(timezone.utc)
 
 # --- START MODIFICATION: Define proper Enums ---
 class MessageTypeEnum(str, enum.Enum):
@@ -302,8 +303,8 @@ class ScheduledSMS(Base):
     is_hidden = Column(Boolean, default=False)
     business_timezone = Column(String)
     customer_timezone = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow) # Keep existing non-timezone aware if that's intentional
-    updated_at = Column(DateTime, nullable=True, onupdate=datetime.datetime.utcnow) # Keep existing non-timezone aware
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(timezone.utc)) # Keep existing non-timezone aware if that's intentional
+    updated_at = Column(DateTime, nullable=True, onupdate=lambda: datetime.datetime.now(timezone.utc)) # Keep existing non-timezone aware
 
     customer = relationship("Customer", back_populates="scheduled_sms")
     business = relationship("BusinessProfile", back_populates="scheduled_sms")

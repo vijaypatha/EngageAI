@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Engagement, Customer, BusinessProfile
 from app.config import settings
-from app.services.twilio_service import send_sms_via_twilio  
-from datetime import datetime
+from app.services.twilio_service import send_sms_via_twilio
+from datetime import datetime, timezone # Added timezone
 from pydantic import BaseModel
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
@@ -128,7 +128,7 @@ def send_reply(
             )
 
         engagement.status = "sent"
-        engagement.sent_at = datetime.utcnow()
+        engagement.sent_at = datetime.now(timezone.utc)
         engagement.message_id = engagement.message_id # Keep existing link if any, or this could be source of original message
         engagement.message_metadata = {**(engagement.message_metadata or {}), 'twilio_sid': twilio_api_response.sid}
 
@@ -192,7 +192,7 @@ async def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: S
         customer_id=customer_id,
         ai_response=payload.message,  # Consider renaming this field or using a different one for manual messages
         status="sent",
-        sent_at=datetime.utcnow()
+        sent_at=datetime.now(timezone.utc)
     )
     db.add(new_engagement)
     db.commit()
@@ -313,7 +313,7 @@ def update_engagement_status(
 
     logger.info(f"Updating status of engagement ID {engagement_id} from '{engagement.status}' to '{new_status}'.")
     engagement.status = new_status
-    engagement.updated_at = datetime.utcnow() # Update the timestamp
+    engagement.updated_at = datetime.now(timezone.utc) # Update the timestamp
 
 
     try:

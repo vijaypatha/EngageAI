@@ -11,9 +11,9 @@ from app.models import (
     NudgeTypeEnum
 )
 # We'll need TwilioService to send SMS
-from app.services.twilio_service import TwilioService 
+from app.services.twilio_service import TwilioService
 from app.config import settings # For potential future use, like a base URL for review links
-from datetime import datetime # Import datetime
+from datetime import datetime, timezone # Import datetime & timezone
 
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,7 @@ class CoPilotNudgeActionService:
 
             # Update CoPilotNudge status
             nudge.status = NudgeStatusEnum.ACTIONED
-            nudge.updated_at = datetime.utcnow()
+            nudge.updated_at = datetime.now(timezone.utc)
             self.db.add(nudge)
             self.db.commit()
             self.db.refresh(nudge)
