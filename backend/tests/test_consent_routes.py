@@ -37,7 +37,7 @@ def setup_api_test_overrides(
 
 def test_opt_in_success(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"}
+    consent_data = {"phone_number": "+11234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"} # Corrected phone_number
     mock_consent_log = MagicMock(spec=ConsentLog)
     mock_consent_log.id = 1
     mock_consent_log.customer_id = consent_data["customer_id"]
@@ -70,7 +70,8 @@ def test_opt_in_success(test_app_client_fixture: TestClient, mock_consent_servic
 
 def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"}
+    # Phone number format for consistency, though this test focuses on service error
+    consent_data = {"phone_number": "+11234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"}
 
     mock_consent_service_for_routes.handle_opt_in = AsyncMock(side_effect=HTTPException(status_code=500, detail="Service Error"))
 
@@ -83,7 +84,7 @@ def test_opt_in_service_error(test_app_client_fixture: TestClient, mock_consent_
 
 def test_opt_out_success(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    consent_data = {"phone_number": "1234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"}
+    consent_data = {"phone_number": "+11234567890", "business_id": mock_current_user_fixture.id, "customer_id": 1, "method": "api_test"} # Corrected phone_number
     mock_consent_log = MagicMock(spec=ConsentLog)
     mock_consent_log.id = 2
     mock_consent_log.customer_id = consent_data["customer_id"]
@@ -116,7 +117,7 @@ def test_opt_out_success(test_app_client_fixture: TestClient, mock_consent_servi
 
 def test_check_consent_status_true(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    phone_number = "1234567890"
+    phone_number = "+11234567890" # Corrected phone_number for consistency if service normalizes/expects E.164
     business_id = mock_current_user_fixture.id
 
     mock_consent_service_for_routes.check_consent = AsyncMock(return_value=True)
@@ -131,7 +132,7 @@ def test_check_consent_status_true(test_app_client_fixture: TestClient, mock_con
 
 def test_check_consent_status_false(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    phone_number = "1234567890"
+    phone_number = "+11234567890" # Corrected phone_number for consistency
     business_id = mock_current_user_fixture.id
 
     mock_consent_service_for_routes.check_consent = AsyncMock(return_value=False)
@@ -146,7 +147,7 @@ def test_check_consent_status_false(test_app_client_fixture: TestClient, mock_co
 
 def test_check_consent_status_service_error(test_app_client_fixture: TestClient, mock_consent_service_for_routes: MagicMock, mock_current_user_fixture: BusinessProfile):
     # Arrange
-    phone_number = "1234567890"
+    phone_number = "+11234567890" # Corrected phone_number for consistency
     business_id = mock_current_user_fixture.id
 
     mock_consent_service_for_routes.check_consent = AsyncMock(side_effect=HTTPException(status_code=500, detail="Service error"))
