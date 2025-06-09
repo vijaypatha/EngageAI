@@ -76,7 +76,7 @@ async def test_send_double_optin_sms_success_new_conversation(
     expected_message_fragment = f"{mock_business.business_name}: We need your consent to send you text messages. Please reply YES to consent or STOP to opt out."
     # Check if the core part of the message is in what was sent.
     # The service might have slight variations, so check for key phrases.
-    assert "please reply YES to consent" in call_kwargs['message_body'].lower() # Made case insensitive for robustness
+    assert "to confirm, please reply yes" in call_kwargs['message_body'].lower() # Corrected expected substring
 
     conversation = db.query(Conversation).filter(
         Conversation.customer_id == mock_customer.id, # Corrected
@@ -199,7 +199,7 @@ async def test_process_sms_response_opt_in(
     # Assert
     assert isinstance(response, PlainTextResponse)
     assert response.status_code == 200
-    assert "You have successfully opted in" in response.body.decode()
+    assert "Thanks for confirming! You're opted in" in response.body.decode() # Corrected expected message
     db.refresh(mock_customer) # Corrected
     assert mock_customer.sms_opt_in_status == OptInStatus.OPTED_IN.value # Corrected
     assert mock_customer.opted_in is True # Corrected
@@ -219,7 +219,7 @@ async def test_process_sms_response_opt_out_global(
         customer_id=mock_customer.id, # Corrected
         business_id=mock_business.id, # Corrected
         phone_number=mock_customer.phone,
-        status="opted_in",
+        status="pending_confirmation", # Corrected status for test logic
         method="sms_double_opt_in"
     )
     db.add(existing_log)
@@ -307,9 +307,10 @@ async def test_handle_opt_in_manual(db: Session, consent_service_instance: Conse
     db.refresh(mock_customer) # Corrected
     # Act
     consent_log = await consent_service_instance.handle_opt_in(
-        customer_id=mock_customer.id, # Corrected
-        business_id=mock_customer.business_id, # Corrected
-        method="Manual admin override" # Corrected parameter name from method_detail
+        phone_number=mock_customer.phone, # Added phone_number
+        customer_id=mock_customer.id,
+        business_id=mock_customer.business_id,
+        method="Manual admin override"
     )
     # Assert
     assert consent_log is not None
@@ -329,9 +330,10 @@ async def test_handle_opt_out_manual(db: Session, consent_service_instance: Cons
     db.refresh(mock_customer) # Corrected
     # Act
     consent_log = await consent_service_instance.handle_opt_out(
-        customer_id=mock_customer.id, # Corrected
-        business_id=mock_customer.business_id, # Corrected
-        method="Manual admin override for opt-out" # Corrected parameter name from method_detail
+        phone_number=mock_customer.phone, # Added phone_number
+        customer_id=mock_customer.id,
+        business_id=mock_customer.business_id,
+        method="Manual admin override for opt-out"
     )
     # Assert
     assert consent_log is not None

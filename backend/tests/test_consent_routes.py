@@ -33,7 +33,12 @@ def test_opt_in_success(test_app_client_fixture: TestClient, mock_db_session: Ma
     mock_consent_log.business_id = consent_data["business_id"]
     mock_consent_log.phone_number = consent_data["phone_number"]
     mock_consent_log.status = OptInStatus.OPTED_IN.value
-    mock_consent_log.method = "api_request"
+    mock_consent_log.method = consent_data["method"] # Use method from input
+    mock_consent_log.message_sid = "SMmockmessageidoptin"
+    mock_consent_log.created_at = datetime.now(timezone.utc)
+    mock_consent_log.updated_at = datetime.now(timezone.utc)
+    mock_consent_log.sent_at = datetime.now(timezone.utc) # Can be None if not sent
+    mock_consent_log.replied_at = datetime.now(timezone.utc) # Can be None if no reply
 
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.handle_opt_in = AsyncMock(return_value=mock_consent_log)
@@ -83,7 +88,12 @@ def test_opt_out_success(test_app_client_fixture: TestClient, mock_current_user_
     mock_consent_log.business_id = consent_data["business_id"]
     mock_consent_log.phone_number = consent_data["phone_number"]
     mock_consent_log.status = OptInStatus.OPTED_OUT.value
-    mock_consent_log.method = "api_request"
+    mock_consent_log.method = consent_data["method"] # Use method from input
+    mock_consent_log.message_sid = "SMmockmessageidoptout"
+    mock_consent_log.created_at = datetime.now(timezone.utc)
+    mock_consent_log.updated_at = datetime.now(timezone.utc)
+    mock_consent_log.sent_at = datetime.now(timezone.utc) # Can be None
+    mock_consent_log.replied_at = datetime.now(timezone.utc) # Can be None
 
     mock_service_instance = MagicMock(spec=ConsentService)
     mock_service_instance.handle_opt_out = AsyncMock(return_value=mock_consent_log)
@@ -246,6 +256,7 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     mock_customer_instance = MagicMock(spec=Customer)
     mock_customer_instance.id = customer_id
     mock_customer_instance.business_id = mock_current_user_fixture.id
+    mock_customer_instance.phone = "+1234567899" # Explicitly set phone
 
     # Mock DB query for customer
     mock_db_session.query(Customer).filter().first.return_value = mock_customer_instance
