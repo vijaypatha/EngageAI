@@ -223,16 +223,16 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     expected_customer_business_id = mock_current_user_fixture.id
     expected_customer_phone = "+1234567899"
 
-    mock_customer_instance = MagicMock(spec=Customer)
-    # Set attributes directly for belt-and-suspenders / direct inspection if needed
+    # Use a plain MagicMock and explicitly set attributes
+    mock_customer_instance = MagicMock()
     mock_customer_instance.id = customer_id
-    mock_customer_instance.business_id = expected_customer_business_id
-    mock_customer_instance.phone = expected_customer_phone
-    # __getattr__ manipulation removed, relying on direct attribute assignment.
+    mock_customer_instance.business_id = expected_customer_business_id # CRITICAL
+    mock_customer_instance.phone = expected_customer_phone           # CRITICAL
 
+    # Mock the specific DB query for THIS customer
     mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
-    mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
+    mock_business_instance_for_route = MagicMock(spec=BusinessProfile) # spec is fine here
     mock_business_instance_for_route.id = expected_customer_business_id
     mock_business_instance_for_route.representative_name = "Test Rep"
     mock_business_instance_for_route.business_name = "Test Business Name"
@@ -249,7 +249,7 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     assert response.json() == {"message": "Opt-in request resent successfully."}
     mock_consent_service_for_routes.send_opt_in_sms.assert_called_once_with(
         phone_number=mock_customer_instance.phone,
-        business_id=mock_business_instance_for_route.id,
+        business_id=mock_business_instance_for_route.id, # Corrected to use the business instance's ID
         customer_id=mock_customer_instance.id
     )
 
@@ -269,18 +269,17 @@ def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock
     # Arrange
     customer_id = 1
     expected_customer_business_id = mock_current_user_fixture.id
-    expected_customer_phone_failure = "+1234560000"
+    expected_customer_phone = "+1234560000" # Renamed variable for clarity from plan
 
-    mock_customer_instance = MagicMock(spec=Customer)
-    # Set attributes directly
+    # Use a plain MagicMock and explicitly set attributes
+    mock_customer_instance = MagicMock()
     mock_customer_instance.id = customer_id
-    mock_customer_instance.business_id = expected_customer_business_id
-    mock_customer_instance.phone = expected_customer_phone_failure
-    # __getattr__ manipulation removed, relying on direct attribute assignment.
+    mock_customer_instance.business_id = expected_customer_business_id # CRITICAL
+    mock_customer_instance.phone = expected_customer_phone           # CRITICAL
 
     mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
-    mock_business_instance_for_route = MagicMock(spec=BusinessProfile)
+    mock_business_instance_for_route = MagicMock(spec=BusinessProfile) # spec is fine here
     mock_business_instance_for_route.id = expected_customer_business_id
     mock_business_instance_for_route.representative_name = "Test Rep"
     mock_business_instance_for_route.business_name = "Test Business Name"
