@@ -240,7 +240,7 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
         # For any other attribute, raise AttributeError to mimic real object behavior
         raise AttributeError(f"Mock object for Customer has no attribute {name!r}")
 
-    mock_customer_instance.__getattr__ = MagicMock(side_effect=customer_getattr_handler)
+    mock_customer_instance.__getattr__.side_effect = customer_getattr_handler # Corrected assignment
 
     mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
@@ -299,7 +299,7 @@ def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock
             return customer_id
         raise AttributeError(f"Mock object for Customer has no attribute {name!r}")
 
-    mock_customer_instance.__getattr__ = MagicMock(side_effect=customer_getattr_handler_failure)
+    mock_customer_instance.__getattr__.side_effect = customer_getattr_handler_failure # Corrected assignment
 
     mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
