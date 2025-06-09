@@ -221,11 +221,26 @@ def test_resend_opt_in_success(test_app_client_fixture: TestClient, mock_db_sess
     # Arrange
     customer_id = 1
     expected_customer_business_id = mock_current_user_fixture.id
+    expected_customer_phone = "+1234567899"
 
     mock_customer_instance = MagicMock(spec=Customer)
+    # Set attributes directly for belt-and-suspenders / direct inspection if needed
     mock_customer_instance.id = customer_id
     mock_customer_instance.business_id = expected_customer_business_id
-    mock_customer_instance.phone = "+1234567899"
+    mock_customer_instance.phone = expected_customer_phone
+
+    # Configure __getattr__ to explicitly handle business_id, phone, and id
+    def customer_getattr_handler(name):
+        if name == 'business_id':
+            return expected_customer_business_id
+        elif name == 'phone':
+            return expected_customer_phone
+        elif name == 'id':
+            return customer_id
+        # For any other attribute, raise AttributeError to mimic real object behavior
+        raise AttributeError(f"Mock object for Customer has no attribute {name!r}")
+
+    mock_customer_instance.__getattr__ = MagicMock(side_effect=customer_getattr_handler)
 
     mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
@@ -266,11 +281,25 @@ def test_resend_opt_in_service_failure(test_app_client_fixture: TestClient, mock
     # Arrange
     customer_id = 1
     expected_customer_business_id = mock_current_user_fixture.id
+    expected_customer_phone_failure = "+1234560000"
 
     mock_customer_instance = MagicMock(spec=Customer)
+    # Set attributes directly
     mock_customer_instance.id = customer_id
     mock_customer_instance.business_id = expected_customer_business_id
-    mock_customer_instance.phone = "+1234560000"
+    mock_customer_instance.phone = expected_customer_phone_failure
+
+    # Configure __getattr__
+    def customer_getattr_handler_failure(name): # Unique name for handler
+        if name == 'business_id':
+            return expected_customer_business_id
+        elif name == 'phone':
+            return expected_customer_phone_failure
+        elif name == 'id':
+            return customer_id
+        raise AttributeError(f"Mock object for Customer has no attribute {name!r}")
+
+    mock_customer_instance.__getattr__ = MagicMock(side_effect=customer_getattr_handler_failure)
 
     mock_db_session.query(Customer).filter(Customer.id == customer_id).first.return_value = mock_customer_instance
 
