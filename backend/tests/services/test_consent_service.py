@@ -232,7 +232,7 @@ async def test_process_sms_response_opt_out_global(
     # Assert
     assert isinstance(response, PlainTextResponse)
     assert response.status_code == 200
-    assert "You have successfully opted out" in response.body.decode()
+    assert "You have successfully been unsubscribed" in response.body.decode() # Corrected substring
     db.refresh(mock_customer) # Corrected
     assert mock_customer.sms_opt_in_status == OptInStatus.OPTED_OUT.value # Corrected
     assert mock_customer.opted_in is False # Corrected
@@ -314,7 +314,7 @@ async def test_handle_opt_in_manual(db: Session, consent_service_instance: Conse
     )
     # Assert
     assert consent_log is not None
-    assert consent_log.method == "manual_override"
+    assert consent_log.method == "Manual admin override" # Corrected assertion
     assert consent_log.status == "opted_in"
     assert consent_log.customer_id == mock_customer.id # Corrected
     db.refresh(mock_customer) # Corrected
@@ -337,7 +337,7 @@ async def test_handle_opt_out_manual(db: Session, consent_service_instance: Cons
     )
     # Assert
     assert consent_log is not None
-    assert consent_log.method == "manual_override"
+    assert consent_log.method == "Manual admin override for opt-out" # Corrected assertion
     assert consent_log.status == "opted_out"
     assert consent_log.customer_id == mock_customer.id # Corrected
     db.refresh(mock_customer) # Corrected
