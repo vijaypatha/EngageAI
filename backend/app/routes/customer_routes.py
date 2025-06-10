@@ -17,10 +17,15 @@ from pydantic import BaseModel, Field # Added BaseModel, Field
 # --- App Specific Imports ---
 from app.database import get_db
 # Import all needed Models
-from app.models import Customer as CustomerModel, BusinessProfile, ConsentLog, Tag, CustomerTag
+from app.models import Customer as CustomerModel, BusinessProfile, ConsentLog, Tag, CustomerTag, Message as MessageModel
 # Import all needed Schemas (ensure Customer includes 'tags' list)
-from app.schemas import Customer, CustomerCreate, CustomerUpdate, TagRead
+from app.schemas import (
+    Customer, CustomerCreate, CustomerUpdate, TagRead,
+    CustomerConversation, ConversationMessageForTimeline,
+    CustomerSummarySchema # Import the new summary schema
+)
 from app.services.consent_service import ConsentService
+from app.services import message_service # To get conversation history
 # from ..auth import get_current_user # Keep commented if not used directly here
 
 logger = logging.getLogger(__name__)
@@ -253,7 +258,7 @@ def delete_customer(customer_id: int, db: Session = Depends(get_db)):
 
 
 # --- MODIFIED: Route to get customers by business ID (with tag filtering) ---
-@router.get("/by-business/{business_id}", response_model=List[Customer])
+@router.get("/by-business/{business_id}", response_model=List[CustomerSummarySchema]) # Changed response_model
 def get_customers_by_business(
     business_id: int,
     tags: Optional[str] = Query(None, description="Comma-separated list of tag names to filter by (lowercase)"), # Add tags query param
@@ -264,10 +269,41 @@ def get_customers_by_business(
     """
     logger.info(f"Fetching customers for business_id: {business_id}, tags: {tags}")
 
-    # Base query: Select customers and efficiently load their tags
-    query = db.query(CustomerModel).options(
-        joinedload(CustomerModel.tags) # Eager load tags using the relationship
+    # Subquery to get the latest replied_at for each customer relevant to the business
+    latest_replied_at_sq = db.query(
+        ConsentLog.customer_id,
+        func.max(ConsentLog.replied_at).label("max_replied_at")
+    ).filter(ConsentLog.business_id == business_id).group_by(ConsentLog.customer_id).subquery()
+
+    # Subquery to get the consent status for that latest replied_at (or latest ID as tie-breaker)
+    # Using a lateral join or a window function might be more robust if multiple logs share the exact same max_replied_at.
+    # However, for simplicity and common case, joining on customer_id and max_replied_at.
+    # To handle cases where replied_at might be null or to get truly the latest log, max(id) is safer.
+    latest_consent_id_sq = db.query(
+        ConsentLog.customer_id,
+        func.max(ConsentLog.id).label("max_log_id")
+    ).filter(ConsentLog.business_id == business_id).group_by(ConsentLog.customer_id).subquery()
+
+    consent_details_sq = db.query(
+        ConsentLog.customer_id.label("consent_customer_id"),
+        ConsentLog.status.label("latest_status"),
+        ConsentLog.replied_at.label("latest_replied_at")
+    ).join(
+        latest_consent_id_sq,
+        ConsentLog.id == latest_consent_id_sq.c.max_log_id
+    ).subquery()
+
+    # Base query for customers
+    query = db.query(
+        CustomerModel,
+        consent_details_sq.c.latest_status,
+        consent_details_sq.c.latest_replied_at
+    ).outerjoin(
+        consent_details_sq, CustomerModel.id == consent_details_sq.c.consent_customer_id
+    ).options(
+        joinedload(CustomerModel.tags) # Eager load tags
     ).filter(CustomerModel.business_id == business_id)
+
 
     # Apply tag filtering if tags query parameter is provided
     tag_names = []
@@ -275,43 +311,44 @@ def get_customers_by_business(
         tag_names = [tag.strip().lower() for tag in tags.split(',') if tag.strip()]
         if tag_names:
             logger.info(f"Filtering by tags: {tag_names}")
-            # Filter customers associated with ALL specified tags
             query = query.join(CustomerModel.tags).filter(Tag.name.in_(tag_names))
-            query = query.group_by(CustomerModel.id)
-            query = query.having(func.count(Tag.id) == len(tag_names)) # Match *all* tags
+            query = query.group_by(CustomerModel.id, consent_details_sq.c.latest_status, consent_details_sq.c.latest_replied_at) # Need to group by selected scalar columns from outer join
+            query = query.having(func.count(Tag.id.distinct()) == len(tag_names))
 
-    # Execute the query
+
     try:
-        customers_orm = query.order_by(CustomerModel.customer_name).all() # Add ordering
+        customers_and_consent_data = query.order_by(CustomerModel.customer_name).all()
     except Exception as e:
         logger.error(f"Database error fetching customers for business {business_id} with tags {tags}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error fetching customers.")
 
-    if not customers_orm:
+    if not customers_and_consent_data:
         logger.info(f"No customers found matching criteria for business_id: {business_id}, tags: {tags}")
         return []
 
     customers_response = []
-    for customer_orm in customers_orm:
-        # Get latest consent status
-        latest_status, latest_updated = get_latest_consent_status(customer_orm.id, db)
-        effective_opted_in = latest_status == "opted_in"
+    for customer_orm, latest_status_val, latest_updated_val in customers_and_consent_data:
+        effective_opted_in = latest_status_val == "opted_in" if latest_status_val else customer_orm.opted_in
 
-        # Convert ORM to Pydantic
         try:
-            # Use from_orm which should include tags due to joinedload and schema definition
-            customer_dto = Customer.from_orm(customer_orm)
-            # Explicitly set consent fields based on log status
-            customer_dto.latest_consent_status = latest_status
-            customer_dto.latest_consent_updated = latest_updated
-            customer_dto.opted_in = effective_opted_in
-            # Ensure tags list exists if relationship didn't populate automatically
-            if not hasattr(customer_dto, 'tags'):
-                 customer_dto.tags = [TagRead.from_orm(tag) for tag in customer_orm.tags] if hasattr(customer_orm, 'tags') else []
-
-            customers_response.append(customer_dto)
+            # Construct the CustomerSummarySchema
+            # Most fields are directly from customer_orm and already loaded consent details
+            customer_summary_data = {
+                "id": customer_orm.id,
+                "customer_name": customer_orm.customer_name,
+                "phone": customer_orm.phone,
+                "lifecycle_stage": customer_orm.lifecycle_stage,
+                "opted_in": effective_opted_in,
+                "latest_consent_status": latest_status_val,
+                "latest_consent_updated": latest_updated_val,
+                "tags": [TagRead.from_orm(tag) for tag in customer_orm.tags] if hasattr(customer_orm, 'tags') and customer_orm.tags else [],
+                "business_id": customer_orm.business_id, # Ensure this is part of CustomerSummarySchema
+                # Excluded fields: pain_points, interaction_history, timezone, is_generating_roadmap, last_generation_attempt
+            }
+            customer_summary_dto = CustomerSummarySchema(**customer_summary_data)
+            customers_response.append(customer_summary_dto)
         except Exception as validation_error:
-             logger.error(f"Pydantic validation/conversion failed for customer {customer_orm.id}: {validation_error}.", exc_info=True)
+             logger.error(f"Pydantic validation/conversion failed for customer {customer_orm.id} to CustomerSummarySchema: {validation_error}.", exc_info=True)
              # Skip this customer or handle error appropriately
 
     logger.info(f"Returning {len(customers_response)} customers for business_id: {business_id}")
@@ -386,3 +423,32 @@ def associate_tags_with_customer(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update tag associations due to server error.")
 
 # --- End of Tag Association Logic ---
+
+@router.get("/{customer_id}/conversation", response_model=CustomerConversation)
+async def get_customer_conversation_route(
+    customer_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve the full conversation history for a specific customer.
+    """
+    # Make sure message_service is correctly instantiated if it's a class-based service
+    # If it's a module with functions, direct call is fine.
+    # Assuming message_service module has a function get_full_conversation_for_customer
+    # or if MessageService class is instantiated elsewhere or provided via dependency injection.
+
+    # For this example, let's assume MessageService needs to be instantiated.
+    msg_service = message_service.MessageService(db)
+    messages_orm = msg_service.get_full_conversation_for_customer(customer_id=customer_id)
+
+    if not messages_orm:
+        logger.info(f"No messages found for customer_id: {customer_id} by service. Returning empty conversation.")
+        # Check if customer exists to differentiate between no messages and no customer
+        customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
+        if not customer:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+        return CustomerConversation(customer_id=customer_id, messages=[])
+
+    conversation_messages = [ConversationMessageForTimeline.from_orm(msg) for msg in messages_orm]
+
+    return CustomerConversation(customer_id=customer_id, messages=conversation_messages)

@@ -9,7 +9,9 @@ from sqlalchemy import and_, func, desc, cast, Integer, JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from app.celery_tasks import process_scheduled_message_task
 from app.services import MessageService
+from app.services import inbox_service # Uncommented and assuming it exists
 from app.services.stats_service import get_stats_for_business as get_stats_for_business, calculate_reply_stats
+from app.schemas import PaginatedInboxSummaries # Import the new schema
 import logging
 import uuid
 import pytz
@@ -441,3 +443,26 @@ def get_received_messages_count(business_id: int, db: Session = Depends(get_db))
         Engagement.response != None
     ).count()
     return {"received_count": received_count}
+
+@router.get("/inbox/summaries", response_model=PaginatedInboxSummaries)
+def get_inbox_summaries(
+    business_id: int,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    """
+    Get paginated inbox summaries for a business.
+    Includes customer info, last message snippet, timestamp, and unread count.
+    """
+    summaries, total_count = inbox_service.get_paginated_inbox_summaries(
+        db=db, business_id=business_id, page=page, size=size
+    )
+
+    return {
+        "items": summaries,
+        "total": total_count,
+        "page": page,
+        "size": size,
+        "pages": (total_count + size - 1) // size
+    }

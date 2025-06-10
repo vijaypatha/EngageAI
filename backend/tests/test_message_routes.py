@@ -8,11 +8,12 @@ import uuid # Added import for uuid
 from datetime import datetime, timezone # Added for datetime objects in mocks
 
 # Imports adjusted for running pytest from backend/
-from app.models import Message as MessageModel
+from app.models import Message as MessageModel, Customer as CustomerModel
 from app.models import BusinessProfile
-from app.models import MessageTypeEnum, MessageStatusEnum # Added enum imports
-from app.schemas import Message, MessageCreate, MessageUpdate
+from app.models import MessageTypeEnum, MessageStatusEnum
+from app.schemas import Message, MessageCreate, MessageUpdate, MessageSummarySchema, CustomerBasicInfo, BusinessBasicInfo
 from app.database import get_db
+from pydantic import parse_obj_as # For validating list of schemas
 from app.auth import get_current_user
 
 @pytest.fixture(autouse=True)
@@ -110,30 +111,173 @@ def test_get_messages_success(test_app_client_fixture: TestClient, mock_db_sessi
     mock_msg2_model.created_at = datetime.now(timezone.utc)
     mock_msg2_model.message_metadata = None # Set to None
 
-    mock_db_session.query(MessageModel).offset(0).limit(100).all.return_value = [mock_msg1_model, mock_msg2_model]
+    # Mock customer and business data that would be joined
+    mock_customer1 = MagicMock(spec=CustomerModel)
+    mock_customer1.id = 1
+    mock_customer1.customer_name = "Test Cust 1"
+
+    mock_customer2 = MagicMock(spec=CustomerModel)
+    mock_customer2.id = 2
+    mock_customer2.customer_name = "Test Cust 2"
+
+    mock_business_profile = MagicMock(spec=BusinessProfile)
+    mock_business_profile.id = 1
+    mock_business_profile.business_name = "Test Biz"
+
+    mock_msg1_model.customer = mock_customer1
+    mock_msg1_model.business = mock_business_profile
+    mock_msg2_model.customer = mock_customer2
+    mock_msg2_model.business = mock_business_profile
+
+    # Simulate the behavior of the query chain
+    mock_query = MagicMock()
+    mock_query.options().order_by().offset().limit().all.return_value = [mock_msg1_model, mock_msg2_model]
+    mock_db_session.query(MessageModel).return_value = mock_query
+
 
     # Act
-    response = test_app_client_fixture.get("/messages/?skip=0&limit=10") # Used fixture
+    response = test_app_client_fixture.get("/messages/?skip=0&limit=10")
 
     # Assert
     assert response.status_code == 200
-    json_response = response.json()
-    assert len(json_response) == 2
-    assert json_response[0]["id"] == 1
-    assert json_response[1]["content"] == "Msg2"
+    data = response.json()
+    parsed_items = parse_obj_as(List[MessageSummarySchema], data)
+    assert len(parsed_items) == 2
+
+    assert parsed_items[0].id == 1
+    assert parsed_items[0].content_snippet == "Msg1" # Assuming content is short
+    assert parsed_items[0].customer.id == 1
+    assert parsed_items[0].customer.customer_name == "Test Cust 1"
+    assert parsed_items[0].business.id == 1
+    assert parsed_items[0].business.business_name == "Test Biz"
+
+    assert parsed_items[1].id == 2
+    assert parsed_items[1].content_snippet == "Msg2"
+    assert parsed_items[1].customer.id == 2
+    assert parsed_items[1].customer.customer_name == "Test Cust 2"
 
 
-def test_get_messages_empty(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
+def test_get_messages_content_snippet_logic(test_app_client_fixture: TestClient, mock_db_session: MagicMock):
     # Arrange
-    mock_db_session.query(MessageModel).offset(0).limit(100).all.return_value = []
+    long_content = "This is a very long message that definitely exceeds one hundred characters and therefore it should be truncated with an ellipsis at the end."
+    short_content = "Short and sweet."
+
+    mock_msg_long = MagicMock(spec=MessageModel)
+    mock_msg_long.id = 1; mock_msg_long.content = long_content; mock_msg_long.conversation_id = uuid.uuid4()
+    mock_msg_long.business_id = 1; mock_msg_long.customer_id = 1; mock_msg_long.message_type = MessageTypeEnum.OUTBOUND.value
+    mock_msg_long.status = MessageStatusEnum.SENT.value; mock_msg_long.created_at = datetime.now(timezone.utc)
+    mock_msg_long.customer = MagicMock(spec=CustomerModel, id=1, customer_name="Long Tester")
+    mock_msg_long.business = MagicMock(spec=BusinessProfile, id=1, business_name="Biz")
+
+    mock_msg_short = MagicMock(spec=MessageModel)
+    mock_msg_short.id = 2; mock_msg_short.content = short_content; mock_msg_short.conversation_id = uuid.uuid4()
+    mock_msg_short.business_id = 1; mock_msg_short.customer_id = 2; mock_msg_short.message_type = MessageTypeEnum.INBOUND.value
+    mock_msg_short.status = MessageStatusEnum.RECEIVED.value; mock_msg_short.created_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    mock_msg_short.customer = MagicMock(spec=CustomerModel, id=2, customer_name="Short Tester")
+    mock_msg_short.business = MagicMock(spec=BusinessProfile, id=1, business_name="Biz")
+
+    mock_query = MagicMock()
+    mock_query.options().order_by().offset().limit().all.return_value = [mock_msg_long, mock_msg_short]
+    mock_db_session.query(MessageModel).return_value = mock_query
+
     # Act
-    response = test_app_client_fixture.get("/messages/") # Used fixture
+    response = test_app_client_fixture.get("/messages/")
+
+    # Assert
+    assert response.status_code == 200
+    data = parse_obj_as(List[MessageSummarySchema], response.json())
+    assert len(data) == 2
+    assert data[0].content_snippet == long_content[:100] + "..."
+    assert data[1].content_snippet == short_content
+
+def test_get_messages_pagination_and_ordering(test_app_client_fixture: TestClient, mock_db_session: MagicMock):
+    # Arrange
+    mock_messages = []
+    base_time = datetime.now(timezone.utc)
+    for i in range(5):
+        msg = MagicMock(spec=MessageModel)
+        msg.id = i + 1
+        msg.content = f"Message {i+1}"
+        msg.conversation_id = uuid.uuid4()
+        msg.business_id = 1
+        msg.customer_id = i + 1
+        msg.message_type = MessageTypeEnum.OUTBOUND.value
+        msg.status = MessageStatusEnum.SENT.value
+        msg.created_at = base_time - timedelta(minutes=i*5) # Newest first for this mock list
+        msg.customer = MagicMock(id=i+1, customer_name=f"Cust {i+1}")
+        msg.business = MagicMock(id=1, business_name="Biz Pagination")
+        mock_messages.append(msg)
+
+    # The route orders by created_at.desc()
+    # So, msg with created_at = base_time (i=0) should be first.
+    # msg with created_at = base_time - 20 mins (i=4) should be last.
+
+    # Mock the query chain more accurately
+    all_messages_sorted_by_route = sorted(mock_messages, key=lambda m: m.created_at, reverse=True)
+
+    def mock_query_side_effect(*args, **kwargs):
+        # Simulate the full query chain: query().options().order_by().offset().limit().all()
+        mock_q_obj = MagicMock()
+
+        # Store offset and limit from how they are called
+        current_offset = 0
+        current_limit = 100 # Default limit in route
+
+        def set_offset(val):
+            nonlocal current_offset
+            current_offset = val
+            return mock_q_obj # Return self for chaining
+
+        def set_limit(val):
+            nonlocal current_limit
+            current_limit = val
+            return mock_q_obj # Return self for chaining
+
+        def get_all():
+            start = current_offset
+            end = current_offset + current_limit
+            return all_messages_sorted_by_route[start:end]
+
+        mock_q_obj.options.return_value = mock_q_obj # .options() returns self
+        mock_q_obj.order_by.return_value = mock_q_obj # .order_by() returns self
+        mock_q_obj.offset = MagicMock(side_effect=set_offset)
+        mock_q_obj.limit = MagicMock(side_effect=set_limit)
+        mock_q_obj.all = MagicMock(side_effect=get_all)
+        return mock_q_obj
+
+    mock_db_session.query(MessageModel).side_effect = mock_query_side_effect
+
+    # Test limit
+    response_limit2 = test_app_client_fixture.get("/messages/?limit=2")
+    assert response_limit2.status_code == 200
+    data_limit2 = parse_obj_as(List[MessageSummarySchema], response_limit2.json())
+    assert len(data_limit2) == 2
+    assert data_limit2[0].id == all_messages_sorted_by_route[0].id # Newest
+    assert data_limit2[1].id == all_messages_sorted_by_route[1].id # Second newest
+
+    # Test skip and limit
+    response_skip2_limit2 = test_app_client_fixture.get("/messages/?skip=2&limit=2")
+    assert response_skip2_limit2.status_code == 200
+    data_skip2_limit2 = parse_obj_as(List[MessageSummarySchema], response_skip2_limit2.json())
+    assert len(data_skip2_limit2) == 2
+    assert data_skip2_limit2[0].id == all_messages_sorted_by_route[2].id # Third newest
+    assert data_skip2_limit2[1].id == all_messages_sorted_by_route[3].id # Fourth newest
+
+
+def test_get_messages_empty(test_app_client_fixture: TestClient, mock_db_session: MagicMock):
+    # Arrange
+    mock_query = MagicMock()
+    mock_query.options().order_by().offset().limit().all.return_value = []
+    mock_db_session.query(MessageModel).return_value = mock_query
+
+    # Act
+    response = test_app_client_fixture.get("/messages/")
     # Assert
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_get_message_by_id_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock): # Added test_app_client_fixture
+def test_get_message_by_id_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock):
     # Arrange
     message_id = 1
     mock_msg_model = MagicMock(spec=MessageModel)
