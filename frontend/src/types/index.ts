@@ -24,4 +24,48 @@ export interface Tag {
     tags?: Tag[] | null;
   }
   
-  // Add other shared types here...
+// Represents the raw message object from the `/review/full-customer-history` endpoint
+export interface BackendMessage {
+  id: string | number;
+  type: "sent" | "customer" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
+  content: any;
+  status?: string;
+  scheduled_time?: string | null;
+  sent_time?: string | null;
+  source?: string;
+  customer_id: number;
+  is_hidden?: boolean;
+  response?: string;
+  ai_response?: string;
+}
+
+// Represents the raw customer object from the `/review/full-customer-history` endpoint
+export interface RawCustomerSummary {
+  customer_id: number;
+  customer_name: string;
+  phone: string;
+  opted_in: boolean;
+  consent_status: string;
+  consent_updated?: string | null;
+  message_count: number;
+  messages: BackendMessage[];
+}
+
+// Represents a processed customer summary for display in the sidebar
+export interface InboxCustomerSummary extends RawCustomerSummary {
+  last_message_preview: string;
+  last_message_timestamp: string;
+  is_unread: boolean;
+}
+
+// Represents a processed message object for display in the timeline
+export interface TimelineEntry {
+  id: string | number;
+  type: "customer" | "sent" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
+  content: string;
+  timestamp: string | null;
+  customer_id: number;
+  status?: string;
+  is_faq_answer?: boolean;
+  appended_opt_in_prompt?: boolean;
+}

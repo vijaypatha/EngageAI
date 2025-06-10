@@ -1,5 +1,11 @@
 {
   "dependencies": {
-    "lucide-react": "^0.511.0"
+    "@types/react-virtualized": "^9.22.2",
+    "@types/react-window": "^1.8.8",
+    "lucide-react": "^0.511.0",
+    "react-virtualized": "^9.22.6",
+    "react-virtualized-auto-sizer": "^1.0.26",
+    "react-window": "^1.8.11",
+    "swr": "^2.3.3"
   }
 }
