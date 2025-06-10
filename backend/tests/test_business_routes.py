@@ -277,19 +277,18 @@ def test_update_business_phone_success(test_app_client_fixture: TestClient, mock
     assert mock_profile.business_phone_number == new_phone
 
 def test_cleanup_abandoned_profiles_success(test_app_client_fixture: TestClient, mock_db_session: MagicMock):
-    mock_query_obj = MagicMock()
-    mock_db_session.query(BusinessProfileModel).filter(ANY).return_value = mock_query_obj
-    # Ensure delete() is a method on mock_query_obj that returns an int
-    mock_query_obj.delete = MagicMock(return_value=3)
+    mock_filtered_query = MagicMock()
+    mock_filtered_query.delete = MagicMock(return_value=3)
+    mock_db_session.query(BusinessProfileModel).filter.return_value = mock_filtered_query
     response = test_app_client_fixture.delete("/business-profile/abandoned")
     assert response.status_code == 200
     assert response.json() == {"message": "Deleted 3 abandoned profiles"}
     mock_db_session.commit.assert_called_once()
 
 def test_cleanup_abandoned_profiles_none_deleted(test_app_client_fixture: TestClient, mock_db_session: MagicMock):
-    mock_query_obj = MagicMock()
-    mock_db_session.query(BusinessProfileModel).filter(ANY).return_value = mock_query_obj
-    mock_query_obj.delete = MagicMock(return_value=0)
+    mock_filtered_query = MagicMock()
+    mock_filtered_query.delete = MagicMock(return_value=0)
+    mock_db_session.query(BusinessProfileModel).filter.return_value = mock_filtered_query
     response = test_app_client_fixture.delete("/business-profile/abandoned")
     assert response.status_code == 200
     assert response.json() == {"message": "Deleted 0 abandoned profiles"}
