@@ -156,5 +156,3 @@ async def test_receive_sms_basic_success(
     mock_consent_service_instance.process_sms_response.assert_called_once()
     mock_ai_service_instance.generate_sms_response.assert_called_once()
     mock_twilio_service_instance.send_sms.assert_not_called()
-
-```
