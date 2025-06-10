@@ -4,7 +4,7 @@ from pydantic import BaseModel, constr, Field, validator, field_validator
 from typing import Optional, Annotated, List, Dict, Any
 from pydantic import StringConstraints
 import pytz
-from datetime import datetime, timezone # Added timezone
+from datetime import datetime
 import uuid
 import re
 
@@ -80,11 +80,7 @@ class BusinessProfileBase(BaseModel):
     business_phone_number: Optional[str] = None
     review_platform_url: Optional[str] = None 
 
-    @field_validator('business_phone_number', mode='before')
-    @classmethod
-    def _normalize_bp_phone(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
-
+    _normalize_bp_phone = validator('business_phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before') 
     @classmethod
     def _validate_bp_base_timezone(cls, v: Optional[str]):
@@ -107,16 +103,8 @@ class BusinessProfileUpdate(BaseModel):
     structured_faq_data: Optional[StructuredFaqDataSchema] = None
     review_platform_url: Optional[str] = None
 
-    @field_validator('business_phone_number', mode='before')
-    @classmethod
-    def _normalize_bp_update_phone(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
-
-    @field_validator('twilio_number', mode='before')
-    @classmethod
-    def _normalize_twilio_update_phone(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
-
+    _normalize_bp_update_phone = validator('business_phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
+    _normalize_twilio_update_phone = validator('twilio_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number) # Added always=True
     @field_validator('timezone', mode='before')
     @classmethod
     def _validate_bp_update_timezone(cls, v: Optional[str]):
@@ -132,19 +120,13 @@ class BusinessProfile(BusinessProfileBase):
     enable_ai_faq_auto_reply: bool
     structured_faq_data: Optional[StructuredFaqDataSchema] = None
 
-    @field_validator('twilio_number', mode='before')
-    @classmethod
-    def _normalize_bp_resp_twilio_phone(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
+    _normalize_bp_resp_twilio_phone = validator('twilio_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number) # Added always=True
     class Config: from_attributes = True
 
 class BusinessPhoneUpdate(BaseModel):
     # ... (your existing code) ...
     business_phone_number: str
-    @field_validator('business_phone_number', mode='before')
-    @classmethod
-    def _normalize_b_phone_update(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
+    _normalize_b_phone_update = validator('business_phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
     class Config: from_attributes = True
 
 # --- Customer Schemas (No direct change needed for MessageTypeEnum/MessageStatusEnum) ---
@@ -161,11 +143,7 @@ class CustomerBase(BaseModel):
     is_generating_roadmap: Optional[bool] = False
     last_generation_attempt: Optional[datetime] = None
 
-    @field_validator('phone', mode='before')
-    @classmethod
-    def _normalize_customer_phone(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
-
+    _normalize_customer_phone = validator('phone', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before')
     @classmethod
     def _validate_cust_base_timezone(cls, v: Optional[str]):
@@ -179,11 +157,7 @@ class CustomerUpdate(BaseModel):
     interaction_history: Optional[str] = None; timezone: Optional[str] = None
     opted_in: Optional[bool] = None
 
-    @field_validator('phone', mode='before')
-    @classmethod
-    def _normalize_customer_phone_update(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
-
+    _normalize_customer_phone_update = validator('phone', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before')
     @classmethod
     def _validate_cust_update_timezone(cls, v: Optional[str]):
@@ -205,9 +179,8 @@ class SMSCreate(BaseModel):
     message: Annotated[str, StringConstraints(max_length=160)] 
     send_time: Optional[datetime] = None 
 
-    @field_validator('message')
-    @classmethod
-    def validate_message_length(cls, v_msg_len: str) -> str:
+    @validator('message') # Keep existing validator if it's Pydantic v1 style and working
+    def validate_message_length(cls, v_msg_len):
         if len(v_msg_len) > 160:
             raise ValueError("Message length exceeds 160 characters")
         return v_msg_len
@@ -354,13 +327,10 @@ class ConsentLogBase(BaseModel):
     message_sid: Optional[str] = None; 
     status: OptInStatus = OptInStatus.PENDING # MODIFIED: Use Enum
     sent_at: Optional[datetime] = None; replied_at: Optional[datetime] = None
-    @field_validator('phone_number', mode='before')
-    @classmethod
-    def _normalize_consent_phone(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
+    _normalize_consent_phone = validator('phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
 
 class ConsentLogCreate(ConsentLogBase): 
-    sent_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+    sent_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
 class ConsentLogUpdate(BaseModel): 
     status: Optional[OptInStatus] = None # MODIFIED: Use Enum
     replied_at: Optional[datetime] = None
@@ -395,10 +365,7 @@ class RoadmapResponse(BaseModel):
 
 class TwilioNumberAssign(BaseModel):
     business_id: int; phone_number: str
-    @field_validator('phone_number', mode='before')
-    @classmethod
-    def _normalize_twilio_phone(cls, v: Optional[str]) -> Optional[str]:
-        return normalize_phone_number(v)
+    _normalize_twilio_phone = validator('phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
 
 
 class BusinessScenarioCreate(BaseModel):

@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
-from datetime import datetime, timezone # Import datetime & timezone
+from datetime import datetime # Import datetime
 
 from app.database import get_db
 from app.models import CoPilotNudge, Customer, NudgeStatusEnum, BusinessProfile
@@ -59,7 +59,7 @@ async def get_active_nudges(
 
     response_nudges = []
     for nudge, customer_name in nudges_orm:
-        nudge_read = CoPilotNudgeRead.model_validate(nudge)
+        nudge_read = CoPilotNudgeRead.from_orm(nudge)
         nudge_read.customer_name = customer_name # Assign fetched customer_name
         response_nudges.append(nudge_read)
     
@@ -92,7 +92,7 @@ async def dismiss_nudge(
     if nudge.status == NudgeStatusEnum.DISMISSED.value:
         logger.info(f"Nudge {nudge_id} is already dismissed.")
         # Return current state or an appropriate message
-        nudge_read = CoPilotNudgeRead.model_validate(nudge)
+        nudge_read = CoPilotNudgeRead.from_orm(nudge)
         if nudge.customer_id: # Populate customer_name if it exists
             customer = db.query(Customer.customer_name).filter(Customer.id == nudge.customer_id).scalar_one_or_none()
             nudge_read.customer_name = customer
@@ -105,7 +105,7 @@ async def dismiss_nudge(
             nudge.ai_suggestion_payload = {}
         nudge.ai_suggestion_payload['dismissal_reason'] = payload.reason
         
-    nudge.updated_at = datetime.now(timezone.utc)
+    nudge.updated_at = datetime.utcnow()
     
     db.add(nudge)
     db.commit()
@@ -113,7 +113,7 @@ async def dismiss_nudge(
     
     logger.info(f"CoPilotNudge ID {nudge_id} successfully dismissed for business_id: {business_id}.")
     
-    nudge_read = CoPilotNudgeRead.model_validate(nudge)
+    nudge_read = CoPilotNudgeRead.from_orm(nudge)
     if nudge.customer_id: # Populate customer_name
         customer = db.query(Customer.customer_name).filter(Customer.id == nudge.customer_id).scalar_one_or_none()
         nudge_read.customer_name = customer
@@ -140,7 +140,7 @@ async def handle_sentiment_action(
                 nudge_id=nudge_id,
                 business_id=business_id
             )
-            nudge_read = CoPilotNudgeRead.model_validate(updated_nudge)
+            nudge_read = CoPilotNudgeRead.from_orm(updated_nudge)
             if updated_nudge.customer_id: # Populate customer_name
                 customer_name = db.query(Customer.customer_name).filter(Customer.id == updated_nudge.customer_id).scalar_one_or_none()
                 nudge_read.customer_name = customer_name

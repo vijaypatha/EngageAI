@@ -2,7 +2,7 @@
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, Integer
-from datetime import datetime, timedelta, timezone # Added timezone
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Literal
 import re
 import sqlalchemy as sa
@@ -45,7 +45,7 @@ class CoPilotNudgeGenerationService:
         logger.info(f"Detecting positive sentiment for CoPilotNudges for business ID: {business_id}")
         
         positive_keywords = ["love", "amazing", "great", "excellent", "fantastic", "wonderful", "happy", "pleased", "satisfied", "thank you", "thanks"]
-        time_threshold = datetime.now(timezone.utc) - timedelta(days=7)
+        time_threshold = datetime.utcnow() - timedelta(days=7)
 
         recent_messages = self.db.query(Message).filter(
             Message.business_id == business_id,
@@ -98,7 +98,7 @@ class CoPilotNudgeGenerationService:
         query = self.db.query(Message).filter(
             Message.business_id == business_id,
             Message.message_type == MessageTypeEnum.INBOUND.value,
-            Message.created_at >= datetime.now(timezone.utc) - timedelta(days=2)
+            Message.created_at >= datetime.utcnow() - timedelta(days=2)
         )
         if specific_message_id:
             query = query.filter(Message.id == specific_message_id)
@@ -150,8 +150,8 @@ class CoPilotNudgeGenerationService:
             logger.error(f"{log_prefix} OpenAI client not initialized.")
             return None
 
-        business = self.db.get(BusinessProfile, business_id)
-        customer = self.db.get(Customer, customer_id)
+        business = self.db.query(BusinessProfile).get(business_id)
+        customer = self.db.query(Customer).get(customer_id)
         if not business or not customer:
             logger.warning(f"{log_prefix} Business or Customer not found.")
             return None
@@ -217,7 +217,7 @@ class CoPilotNudgeGenerationService:
         logger.info(f"Detecting negative sentiment for CoPilotNudges for business ID: {business_id}")
         
         negative_keywords = ["unhappy", "problem", "issue", "not satisfied", "bad", "terrible", "disappointed", "poor", "error", "complaint", "fix this", "refund", "broken", "doesn't work"]
-        time_threshold = datetime.now(timezone.utc) - timedelta(days=7)
+        time_threshold = datetime.utcnow() - timedelta(days=7)
 
         recent_messages = self.db.query(Message).filter(
             Message.business_id == business_id,

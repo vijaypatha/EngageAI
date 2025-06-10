@@ -1,6 +1,6 @@
 # backend/app/services/follow_up_plan_service.py
 import logging
-from datetime import datetime, timezone # Added timezone
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.orm import Session
@@ -141,7 +141,7 @@ class FollowUpPlanService:
 
         # --- 5. Update Nudge Status ---
         nudge.status = NudgeStatusEnum.ACTIONED
-        nudge.updated_at = datetime.now(timezone.utc)
+        nudge.updated_at = datetime.utcnow()
 
         try:
             self.db.commit()

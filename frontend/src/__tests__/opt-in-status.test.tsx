@@ -1,30 +1,21 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import * as api from '@/lib/api'; // Changed import
+import { apiClient } from '@/lib/api';
 import ContactsPage from '@/app/contacts/[business_name]/page';
 import AllEngagementPlansPage from '@/app/all-engagement-plans/[business_name]/page';
 import InboxPage from '@/app/inbox/[business_name]/page';
 
 // Mock the API client
-jest.mock('@/lib/api'); // Auto-mock (or can use the factory if specific structure needed)
-// Let's stick to the factory to be explicit for now, matching previous structure
-// jest.mock('@/lib/api', () => ({
-//   apiClient: {
-//     get: jest.fn(),
-//   },
-//   getCustomersByBusiness: jest.fn(),
-// }));
-// For auto-mock to work well, the actual module should export functions directly.
-// If it exports a default object, then the mock needs to reflect that.
-// Given the previous mock, it implies named exports. So auto-mock should work.
+jest.mock('@/lib/api', () => ({
+  apiClient: {
+    get: jest.fn()
+  }
+}));
 
-// The mock for 'next/navigation' is now expected to be solely in jest.setup.js
-// Ensure jest.setup.js has a comprehensive mock like:
-// jest.mock('next/navigation', () => ({
-//   useParams: jest.fn(() => ({ business_name: 'test-business' })),
-//   useRouter: jest.fn(() => ({ push: jest.fn() })),
-//   usePathname: jest.fn(() => '/mock-path'), // Provide a default mock value
-//   useSearchParams: jest.fn(() => ({ get: jest.fn((param) => `mockValue-${param}`) })), // Provide a default mock value
-// }));
+// Mock useParams
+jest.mock('next/navigation', () => ({
+  useParams: () => ({ business_name: 'test-business' }),
+  useRouter: () => ({ push: jest.fn() })
+}));
 
 describe('Opt-in Status Consistency', () => {
   const mockBusinessId = 123;
@@ -33,25 +24,31 @@ describe('Opt-in Status Consistency', () => {
     id: mockCustomerId,
     customer_name: 'Test Customer',
     opted_in: true,
-    phone: '+1234567890',
-    latest_consent_status: "opted_in" // Added this field
+    phone: '+1234567890'
   };
 
   beforeEach(() => {
     // Reset all mocks
-    jest.clearAllMocks(); // This clears all mocks, including their implementations.
+    jest.clearAllMocks();
     
-    // Set a default, basic mock for apiClient.get in beforeEach.
-    // Tests should override this with specific mockResolvedValueOnce or mockImplementation as needed.
-    (api.apiClient.get as jest.Mock).mockResolvedValue({ data: {} });
+    // Mock business ID lookup
+    (apiClient.get as jest.Mock).mockImplementation((url) => {
+      if (url.includes('/business-profile/business-id')) {
+        return Promise.resolve({ data: { business_id: mockBusinessId } });
+      }
+      return Promise.resolve({ data: [] });
+    });
   });
 
   describe('Contacts Page', () => {
     it('should display correct opt-in status from customers endpoint', async () => {
-      // Mock business ID lookup specifically for this test's setup phase in ContactsPage
-      (api.apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { business_id: mockBusinessId } });
       // Mock customers endpoint
-      (api.getCustomersByBusiness as jest.Mock).mockResolvedValue([mockCustomer]);
+      (apiClient.get as jest.Mock).mockImplementation((url) => {
+        if (url === `/customers/by-business/${mockBusinessId}`) {
+          return Promise.resolve({ data: [mockCustomer] });
+        }
+        return Promise.resolve({ data: { business_id: mockBusinessId } });
+      });
 
       render(<ContactsPage />);
       
@@ -64,22 +61,24 @@ describe('Opt-in Status Consistency', () => {
 
   describe('All Engagement Plans Page', () => {
     it('should display correct opt-in status from engagements endpoint', async () => {
-      // Mock business ID lookup for AllEngagementPlansPage
-      (api.apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { business_id: mockBusinessId } });
-      // Mock engagements endpoint (uses api.apiClient.get)
-      (api.apiClient.get as jest.Mock).mockResolvedValueOnce({
-        data: [{
-          customer_id: mockCustomerId,
-          customer_name: 'Test Customer',
-          opted_in: true,
-          latest_consent_status: 'opted_in', // ensure this is included as page uses it
-          messages: [{
-            id: 1,
-            status: 'pending',
-            smsContent: 'Test message',
-            send_datetime_utc: new Date().toISOString()
-          }]
-        }]
+      // Mock engagements endpoint
+      (apiClient.get as jest.Mock).mockImplementation((url) => {
+        if (url === `/review/all-engagements?business_id=${mockBusinessId}`) {
+          return Promise.resolve({
+            data: [{
+              customer_id: mockCustomerId,
+              customer_name: 'Test Customer',
+              opted_in: true,
+              messages: [{
+                id: 1,
+                status: 'pending',
+                smsContent: 'Test message',
+                send_datetime_utc: new Date().toISOString()
+              }]
+            }]
+          });
+        }
+        return Promise.resolve({ data: { business_id: mockBusinessId } });
       });
 
       render(<AllEngagementPlansPage />);
@@ -93,26 +92,26 @@ describe('Opt-in Status Consistency', () => {
 
   describe('Inbox Page', () => {
     it('should display correct opt-in status from engagement plan endpoint', async () => {
-      // Mock for the first apiClient.get call (business ID)
-      (api.apiClient.get as jest.Mock)
-        .mockResolvedValueOnce({ data: { business_id: mockBusinessId } })
-        // Mock for the second apiClient.get call (customer history)
-        .mockResolvedValueOnce({
-           data: [{ // This needs to match CustomerSummary[] structure
-            customer_id: mockCustomerId,
-            customer_name: 'Test Customer',
-          opted_in: true,
-          consent_status: 'opted_in', // ensure this is included
-          messages: []
-        }]
+      // Mock engagement plan endpoint
+      (apiClient.get as jest.Mock).mockImplementation((url) => {
+        if (url === `/review/engagement-plan/${mockBusinessId}`) {
+          return Promise.resolve({
+            data: [{
+              customer_id: mockCustomerId,
+              customer_name: 'Test Customer',
+              opted_in: true,
+              messages: []
+            }]
+          });
+        }
+        return Promise.resolve({ data: { business_id: mockBusinessId } });
       });
 
       render(<InboxPage />);
       
       await waitFor(() => {
-        // InboxPage uses "Opted-In" text directly, not the "Messages On" from OptInStatusBadge
-        const optInText = screen.getByText('Opted-In');
-        expect(optInText).toBeInTheDocument();
+        const optInBadge = screen.getByText('Messages On');
+        expect(optInBadge).toBeInTheDocument();
       });
     });
   });
@@ -126,7 +125,6 @@ describe('Opt-in Status Consistency', () => {
           customer_id: mockCustomerId,
           customer_name: 'Test Customer',
           opted_in: true,
-          latest_consent_status: "opted_in", // Added this field
           messages: [{
             id: 1,
             status: 'pending',
@@ -136,37 +134,33 @@ describe('Opt-in Status Consistency', () => {
         }
       };
 
-      // Mock for ContactsPage
-      (api.apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { business_id: mockBusinessId } }); // Business ID
-      (api.getCustomersByBusiness as jest.Mock).mockResolvedValueOnce([mockData.customer]); // Customers
+      (apiClient.get as jest.Mock).mockImplementation((url) => {
+        if (url === `/customers/by-business/${mockBusinessId}`) {
+          return Promise.resolve({ data: [mockData.customer] });
+        }
+        if (url === `/review/all-engagements?business_id=${mockBusinessId}`) {
+          return Promise.resolve({ data: [mockData.engagement] });
+        }
+        if (url === `/review/engagement-plan/${mockBusinessId}`) {
+          return Promise.resolve({ data: [mockData.engagement] });
+        }
+        return Promise.resolve({ data: { business_id: mockBusinessId } });
+      });
 
+      // Render all pages
       const { rerender } = render(<ContactsPage />);
       await waitFor(() => {
         expect(screen.getByText('Messages On')).toBeInTheDocument();
       });
-
-      // Mock for AllEngagementPlansPage
-      // No mockReset() here, rely on beforeEach's clearAllMocks and the default mock.
-      // Chain the specific responses needed for this page.
-      (api.apiClient.get as jest.Mock)
-        .mockResolvedValueOnce({ data: { business_id: mockBusinessId } }) // For business ID
-        .mockResolvedValueOnce({ data: [mockData.engagement] });          // For all engagements
 
       rerender(<AllEngagementPlansPage />);
       await waitFor(() => {
         expect(screen.getByText('Messages On')).toBeInTheDocument();
       });
 
-      // Mock for InboxPage
-      // Chain the specific responses needed for this page.
-      (api.apiClient.get as jest.Mock)
-        .mockResolvedValueOnce({ data: { business_id: mockBusinessId } }) // For business ID
-        .mockResolvedValueOnce({ data: [mockData.engagement] }); // Full history
-
       rerender(<InboxPage />);
       await waitFor(() => {
-        // InboxPage uses "Opted-In" text directly, not the "Messages On" from OptInStatusBadge
-        expect(screen.getByText('Opted-In')).toBeInTheDocument();
+        expect(screen.getByText('Messages On')).toBeInTheDocument();
       });
     });
   });

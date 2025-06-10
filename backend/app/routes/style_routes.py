@@ -15,7 +15,7 @@ from app.auth import get_current_user
 import json
 import logging
 from typing import List, Dict, Any
-from datetime import datetime, timezone # Added timezone
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ async def create_business_scenario(
         message_patterns=scenario.message_patterns,
         special_elements=scenario.special_elements,
         response=scenario.response or "",
-        last_analyzed=datetime.now(timezone.utc)
+        last_analyzed=datetime.utcnow()
     )
 
     try:

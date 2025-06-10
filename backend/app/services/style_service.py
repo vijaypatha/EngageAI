@@ -1,6 +1,6 @@
 # Manages the unique communication style of each business, helping maintain consistent messaging tone and personality
 # Business owners can train the system with their preferred way of communicating with customers
-from datetime import datetime, timezone # Added timezone
+from datetime import datetime
 import json
 import logging
 import re
@@ -636,7 +636,7 @@ class StyleService:
                 style_entry.response = data.response
                 # Update last_analyzed only when a non-empty response is provided
                 if data.response is not None and data.response.strip() != "":
-                     style_entry.last_analyzed = datetime.now(timezone.utc) # Mark this specific scenario as updated/analyzed time-wise
+                     style_entry.last_analyzed = datetime.utcnow() # Mark this specific scenario as updated/analyzed time-wise
 
                 db.add(style_entry) # Mark as dirty for update
                 updated_count += 1
@@ -726,7 +726,7 @@ class StyleService:
 
                     # Update last_analyzed timestamp on this specific entry to mark the time of the *full analysis*
                     # Only update if analysis actually happened and was saved
-                    latest_analyzed_entry_with_response.last_analyzed = datetime.now(timezone.utc)
+                    latest_analyzed_entry_with_response.last_analyzed = datetime.utcnow()
 
                     db.add(latest_analyzed_entry_with_response) # Mark as dirty
                     db.commit()
@@ -1142,7 +1142,7 @@ class StyleService:
             # Update the response field
             scenario.response = response
             # Update last_analyzed timestamp on this entry
-            scenario.last_analyzed = datetime.now(timezone.utc)
+            scenario.last_analyzed = datetime.utcnow()
 
 
             db.add(scenario) # Mark as dirty

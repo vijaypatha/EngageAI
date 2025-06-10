@@ -48,7 +48,7 @@ def create_message(
     db.add(db_message)
     db.commit()
     db.refresh(db_message)
-    return Message.model_validate(db_message)
+    return Message.from_orm(db_message)
 
 @router.get("/", response_model=List[Message])
 def get_messages(
@@ -57,14 +57,14 @@ def get_messages(
     db: Session = Depends(get_db)
 ):
     messages = db.query(MessageModel).offset(skip).limit(limit).all()
-    return [Message.model_validate(message) for message in messages]
+    return [Message.from_orm(message) for message in messages]
 
 @router.get("/{message_id}", response_model=Message)
 def get_message(message_id: int, db: Session = Depends(get_db)):
     message = db.query(MessageModel).filter(MessageModel.id == message_id).first()
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
-    return Message.model_validate(message)
+    return Message.from_orm(message)
 
 @router.put("/{message_id}", response_model=Message)
 def update_message(
@@ -81,7 +81,7 @@ def update_message(
     
     db.commit()
     db.refresh(db_message)
-    return Message.model_validate(db_message)
+    return Message.from_orm(db_message)
 
 @router.delete("/{message_id}")
 def delete_message(message_id: int, db: Session = Depends(get_db)):

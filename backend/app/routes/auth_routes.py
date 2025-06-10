@@ -30,10 +30,10 @@
 
 from fastapi import APIRouter, Request, HTTPException, Depends, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, field_validator # Changed validator to field_validator
+from pydantic import BaseModel, validator # Added validator
 import random
 import string
-from datetime import datetime, timedelta, timezone # Added timezone
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 import logging
 
@@ -55,22 +55,12 @@ otp_storage: Dict[str, Dict[str, any]] = {}
 # --- Pydantic Models ---
 class OTPRequest(BaseModel):
     phone_number: str
-
-    @field_validator('phone_number', mode='before')
-    @classmethod
-    def _normalize_otp_phone(cls, v: Optional[str]) -> Optional[str]:
-        # normalize_phone_number is imported from app.schemas
-        return normalize_phone_number(v)
+    _normalize_otp_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
 class OTPVerify(BaseModel):
     phone_number: str
     otp: str
-
-    @field_validator('phone_number', mode='before')
-    @classmethod
-    def _normalize_verify_phone(cls, v: Optional[str]) -> Optional[str]:
-        # normalize_phone_number is imported from app.schemas
-        return normalize_phone_number(v)
+    _normalize_verify_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
 class SessionCreateBody(BaseModel):
     business_id: int
@@ -95,7 +85,7 @@ async def request_otp(
 ):
     phone_number = request_data.phone_number
     otp_code = generate_otp()
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    expires_at = datetime.utcnow() + timedelta(minutes=5)
 
     otp_storage[phone_number] = {
         'otp': otp_code,
@@ -174,7 +164,7 @@ async def verify_otp(
 
     is_expired = True 
     if isinstance(stored_expiry, datetime):
-        is_expired = datetime.now(timezone.utc) > stored_expiry
+        is_expired = datetime.utcnow() > stored_expiry
     else:
         logger.error(f"Stored expiry for {phone_number} is not a datetime object: {stored_expiry}")
 

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Background
 from sqlalchemy.orm import Session, joinedload # Added joinedload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, func, desc # Added func
-from datetime import datetime, timezone # Added timezone
+from datetime import datetime
 from typing import Optional, List
 from app import schemas, models, auth # Make sure models is imported
 
@@ -157,9 +157,9 @@ def get_customers(
     # Convert ORM models to Pydantic models, handling potential missing tags attribute
     response_list = []
     for customer_orm in customers_orm:
-        customer_dto = Customer.model_validate(customer_orm)
+        customer_dto = Customer.from_orm(customer_orm)
         if not hasattr(customer_dto, 'tags'): # Ensure tags list exists
-            customer_dto.tags = [TagRead.model_validate(tag) for tag in customer_orm.tags] if hasattr(customer_orm, 'tags') else []
+            customer_dto.tags = [TagRead.from_orm(tag) for tag in customer_orm.tags] if hasattr(customer_orm, 'tags') else []
         response_list.append(customer_dto)
     return response_list
 
@@ -181,14 +181,14 @@ def get_customer(customer_id: int, db: Session = Depends(get_db)):
 
     # Convert ORM to Pydantic - joinedload ensures tags are available
     try:
-        customer_response = Customer.model_validate(customer_orm)
+        customer_response = Customer.from_orm(customer_orm)
         # Overwrite/add consent status fields
         customer_response.latest_consent_status = latest_status
         customer_response.latest_consent_updated = latest_updated
         customer_response.opted_in = effective_opted_in # Ensure response reflects log
-        # Ensure tags are correctly populated (should be handled by model_validate with relationship)
+        # Ensure tags are correctly populated (should be handled by from_orm with relationship)
         if not hasattr(customer_response, 'tags'): # Safety check
-             customer_response.tags = [TagRead.model_validate(tag) for tag in customer_orm.tags] if hasattr(customer_orm, 'tags') else []
+             customer_response.tags = [TagRead.from_orm(tag) for tag in customer_orm.tags] if hasattr(customer_orm, 'tags') else []
 
         return customer_response
     except Exception as e:
@@ -211,7 +211,7 @@ def update_customer(
     update_data = customer.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(db_customer, field, value)
-    db_customer.updated_at = datetime.now(timezone.utc)
+    db_customer.updated_at = datetime.utcnow()
     try:
         db.commit()
         db.refresh(db_customer)
@@ -223,9 +223,9 @@ def update_customer(
         logger.error(f"Database error updating customer {customer_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update customer record.")
     # Convert to Pydantic, ensuring tags are included
-    customer_response = Customer.model_validate(db_customer)
+    customer_response = Customer.from_orm(db_customer)
     if not hasattr(customer_response, 'tags'):
-        customer_response.tags = [TagRead.model_validate(tag) for tag in db_customer.tags] if hasattr(db_customer, 'tags') else []
+        customer_response.tags = [TagRead.from_orm(tag) for tag in db_customer.tags] if hasattr(db_customer, 'tags') else []
     return customer_response
 
 
@@ -299,15 +299,15 @@ def get_customers_by_business(
 
         # Convert ORM to Pydantic
         try:
-            # Use model_validate which should include tags due to joinedload and schema definition
-            customer_dto = Customer.model_validate(customer_orm)
+            # Use from_orm which should include tags due to joinedload and schema definition
+            customer_dto = Customer.from_orm(customer_orm)
             # Explicitly set consent fields based on log status
             customer_dto.latest_consent_status = latest_status
             customer_dto.latest_consent_updated = latest_updated
             customer_dto.opted_in = effective_opted_in
             # Ensure tags list exists if relationship didn't populate automatically
             if not hasattr(customer_dto, 'tags'):
-                 customer_dto.tags = [TagRead.model_validate(tag) for tag in customer_orm.tags] if hasattr(customer_orm, 'tags') else []
+                 customer_dto.tags = [TagRead.from_orm(tag) for tag in customer_orm.tags] if hasattr(customer_orm, 'tags') else []
 
             customers_response.append(customer_dto)
         except Exception as validation_error:

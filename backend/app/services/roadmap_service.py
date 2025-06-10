@@ -1,6 +1,6 @@
 # Helps business owners plan and automate their customer communication strategy
 # Business owners can create personalized message sequences that automatically send at the right time to nurture customer relationships
-from datetime import datetime, timezone # Added timezone
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import HTTPException, status
@@ -68,14 +68,14 @@ class RoadmapService:
                     customer_id=data.customer_id,
                     business_id=data.business_id,
                     smsContent="Welcome message",
-                    send_datetime_utc=datetime.now(timezone.utc),
+                    send_datetime_utc=datetime.utcnow(),
                     status="pending"
                 ),
                 RoadmapMessage(
                     customer_id=data.customer_id,
                     business_id=data.business_id,
                     smsContent="Follow-up message",
-                    send_datetime_utc=datetime.now(timezone.utc),
+                    send_datetime_utc=datetime.utcnow(),
                     status="pending"
                 )
             ]
