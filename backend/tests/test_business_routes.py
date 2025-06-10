@@ -292,3 +292,155 @@ def test_cleanup_abandoned_profiles_none_deleted(test_app_client_fixture: TestCl
     response = test_app_client_fixture.delete("/business-profile/abandoned")
     assert response.status_code == 200
     assert response.json() == {"message": "Deleted 0 abandoned profiles"}
+
+
+# --- Tests for Caching of Navigation Profile ---
+
+@patch('app.routes.business_routes.redis_client', new_callable=MagicMock)
+def test_get_navigation_profile_cache_miss_and_store(mock_redis_client, test_app_client_fixture: TestClient, mock_db_session: MagicMock):
+    # Arrange
+    slug = "cache-miss-slug"
+    cache_key = f"business_profile_nav_slug:{slug}"
+    mock_redis_client.get.return_value = None # Cache miss
+
+    mock_profile_orm = create_mock_db_profile(id=20, name="Cache Miss Test", slug=slug)
+    mock_db_session.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first.return_value = mock_profile_orm
+
+    expected_profile_data = BusinessProfileSchema.from_orm(mock_profile_orm)
+
+    # Act
+    response = test_app_client_fixture.get(f"/business-profile/navigation-profile/slug/{slug}")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["business_name"] == "Cache Miss Test"
+    mock_redis_client.get.assert_called_once_with(cache_key)
+    mock_redis_client.set.assert_called_once_with(cache_key, expected_profile_data.model_dump_json(), ex=3600)
+    mock_db_session.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first.assert_called_once()
+
+
+@patch('app.routes.business_routes.redis_client', new_callable=MagicMock)
+def test_get_navigation_profile_cache_hit(mock_redis_client, test_app_client_fixture: TestClient, mock_db_session: MagicMock):
+    # Arrange
+    slug = "cache-hit-slug"
+    cache_key = f"business_profile_nav_slug:{slug}"
+
+    # Prepare mock profile data as it would be in cache (JSON string)
+    mock_cached_profile = BusinessProfileSchema(
+        id=21, business_name="Cached Biz", slug=slug, industry="Cache",
+        business_goal="Hit Cache", primary_services="Caching", representative_name="Cache Rep",
+        timezone="GMT", created_at=datetime.utcnow(), notify_owner_on_reply_with_link=False, enable_ai_faq_auto_reply=False
+    )
+    mock_redis_client.get.return_value = mock_cached_profile.model_dump_json()
+
+    # Act
+    response = test_app_client_fixture.get(f"/business-profile/navigation-profile/slug/{slug}")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["business_name"] == "Cached Biz"
+    mock_redis_client.get.assert_called_once_with(cache_key)
+    mock_redis_client.set.assert_not_called() # Should not set if cache hit
+    mock_db_session.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first.assert_not_called() # DB should not be hit
+
+
+@patch('app.routes.business_routes.redis_client', new_callable=MagicMock)
+def test_get_navigation_profile_caches_not_found(mock_redis_client, test_app_client_fixture: TestClient, mock_db_session: MagicMock):
+    # Arrange
+    slug = "non-existent-slug"
+    cache_key = f"business_profile_nav_slug:{slug}"
+
+    # First call: cache miss, DB miss, then cache "None"
+    mock_redis_client.get.return_value = None
+    mock_db_session.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first.return_value = None
+
+    # Act (1st call)
+    response1 = test_app_client_fixture.get(f"/business-profile/navigation-profile/slug/{slug}")
+
+    # Assert (1st call)
+    assert response1.status_code == 404
+    mock_redis_client.get.assert_called_once_with(cache_key)
+    mock_db_session.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first.assert_called_once()
+    mock_redis_client.set.assert_called_once_with(cache_key, json.dumps(None), ex=300)
+
+    # Arrange for 2nd call: simulate "None" is now cached
+    mock_redis_client.get.reset_mock() # Reset call count for get
+    mock_redis_client.set.reset_mock() # Reset call count for set
+    mock_db_session.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first.reset_mock()
+    mock_redis_client.get.return_value = json.dumps(None)
+
+    # Act (2nd call)
+    response2 = test_app_client_fixture.get(f"/business-profile/navigation-profile/slug/{slug}")
+
+    # Assert (2nd call)
+    assert response2.status_code == 404 # Should still be 404 due to cached "None"
+    mock_redis_client.get.assert_called_once_with(cache_key) # Get was called
+    mock_db_session.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first.assert_not_called() # DB not hit
+    mock_redis_client.set.assert_not_called() # Set not called again
+
+
+@patch('app.routes.business_routes.redis_client', new_callable=MagicMock)
+def test_navigation_profile_cache_invalidation_on_update(mock_redis_client, test_app_client_fixture: TestClient, mock_db_session: MagicMock):
+    # Arrange: Setup an existing profile
+    original_name = "Original Cache Biz"
+    original_slug = slugify(original_name)
+    profile_id = 22
+    mock_profile_orm = create_mock_db_profile(id=profile_id, name=original_name, slug=original_slug)
+
+    # Simulate that the profile to be updated exists in the DB
+    # The update route uses filter(ANY).first() initially for the profile to update.
+    # Then, if name changes, it uses another filter(ANY).first() to check for slug conflict.
+    mock_db_session.query(BusinessProfileModel).filter(ANY).first.side_effect = [mock_profile_orm, None] # No slug conflict for new name
+
+    updated_name = "Updated Cache Biz"
+    updated_slug = slugify(updated_name)
+    update_payload = {"business_name": updated_name, "industry": "E-commerce"}
+
+    original_cache_key = f"business_profile_nav_slug:{original_slug}"
+    updated_cache_key = f"business_profile_nav_slug:{updated_slug}"
+
+    # Act: Update the business profile
+    response = test_app_client_fixture.put(f"/business-profile/{profile_id}", json=update_payload)
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["slug"] == updated_slug # Slug should have been updated
+
+    # Check cache invalidation calls
+    # As per implementation, it deletes old_slug cache then new_slug cache
+    mock_redis_client.delete.assert_any_call(original_cache_key)
+    mock_redis_client.delete.assert_any_call(updated_cache_key)
+    # Ensure delete was called for both (or at least twice if old_slug == new_slug, though logic handles that)
+    assert mock_redis_client.delete.call_count >= 1 # At least one if slug didn't change, two if it did.
+                                                    # Current logic calls delete on new_slug regardless.
+
+
+@patch('app.routes.business_routes.redis_client', new_callable=MagicMock)
+def test_get_navigation_profile_redis_connection_error(mock_redis_client, test_app_client_fixture: TestClient, mock_db_session: MagicMock):
+    # Arrange
+    slug = "redis-error-slug"
+    mock_redis_client.get.side_effect = redis.exceptions.ConnectionError("Test Redis connection error")
+    # If get fails, set should ideally not be called or handled gracefully by the route if it also fails.
+    # For this test, primarily ensuring GET fallback.
+    mock_redis_client.set = MagicMock()
+
+
+    mock_profile_orm = create_mock_db_profile(id=23, name="Redis Error Fallback", slug=slug)
+    mock_db_session.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first.return_value = mock_profile_orm
+
+    # Act
+    response = test_app_client_fixture.get(f"/business-profile/navigation-profile/slug/{slug}")
+
+    # Assert
+    assert response.status_code == 200 # Should fallback to DB
+    assert response.json()["business_name"] == "Redis Error Fallback"
+    mock_redis_client.get.assert_called_once_with(f"business_profile_nav_slug:{slug}")
+    # Check if set was attempted despite connection error on get (depends on route's error handling for set)
+    # The current route logic would attempt a set if DB query is successful, even if GET failed.
+    # So, we expect set to be called, but it might also raise an error (which should be caught by the route).
+    # For simplicity, let's assume set will also fail or we just check it was called.
+    # If redis_client.set also throws ConnectionError, the route should still return data from DB.
+    mock_redis_client.set.assert_called_once()
+    # To be more precise, if redis_client.set also fails:
+    # mock_redis_client.set.side_effect = redis.exceptions.ConnectionError("Test Redis connection error on set")
+    # # ... then re-run and ensure the response is still 200 from DB. The current code logs the set error but proceeds.

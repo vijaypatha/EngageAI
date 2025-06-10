@@ -12,9 +12,11 @@ from app.schemas import (
     BusinessProfileUpdate, # This schema must include the new Autopilot fields
     BusinessPhoneUpdate
 )
+from app.redis_client import redis_client # Import Redis client
+import json # Import json for serialization
 import re
 import logging
-from datetime import datetime, timedelta # Added timedelta back
+from datetime import datetime, timedelta
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -104,17 +106,21 @@ def update_business_profile(
     else:
         logger.info("'enable_ai_faq_auto_reply' key NOT found in update_data_dict (after exclude_unset).")
 
+    old_slug = profile.slug
+    new_slug = old_slug
+
     if 'business_name' in update_data_dict and profile.business_name != update_data_dict['business_name']:
         new_slug = slugify(update_data_dict['business_name'])
-        if new_slug != profile.slug:
+        if new_slug != old_slug:
             existing_slug_profile = db.query(BusinessProfileModel).filter(
                 BusinessProfileModel.slug == new_slug, BusinessProfileModel.id != business_id
             ).first()
             if existing_slug_profile:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"New business name generates a slug ('{new_slug}') that already exists.")
-            logger.info(f"Updating slug from '{profile.slug}' to '{new_slug}' due to business name change.")
+            logger.info(f"Updating slug from '{old_slug}' to '{new_slug}' due to business name change.")
             profile.slug = new_slug
 
+    # Apply updates from payload to the ORM model
     logger.info(f"Applying updates to profile {business_id}...")
     for field, value in update_data_dict.items():
         logger.debug(f"Setting attribute '{field}' to value '{value}' (Type: {type(value)})")
@@ -123,9 +129,31 @@ def update_business_profile(
     try:
         logger.info(f"Attempting to commit changes for business {business_id}...")
         db.commit()
-        db.refresh(profile)
+        db.refresh(profile) # Refresh to get any DB-level changes or defaults
         logger.info(f"Successfully updated and committed profile {business_id}.")
         logger.info(f"Profile {business_id} final enable_ai_faq_auto_reply state in DB: {profile.enable_ai_faq_auto_reply}")
+
+        # Cache invalidation logic
+        if redis_client:
+            # Invalidate cache for the old slug if it changed
+            if old_slug != new_slug:
+                old_cache_key = f"business_profile_nav_slug:{old_slug}"
+                try:
+                    redis_client.delete(old_cache_key)
+                    logger.info(f"Invalidated cache for old slug: {old_slug}")
+                except Exception as e_redis_del_old:
+                    logger.error(f"Redis error while deleting cache for old slug {old_slug}: {e_redis_del_old}", exc_info=True)
+
+            # Invalidate cache for the current/new slug as data has changed
+            current_cache_key = f"business_profile_nav_slug:{new_slug}" # new_slug is same as old_slug if name didn't change
+            try:
+                redis_client.delete(current_cache_key)
+                logger.info(f"Invalidated cache for current/new slug: {new_slug}")
+            except Exception as e_redis_del_current:
+                 logger.error(f"Redis error while deleting cache for current/new slug {new_slug}: {e_redis_del_current}", exc_info=True)
+        else:
+            logger.warning("Redis client not available for cache invalidation during profile update.")
+
         return BusinessProfile.from_orm(profile)
     except Exception as e:
         db.rollback()
@@ -185,23 +213,51 @@ async def get_business_id_by_slug(slug: str, db: Session = Depends(get_db)):
         )
 
 @router.get("/navigation-profile/slug/{slug}", response_model=BusinessProfile)
-async def get_navigation_profile_by_slug(slug: str, db: Session = Depends(get_db)):
-    logger.info(f"Attempting to fetch navigation profile (full) with slug: {slug}")
-    try:
-        business = db.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first()
-        if not business:
-            logger.warning(f"No business found for navigation profile with slug: {slug}")
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business profile not found for this slug (for navigation)")
-        logger.info(f"Successfully found navigation profile for slug {slug}: ID {business.id}, Name: {business.business_name}")
-        return BusinessProfile.from_orm(business)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching navigation profile by slug {slug}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error while fetching navigation profile by slug"
-        )
+def get_navigation_profile_by_slug(slug: str, db: Session = Depends(get_db)): # Changed to sync
+    cache_key = f"business_profile_nav_slug:{slug}"
+    logger.info(f"Attempting to fetch navigation profile for slug: {slug}")
+
+    if redis_client:
+        try:
+            cached_profile_json = redis_client.get(cache_key)
+            if cached_profile_json:
+                logger.info(f"Cache hit for navigation profile with slug: {slug}")
+                profile_dict = json.loads(cached_profile_json)
+                if profile_dict is None:
+                    # This means we explicitly cached "not found"
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business profile not found for this slug (cached as not found)")
+                return BusinessProfile(**profile_dict)
+        except Exception as e:
+            logger.error(f"Redis error while getting navigation profile for slug {slug}: {e}", exc_info=True)
+            # Fall through to DB if Redis fails, treat as cache miss
+    else:
+        logger.warning("Redis client not available for navigation profile caching.")
+
+    logger.info(f"Cache miss or Redis error for navigation profile slug: {slug}. Querying database.")
+    business_orm = db.query(BusinessProfileModel).filter(BusinessProfileModel.slug == slug).first()
+
+    if not business_orm:
+        logger.warning(f"No business found in DB for navigation profile with slug: {slug}")
+        if redis_client:
+            try:
+                # Cache "not found" for a short period to prevent repeated DB hits for non-existent slugs
+                redis_client.set(cache_key, json.dumps(None), ex=300) # Cache None for 5 minutes
+            except Exception as e:
+                logger.error(f"Redis error while setting 'not found' cache for slug {slug}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business profile not found for this slug (for navigation)")
+
+    profile_data = BusinessProfile.from_orm(business_orm)
+    logger.info(f"Successfully found navigation profile in DB for slug {slug}: ID {profile_data.id}, Name: {profile_data.business_name}")
+
+    if redis_client:
+        try:
+            redis_client.set(cache_key, profile_data.model_dump_json(), ex=3600) # Cache for 1 hour
+            logger.info(f"Navigation profile for slug {slug} cached successfully.")
+        except Exception as e:
+            logger.error(f"Redis error while setting navigation profile for slug {slug}: {e}", exc_info=True)
+            # If caching fails, the data from DB is still returned
+
+    return profile_data
 
 @router.patch("/{business_id}/phone", response_model=BusinessProfile)
 def update_business_phone(

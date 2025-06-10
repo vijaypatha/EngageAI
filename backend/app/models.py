@@ -127,7 +127,7 @@ class Customer(Base):
     lifecycle_stage = Column(String)
     pain_points = Column(Text)
     interaction_history = Column(Text)
-    business_id = Column(Integer, ForeignKey("business_profiles.id"))
+    business_id = Column(Integer, ForeignKey("business_profiles.id"), index=True)
     timezone = Column(String, nullable=True)
     opted_in = Column(Boolean, default=False)
     sms_opt_in_status = Column(String, default=OptInStatus.NOT_SET.value, nullable=False) # Use .value for default

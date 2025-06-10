@@ -259,21 +259,55 @@ async def test_get_customer_messages_no_messages(message_service_instance: Messa
 
 
 @pytest.mark.asyncio
-async def test_get_customer_consent_status_logic(db: Session, message_service_instance: MessageService, mock_customer: Customer):
-    # Arrange
-    result1 = message_service_instance.get_customer_messages(mock_customer.id)
-    assert result1["consent_status"] == "pending"
-
-    log_opt_out = ConsentLog(customer_id=mock_customer.id, status=OptInStatus.OPTED_OUT.value, replied_at=datetime.now(timezone.utc) - timedelta(days=1))
-    db.add(log_opt_out)
+async def test_get_customer_messages_consent_status_scenarios(db: Session, message_service_instance: MessageService, mock_business: BusinessProfile):
+    # Scenario: No Consent Logs, Customer.opted_in is False (default)
+    customer1 = Customer(customer_name="Cust1 NoLogs DefaultOptOut", phone="1001", business_id=mock_business.id, opted_in=False)
+    db.add(customer1)
     db.commit()
-    result2 = message_service_instance.get_customer_messages(mock_customer.id)
-    assert result2["consent_status"] == OptInStatus.OPTED_OUT.value
+    result1 = message_service_instance.get_customer_messages(customer1.id)
+    # The service logic defaults to "pending" if no logs and customer.opted_in is False
+    assert result1["consent_status"] == OptInStatus.PENDING.value
 
-    log_opt_in = ConsentLog(customer_id=mock_customer.id, status=OptInStatus.OPTED_IN.value, replied_at=datetime.now(timezone.utc))
-    db.add(log_opt_in)
+    # Scenario: No Consent Logs, Customer.opted_in is True
+    customer2 = Customer(customer_name="Cust2 NoLogs OptInTrue", phone="1002", business_id=mock_business.id, opted_in=True)
+    db.add(customer2)
     db.commit()
-    result3 = message_service_instance.get_customer_messages(mock_customer.id)
+    result2 = message_service_instance.get_customer_messages(customer2.id)
+    # Fallback to customer.opted_in = True should result in "opted_in" status
+    assert result2["consent_status"] == OptInStatus.OPTED_IN.value
+
+    # Scenario: Multiple Consent Logs, Latest is "opted_in"
+    customer3 = Customer(customer_name="Cust3 Logs LatestOptIn", phone="1003", business_id=mock_business.id)
+    db.add(customer3)
+    db.commit()
+    cl3_1 = ConsentLog(customer_id=customer3.id, business_id=mock_business.id, phone_number=customer3.phone, method="sms", status=OptInStatus.OPTED_OUT.value, replied_at=datetime.now(timezone.utc) - timedelta(days=2))
+    cl3_2 = ConsentLog(customer_id=customer3.id, business_id=mock_business.id, phone_number=customer3.phone, method="sms", status=OptInStatus.OPTED_IN.value, replied_at=datetime.now(timezone.utc) - timedelta(days=1)) # Latest
+    cl3_3 = ConsentLog(customer_id=customer3.id, business_id=mock_business.id, phone_number=customer3.phone, method="sms", status=OptInStatus.PENDING.value, replied_at=datetime.now(timezone.utc) - timedelta(days=3))
+    db.add_all([cl3_1, cl3_2, cl3_3])
+    db.commit()
+    result3 = message_service_instance.get_customer_messages(customer3.id)
     assert result3["consent_status"] == OptInStatus.OPTED_IN.value
+
+    # Scenario: Multiple Consent Logs, Latest is "opted_out"
+    customer4 = Customer(customer_name="Cust4 Logs LatestOptOut", phone="1004", business_id=mock_business.id)
+    db.add(customer4)
+    db.commit()
+    cl4_1 = ConsentLog(customer_id=customer4.id, business_id=mock_business.id, phone_number=customer4.phone, method="sms", status=OptInStatus.OPTED_IN.value, replied_at=datetime.now(timezone.utc) - timedelta(days=2))
+    cl4_2 = ConsentLog(customer_id=customer4.id, business_id=mock_business.id, phone_number=customer4.phone, method="sms", status=OptInStatus.OPTED_OUT.value, replied_at=datetime.now(timezone.utc) - timedelta(days=1)) # Latest
+    db.add_all([cl4_1, cl4_2])
+    db.commit()
+    result4 = message_service_instance.get_customer_messages(customer4.id)
+    assert result4["consent_status"] == OptInStatus.OPTED_OUT.value
+
+    # Scenario: Consent Log with status "pending" as the latest
+    customer5 = Customer(customer_name="Cust5 Logs LatestPending", phone="1005", business_id=mock_business.id)
+    db.add(customer5)
+    db.commit()
+    cl5_1 = ConsentLog(customer_id=customer5.id, business_id=mock_business.id, phone_number=customer5.phone, method="sms", status=OptInStatus.OPTED_OUT.value, replied_at=datetime.now(timezone.utc) - timedelta(days=2))
+    cl5_2 = ConsentLog(customer_id=customer5.id, business_id=mock_business.id, phone_number=customer5.phone, method="sms", status=OptInStatus.PENDING.value, replied_at=datetime.now(timezone.utc) - timedelta(days=1)) # Latest
+    db.add_all([cl5_1, cl5_2])
+    db.commit()
+    result5 = message_service_instance.get_customer_messages(customer5.id)
+    assert result5["consent_status"] == OptInStatus.PENDING.value
 
 # Final newline for PEP8

@@ -253,17 +253,32 @@ class MessageBase(BaseModel):
     parent_id: Optional[int] = None
     scheduled_time: Optional[datetime] = None; sent_at: Optional[datetime] = None
     is_hidden: bool = False; message_metadata: Optional[Dict[str,Any]] = None
+
+    customer: Optional["Customer"] = None # Forward reference for Customer schema
+    business: Optional["BusinessProfile"] = None # Forward reference for BusinessProfile schema
+
+    # Ensure Config allows ORM mode if not already present at this level,
+    # though Message and MessageResponse will have it.
+    # class Config:
+    #     from_attributes = True
+
 class MessageCreate(MessageBase): pass
 class MessageUpdate(BaseModel):
     content: Optional[str] = None; 
     status: Optional[MessageStatusEnum] = None # MODIFIED: Use Enum
     scheduled_time: Optional[datetime] = None; sent_at: Optional[datetime] = None
     is_hidden: Optional[bool] = None; message_metadata: Optional[Dict[str,Any]] = None
+
 class Message(MessageBase):
     id: int; created_at: datetime
+    # customer: Optional[Customer] = None # Already in MessageBase
+    # business: Optional[BusinessProfile] = None # Already in MessageBase
     class Config: from_attributes = True
+
 class MessageResponse(MessageBase): 
     id: int; created_at: datetime; updated_at: Optional[datetime] = None
+    # customer: Optional[Customer] = None # Already in MessageBase
+    # business: Optional[BusinessProfile] = None # Already in MessageBase
     class Config: from_attributes = True
 
 class EngagementBase(BaseModel): 
@@ -450,3 +465,90 @@ class PlanMessage(BaseModel):
 class ActivateEngagementPlanPayload(BaseModel):
     customer_id: int = Field(..., description="The ID of the customer this plan is for.")
     messages: List[PlanMessage] = Field(..., min_length=1, description="The list of messages to be scheduled as part of the plan.")
+
+
+# --- Inbox Schemas ---
+class InboxCustomerSummary(BaseModel):
+    customer_id: int
+    customer_name: str
+    phone: Optional[str] = None # Optional as it might not be strictly needed for summary
+    opted_in: bool
+    consent_status: str
+    last_message_content: Optional[str] = None
+    last_message_timestamp: Optional[datetime] = None
+    unread_message_count: int = 0 # Default to 0, can be updated by a more complex query
+    business_id: int
+
+    class Config:
+        from_attributes = True
+
+class PaginatedInboxSummaries(BaseModel):
+    items: List[InboxCustomerSummary]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+# --- Summary Schemas for Payload Reduction ---
+
+class CustomerSummarySchema(BaseModel):
+    id: int
+    customer_name: str
+    phone: Optional[str] = None
+    lifecycle_stage: Optional[str] = None
+    opted_in: bool = False # Default to false if not available
+    latest_consent_status: Optional[str] = None
+    latest_consent_updated: Optional[datetime] = None
+    tags: List[TagRead] = Field(default_factory=list)
+    business_id: int # Added business_id as it's in CustomerBase
+
+    class Config:
+        from_attributes = True
+
+class CustomerBasicInfo(BaseModel):
+    id: int
+    customer_name: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class BusinessBasicInfo(BaseModel):
+    id: int
+    business_name: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class MessageSummarySchema(BaseModel):
+    id: int
+    conversation_id: Optional[uuid.UUID] = None # Added conversation_id
+    business_id: int
+    customer_id: int
+    content_snippet: Optional[str] = None
+    message_type: Optional[MessageTypeEnum] = None # Use the enum
+    status: Optional[MessageStatusEnum] = None     # Use the enum
+    created_at: datetime
+    sent_at: Optional[datetime] = None
+    customer: Optional[CustomerBasicInfo] = None
+    business: Optional[BusinessBasicInfo] = None
+
+    class Config:
+        from_attributes = True
+
+# --- Customer Conversation Schemas ---
+# Re-using the existing Message schema for individual messages in a conversation for now.
+# If specific fields or formatting are needed for the timeline, a more specific schema can be created.
+# For example, ConversationMessageForTimeline(Message) could be used and customized if needed.
+class ConversationMessageForTimeline(Message): # This already inherits customer & business from MessageBase
+    pass
+
+class CustomerConversation(BaseModel):
+    customer_id: int
+    messages: List[ConversationMessageForTimeline]
+    class Config:
+        from_attributes = True
+
+# Update forward references for all models that might have them
+# This is good practice at the end of the schemas file.
+Customer.update_forward_refs()
+MessageBase.update_forward_refs() # MessageBase contains Optional["Customer"], Optional["BusinessProfile"]
+# Add other .update_forward_refs() if other models use string forward references.
+# For now, focusing on the ones modified or relevant to the new summary schemas.

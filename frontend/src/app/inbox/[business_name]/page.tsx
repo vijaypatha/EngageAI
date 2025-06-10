@@ -3,10 +3,15 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { apiClient } from "@/lib/api";
-import { Clock, Send, MessageSquare, Check, AlertCircle, Trash2, Edit3, CheckCheck, User, Phone, MessageCircle } from "lucide-react";
+import { apiClient, useBusinessIdFromSlug, useInboxSummaries, useCustomerConversation, FrontendMessage } from "@/lib/api"; // Added useCustomerConversation and FrontendMessage
+import useSWR, { mutate } from 'swr';
+import { Clock, Send, MessageSquare, Check, AlertCircle, Trash2, Edit3, CheckCheck, User, Phone, MessageCircle, ChevronLeft, ChevronRight } from "lucide-react";
 import clsx from "clsx";
 import { format, isValid, parseISO } from 'date-fns';
+import { CustomerListSkeleton } from '@/components/CustomerListSkeleton';
+import { MessagePanelSkeleton } from '@/components/MessagePanelSkeleton';
+import { FixedSizeList as List } from 'react-window';
+import AutoSizer from 'react-virtualized-auto-sizer';
 
 interface CustomerSummary {
   customer_id: number;
@@ -81,23 +86,173 @@ const formatMessageTimestamp = (dateString: string | null | undefined): string =
 export default function InboxPage() {
   const { business_name } = useParams<{ business_name: string }>();
   const searchParams = useSearchParams();
-  const [customerSummaries, setCustomerSummaries] = useState<CustomerSummary[]>([]);
+
+  // SWR hook for Business ID
+  const { data: businessData, error: businessError, isLoading: businessIsLoading } = useBusinessIdFromSlug(business_name as string);
+  const businessId = businessData?.business_id;
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 20;
+
+  const {
+      data: paginatedData,
+      error: historyError,
+      isLoading: historyIsLoading,
+      mutate: mutateSummaries // Renamed for clarity
+  } = useInboxSummaries(businessId, currentPage, ITEMS_PER_PAGE);
+
+  const customerSummariesFromHook = paginatedData?.items ?? [];
+  const totalCustomers = paginatedData?.total ?? 0;
+  const totalPages = paginatedData?.pages ?? 0;
+
   const [activeCustomerId, setActiveCustomerId] = useState<number | null>(null);
   const [newMessage, setNewMessage] = useState("");
-  const [businessId, setBusinessId] = useState<number | null>(null);
   const [selectedDraftId, setSelectedDraftId] = useState<string | number | null>(null);
-
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const [lastSeenMap, setLastSeenMap] = useState<Record<number, string>>({});
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // This customerSummaries is now just the current page's items.
+  // The full list for sorting/preview generation was done by the backend.
+  const customerSummaries = useMemo(() => {
+    return customerSummariesFromHook.map(cs => ({
+      ...cs, // cs already has last_message_content and last_message_timestamp from backend
+      content: cs.last_message_content ? (cs.last_message_content.slice(0, 40) + (cs.last_message_content.length > 40 ? "..." : "")) : "No recent messages",
+      sent_time: cs.last_message_timestamp || "1970-01-01T00:00:00.000Z" // Ensure sent_time for sorting/display
+    }));
+  }, [customerSummariesFromHook]);
+
+
+  useEffect(() => {
+    // When page changes, or new data comes in, if active customer is not in the current view, deselect.
+    // Or, ideally, fetch their specific data - this will be handled by a new hook later.
+    if (activeCustomerId && customerSummaries.length > 0 && !customerSummaries.find(cs => cs.customer_id === activeCustomerId)) {
+      // setActiveCustomerId(null); // Option 1: Deselect if not on current page
+      // Option 2: Keep active, timeline will show loading/fetch its own data (handled by next subtask)
+    }
+
+    // If no active customer and there are summaries, select the first one.
+    if (!activeCustomerId && customerSummaries.length > 0 && customerSummaries[0].customer_id) {
+       const urlCustomerIdString = searchParams.get('activeCustomer');
+       if (urlCustomerIdString) {
+            const urlCustomerId = parseInt(urlCustomerIdString, 10);
+            const customerExistsOnPage = customerSummaries.some(cs => cs.customer_id === urlCustomerId);
+            if (customerExistsOnPage) {
+              setActiveCustomerId(urlCustomerId);
+            } else {
+                 // If not on current page, we might not auto-select, or select first of current page
+                 // For now, let's select first of current page if no specific valid one is found on this page
+                setActiveCustomerId(customerSummaries[0].customer_id);
+            }
+       } else {
+        setActiveCustomerId(customerSummaries[0].customer_id);
+       }
+    }
+  }, [currentPage, customerSummaries, activeCustomerId, searchParams]);
+
+
+  useEffect(() => {
+    // This effect tries to set an initial active customer based on URL or first in list
+    // It should run when businessId is resolved and initial data might be available
+    if (businessId && !historyIsLoading && customerSummaries && customerSummaries.length > 0 && !activeCustomerId) {
+      const urlCustomerIdString = searchParams.get('activeCustomer');
+      if (urlCustomerIdString) {
+        const urlCustomerId = parseInt(urlCustomerIdString, 10);
+        // Check if this customer is in the currently loaded page of summaries
+        const customerExistsOnPage = customerSummaries.some(cs => cs.customer_id === urlCustomerId);
+        if (customerExistsOnPage) {
+          setActiveCustomerId(urlCustomerId);
+        } else {
+          // If not on current page, we could fetch that page, or just default to first on current.
+          // For now, defaulting to first on current page.
+          setActiveCustomerId(customerSummaries[0].customer_id);
+        }
+      } else if (customerSummaries.length > 0 && customerSummaries[0].customer_id) {
+        setActiveCustomerId(customerSummaries[0].customer_id);
+      }
+    } else if (!businessIsLoading && !businessId && businessError) {
+        console.error("Error fetching business ID:", businessError);
+    } else if (businessId && !historyIsLoading && historyError && (!customerSummaries || customerSummaries.length === 0)) {
+        console.error("Error fetching customer summaries:", historyError);
+    }
+  }, [business_name, searchParams, businessId, businessIsLoading, businessError, customerSummaries, historyIsLoading, historyError, activeCustomerId]);
+
+
+  const {
+    data: activeCustomerConversation,
+    error: conversationError,
+    isLoading: conversationIsLoading,
+    mutate: mutateConversation
+  } = useCustomerConversation(activeCustomerId);
+
+  const timelineEntries = useMemo(() => {
+    if (!activeCustomerConversation || !activeCustomerConversation.messages) {
+      return [];
+    }
+    // Reuse the existing processing logic if BackendMessage and FrontendMessage are compatible
+    // Or adapt as necessary. Assuming FrontendMessage from api.ts matches BackendMessage structure for now.
+    return activeCustomerConversation.messages.map((msg: FrontendMessage): TimelineEntry => {
+        let processedContent = "";
+        let isFaqAnswer = false;
+        let appendedOptInPrompt = false;
+
+        // This content processing logic is similar to what was in the old useMemo for timelineEntries
+        // It might need adjustment based on the exact structure of `msg.content` from the new endpoint
+        if (typeof msg.content === 'string') {
+            try {
+                const parsedJson = JSON.parse(msg.content);
+                if (parsedJson && typeof parsedJson === 'object') {
+                    if (typeof parsedJson.text === 'string') {
+                        processedContent = parsedJson.text;
+                        isFaqAnswer = !!parsedJson.is_faq_answer; // Assuming these fields might exist
+                        appendedOptInPrompt = !!parsedJson.appended_opt_in_prompt;
+                    } else { // If 'text' is not a string, stringify the whole content
+                        processedContent = JSON.stringify(parsedJson);
+                    }
+                } else { // If not an object, use as is
+                    processedContent = msg.content;
+                }
+            } catch (e) { // If not JSON, use as is
+                processedContent = msg.content;
+            }
+        } else if (typeof msg.content === 'object' && msg.content !== null) {
+             if (typeof (msg.content as any).text === 'string') {
+                processedContent = (msg.content as any).text;
+                isFaqAnswer = !!(msg.content as any).is_faq_answer;
+                appendedOptInPrompt = !!(msg.content as any).appended_opt_in_prompt;
+            } else {
+                 processedContent = JSON.stringify(msg.content);
+            }
+        } else if (msg.message_type === "customer" && (msg as any).response) { // Assuming 'response' field for customer messages if content is not direct
+             processedContent = (msg as any).response;
+        } else {
+            processedContent = "[No content]";
+        }
+
+        return {
+            id: String(msg.id), // Ensure ID is string for key prop
+            type: msg.message_type as TimelineEntry['type'], // Cast if types are aligned
+            content: processedContent,
+            timestamp: msg.sent_at || msg.scheduled_time || msg.created_at, // Prefer sent_at, then scheduled_time, then created_at
+            customer_id: msg.customer_id,
+            is_hidden: msg.is_hidden || false,
+            status: msg.status,
+            // source: msg.source, // If source is available on FrontendMessage
+            is_faq_answer: isFaqAnswer,
+            appended_opt_in_prompt: appendedOptInPrompt,
+        };
+    }).sort((a, b) => { // Sort by timestamp
+        const timeA = a.timestamp ? parseISO(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? parseISO(b.timestamp).getTime() : 0;
+        return timeA - timeB;
+    });
+  }, [activeCustomerConversation]);
+
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -106,274 +261,6 @@ export default function InboxPage() {
       }
     });
   }, [timelineEntries]);
-
-  const fetchAndSetCustomerSummaries = async (bId: number) => {
-    try {
-      const res = await apiClient.get(`/review/full-customer-history?business_id=${bId}`);
-      const customerDataArray: CustomerSummary[] = res.data || [];
-
-      const summariesWithPreview = customerDataArray.map(cs => {
-        const validMessages = Array.isArray(cs.messages) ? cs.messages : [];
-        const lastMsgArray = validMessages
-          .filter(m => ['sent', 'customer', 'outbound_ai_reply', 'scheduled', 'scheduled_pending'].includes(m.type) && !m.is_hidden)
-          .sort((a, b) => {
-            const timeA = new Date(a.sent_time || a.scheduled_time || 0).getTime();
-            const timeB = new Date(b.sent_time || b.scheduled_time || 0).getTime();
-            return timeB - timeA;
-          });
-        const lastMsg = lastMsgArray.length > 0 ? lastMsgArray[0] : null;
-
-        let previewContent = "";
-        if (lastMsg?.content) {
-          if (typeof lastMsg.content === 'string') {
-            try {
-              const parsed = JSON.parse(lastMsg.content);
-              if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
-                previewContent = parsed.text;
-              } else {
-                previewContent = lastMsg.content;
-              }
-            } catch (e) {
-              previewContent = lastMsg.content;
-            }
-          } else if (typeof lastMsg.content === 'object' && lastMsg.content !== null) {
-            if (typeof (lastMsg.content as any).text === 'string') {
-              previewContent = (lastMsg.content as any).text;
-            } else {
-              previewContent = JSON.stringify(lastMsg.content);
-            }
-          }
-        } else if (lastMsg?.response && lastMsg.type === 'customer') {
-          previewContent = lastMsg.response;
-        }
-
-        return {
-          ...cs,
-          content: previewContent.slice(0, 40) + (previewContent.length > 40 ? "..." : ""),
-          sent_time: lastMsg?.sent_time || lastMsg?.scheduled_time || cs.consent_updated || "1970-01-01T00:00:00.000Z"
-        }
-      });
-
-      summariesWithPreview.sort((a, b) => {
-        const timeA = new Date(a.sent_time).getTime();
-        const timeB = new Date(b.sent_time).getTime();
-        const validTimeA = isNaN(timeA) ? 0 : timeA;
-        const validTimeB = isNaN(timeB) ? 0 : timeB;
-        return validTimeB - validTimeA;
-      });
-      setCustomerSummaries(summariesWithPreview);
-      return summariesWithPreview;
-    } catch (error) {
-      console.error("Failed to fetch customer summaries:", error);
-      throw error;
-    }
-  };
-
-  useEffect(() => {
-    const initialize = async () => {
-      if (!business_name) {
-        setIsLoading(false);
-        setFetchError("Business identifier is missing.");
-        return;
-      }
-      setIsLoading(true);
-      setFetchError(null);
-      try {
-        const bizRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
-        const id = bizRes.data?.business_id;
-        setBusinessId(id);
-
-        if (id) {
-          const initialSummaries = await fetchAndSetCustomerSummaries(id);
-          const urlCustomerIdString = searchParams.get('activeCustomer');
-
-          if (urlCustomerIdString) {
-            const urlCustomerId = parseInt(urlCustomerIdString, 10);
-            const customerExists = initialSummaries.some(cs => cs.customer_id === urlCustomerId);
-            if (customerExists) {
-              setActiveCustomerId(urlCustomerId);
-            } else if (initialSummaries.length > 0 && initialSummaries[0].customer_id) {
-              setActiveCustomerId(initialSummaries[0].customer_id);
-            } else {
-              setActiveCustomerId(null);
-            }
-          } else if (initialSummaries.length > 0 && initialSummaries[0].customer_id) {
-            setActiveCustomerId(initialSummaries[0].customer_id);
-          } else {
-            setActiveCustomerId(null);
-          }
-        } else {
-          setFetchError("Failed to retrieve business ID.");
-        }
-      } catch (error: any) {
-        setFetchError(error.message || "Failed to load initial data.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    initialize();
-  }, [business_name, searchParams]);
-
-  useEffect(() => {
-    if (!businessId) return;
-    const intervalId = setInterval(async () => {
-      try {
-        if (businessId && document.visibilityState === 'visible') {
-          await fetchAndSetCustomerSummaries(businessId);
-        }
-      } catch (error) {
-        console.error("Polling failed:", error);
-      }
-    }, 5000);
-    return () => clearInterval(intervalId);
-  }, [businessId]);
-
-  useEffect(() => {
-    const currentCustomerData = customerSummaries.find(cs => cs.customer_id === activeCustomerId);
-    let newTimelineEntries: TimelineEntry[] = [];
-
-    if (currentCustomerData && Array.isArray(currentCustomerData.messages)) {
-      newTimelineEntries = currentCustomerData.messages
-        .filter(msg => !msg.is_hidden && !(msg.type === 'ai_draft' && msg.source === 'ai_draft_suggestion'))
-        .map((msg: BackendMessage): TimelineEntry | null => {
-          if (!msg.type || typeof msg.id === 'undefined') return null;
-
-          let processedContent = "";
-          let isFaqAnswer = false;
-          let appendedOptInPrompt = false;
-
-          if (typeof msg.content === 'string') {
-            try {
-              const parsedJson = JSON.parse(msg.content);
-              if (parsedJson && typeof parsedJson === 'object') {
-                if (typeof parsedJson.text === 'string') {
-                  processedContent = parsedJson.text;
-                  isFaqAnswer = !!parsedJson.is_faq_answer;
-                  appendedOptInPrompt = !!parsedJson.appended_opt_in_prompt;
-                }
-                else if (parsedJson.text && typeof parsedJson.text === 'object' && typeof (parsedJson.text as any).text === 'string') {
-                  processedContent = (parsedJson.text as any).text;
-                } else {
-                  processedContent = msg.content;
-                }
-              } else {
-                processedContent = msg.content;
-              }
-            } catch (e) {
-              processedContent = msg.content;
-            }
-          } else if (typeof msg.content === 'object' && msg.content !== null) {
-            if (typeof (msg.content as any).text === 'string') {
-              processedContent = (msg.content as any).text;
-              isFaqAnswer = !!(msg.content as any).is_faq_answer;
-              appendedOptInPrompt = !!(msg.content as any).appended_opt_in_prompt;
-            }
-            else if (typeof (msg.content as any).text === 'object' && typeof (msg.content as any).text.text === 'string') {
-              processedContent = (msg.content as any).text.text;
-            }
-            else {
-              processedContent = JSON.stringify(msg.content);
-            }
-          } else if (msg.type === "customer" && msg.response) {
-            processedContent = msg.response;
-          } else {
-            processedContent = "[No content]";
-          }
-
-          return {
-            id: String(msg.id),
-            type: msg.type as TimelineEntry['type'],
-            content: processedContent,
-            timestamp: msg.sent_time || msg.scheduled_time || null,
-            customer_id: currentCustomerData.customer_id,
-            is_hidden: msg.is_hidden || false,
-            status: msg.status,
-            source: msg.source,
-            is_faq_answer: isFaqAnswer,
-            appended_opt_in_prompt: appendedOptInPrompt,
-          };
-        }).filter(Boolean) as TimelineEntry[];
-
-
-      const aiDraftEntries: TimelineEntry[] = (currentCustomerData.messages || [])
-        .filter(msg => msg.type === 'ai_draft' && msg.source === 'ai_draft_suggestion' && !msg.is_hidden)
-        .map((msg: BackendMessage): TimelineEntry | null => {
-          if (typeof msg.id === 'undefined') return null;
-
-          let draftContent = "";
-          if (typeof msg.content === 'string') {
-            try {
-              const parsed = JSON.parse(msg.content);
-              if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
-                draftContent = parsed.text;
-              } else {
-                draftContent = msg.content;
-              }
-            } catch (e) {
-              draftContent = msg.content;
-            }
-          } else if (typeof msg.content === 'object' && msg.content !== null && typeof (msg.content as any).text === 'string') {
-            draftContent = (msg.content as any).text;
-          } else if (msg.ai_response) {
-            draftContent = msg.ai_response;
-          } else if (msg.response) {
-            draftContent = msg.response;
-          } else {
-            draftContent = "Error loading draft content.";
-          }
-
-          return {
-            id: `eng-ai-${msg.id}`,
-            type: 'ai_draft',
-            content: draftContent,
-            timestamp: msg.scheduled_time || msg.sent_time || null,
-            customer_id: currentCustomerData.customer_id,
-            is_hidden: false,
-            status: msg.status,
-            source: msg.source || 'ai_draft_suggestion',
-          }
-        }).filter(Boolean) as TimelineEntry[];
-
-
-      const combinedTimelineEntries = [...newTimelineEntries, ...aiDraftEntries];
-
-      // Explicitly type the sort callback parameters and return type
-      combinedTimelineEntries.sort((a: TimelineEntry, b: TimelineEntry): number => {
-        const timeNumA = a.timestamp ? parseISO(a.timestamp).getTime() : NaN;
-        const timeNumB = b.timestamp ? parseISO(b.timestamp).getTime() : NaN;
-
-        const validTimeA = !isNaN(timeNumA) ? timeNumA : (a.type === 'ai_draft' ? Infinity : 0);
-        const validTimeB = !isNaN(timeNumB) ? timeNumB : (b.type === 'ai_draft' ? Infinity : 0);
-
-        if (validTimeA === Infinity && validTimeB === Infinity) {
-          if (a.id != null && b.id != null) {
-            const idAAsString = a.id.toString();
-            const idBAsString = b.id.toString();
-            return idAAsString.localeCompare(idBAsString);
-          }
-          return 0;
-        }
-        if (validTimeA === Infinity) return 1;
-        if (validTimeB === Infinity) return -1;
-
-        if (validTimeA === 0 && validTimeB === 0) {
-          if (a.id != null && b.id != null) {
-            const idAAsString = a.id.toString();
-            const idBAsString = b.id.toString();
-            return idAAsString.localeCompare(idBAsString);
-          }
-          return 0;
-        }
-        if (validTimeA === 0) return -1;
-        if (validTimeB === 0) return 1;
-
-        return validTimeA - validTimeB;
-      });
-
-      setTimelineEntries(combinedTimelineEntries);
-    }
-  }, [customerSummaries, activeCustomerId]);
-
 
   useEffect(() => {
     setNewMessage("");
@@ -387,7 +274,7 @@ export default function InboxPage() {
     const messageToSend = newMessage.trim();
     if (!messageToSend || isSending) return;
 
-    const currentCust = customerSummaries.find(cs => cs.customer_id === activeCustomerId);
+    const currentCust = customerSummaries.find(cs => cs.customer_id === activeCustomerId); // customerSummaries is now from paginatedData
     if (currentCust && !currentCust.opted_in && currentCust.consent_status !== 'pending_opt_in') {
       setSendError(`Cannot send message: ${currentCust.customer_name} has not opted in.`);
       return;
@@ -397,10 +284,37 @@ export default function InboxPage() {
     setSendError(null);
     const isSendingDraft = selectedDraftId != null;
     const targetCustomerId = activeCustomerId;
+
     if (!targetCustomerId) {
       setSendError("No active customer selected.");
       setIsSending(false);
       return;
+    }
+
+    // Simplified optimistic update: just revalidate current page data
+    // The detailed optimistic update adding the message to timelineEntries will be part of the
+    // useCustomerConversation hook implementation in the next subtask.
+    // For now, the visual feedback of the message appearing in timeline might be delayed until revalidation.
+    setNewMessage(""); // Clear input immediately
+
+    const optimisticUiMessage: TimelineEntry = { // More aligned with TimelineEntry for UI
+      id: `optimistic-${Date.now()}`,
+      type: 'sent',
+      content: messageToSend,
+      timestamp: new Date().toISOString(),
+      customer_id: targetCustomerId,
+      status: 'sending', // Custom status for optimistic UI
+    };
+
+    if (targetCustomerId === activeCustomerId) {
+      mutateConversation(async (currentConversationData) => {
+        const updatedMessages = [...(currentConversationData?.messages || []), optimisticUiMessage as FrontendMessage]; // Cast needed if not fully compatible
+        return {
+          ...(currentConversationData || { customer_id: targetCustomerId, messages: [] }), // Provide default if undefined
+          messages: updatedMessages,
+          customer_id: targetCustomerId
+        };
+      }, false);
     }
 
     try {
@@ -436,7 +350,10 @@ export default function InboxPage() {
         if (inputRef.current) inputRef.current.focus();
       }, 0);
 
-      if (businessId) await fetchAndSetCustomerSummaries(businessId);
+      mutateSummaries(); // Revalidate SWR cache for the summaries list
+      if (targetCustomerId === activeCustomerId) {
+        mutateConversation(); // Revalidate the active conversation
+      }
       setLastSeenMap(prev => ({ ...prev, [targetCustomerId]: new Date().toISOString() }));
 
     } catch (err: any) {
@@ -444,8 +361,12 @@ export default function InboxPage() {
       const status = response?.status;
       const detail = response?.data?.detail || err.message || "An error occurred.";
       setSendError(`Failed to send: ${detail}. Status: ${status || 'N/A'}`);
-      if ((status === 403 || status === 409 || status === 404) && businessId) {
-        await fetchAndSetCustomerSummaries(businessId);
+      // Revert optimistic update or show error on the message itself if possible
+      if (targetCustomerId === activeCustomerId) {
+        mutateConversation(); // Revalidate to clear optimistic message on error
+      }
+      if ((status === 403 || status === 409 || status === 404)) {
+        mutateSummaries();
       }
     } finally {
       setIsSending(false);
@@ -488,7 +409,7 @@ export default function InboxPage() {
       return;
     }
 
-    const entryToDelete = timelineEntries.find(e => e.id === draftTimelineEntryId);
+    const entryToDelete = timelineEntries.find(e => e.id === draftTimelineEntryId); // Check against current timeline
     if (!(entryToDelete && entryToDelete.type === 'ai_draft')) {
       alert("This message is not a draft and cannot be deleted this way.");
       return;
@@ -497,11 +418,15 @@ export default function InboxPage() {
     if (window.confirm("Delete this draft? This action cannot be undone.")) {
       try {
         await apiClient.delete(`/engagement-workflow/${numericDraftId}`);
-        setTimelineEntries((prev) => prev.filter((e) => e.id !== draftTimelineEntryId));
         if (selectedDraftId === draftTimelineEntryId) {
           setNewMessage("");
           setSelectedDraftId(null);
         }
+        // Revalidate both conversation and summaries
+        if (activeCustomerId === entryToDelete.customer_id) {
+            mutateConversation();
+        }
+        mutateSummaries();
       } catch (err: any) {
         const errorDetail = err.response?.data?.detail || err.message || "An unknown error occurred.";
         alert(`Failed to delete draft: ${errorDetail}`);
@@ -510,24 +435,12 @@ export default function InboxPage() {
   };
 
   const currentCustomer = useMemo(() => {
+    // Find in the current page of summaries
     return customerSummaries.find(cs => cs.customer_id === activeCustomerId);
   }, [customerSummaries, activeCustomerId]);
 
   useEffect(() => {
-    if (customerSummaries.length > 0 && !activeCustomerId) {
-      const urlCustomerIdString = searchParams.get('activeCustomer');
-      if (urlCustomerIdString) {
-        const urlCustomerId = parseInt(urlCustomerIdString, 10);
-        const customerExists = customerSummaries.some(cs => cs.customer_id === urlCustomerId);
-        if (customerExists) {
-          setActiveCustomerId(urlCustomerId);
-        } else {
-          setActiveCustomerId(customerSummaries[0].customer_id);
-        }
-      } else {
-        setActiveCustomerId(customerSummaries[0].customer_id);
-      }
-    }
+    // This effect handles scrolling to a specific engagement if URL params are present
     if (activeCustomerId && searchParams.get('activeCustomer') === String(activeCustomerId)) {
       const urlEngagementId = searchParams.get('engagementId');
       if (urlEngagementId && chatContainerRef.current) {
@@ -535,23 +448,92 @@ export default function InboxPage() {
         if (engagementElement) {
           setTimeout(() => {
             engagementElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }, 200);
+          }, 200); // Short delay to ensure DOM is ready
         }
       }
     }
+  }, [searchParams, activeCustomerId, timelineEntries]);
 
-  }, [customerSummaries, searchParams, activeCustomerId]);
 
+  // Customer Row for react-window
+  const CustomerRow = ({ index, style }: { index: number, style: React.CSSProperties }) => {
+    const cs = customerSummaries[index]; // customerSummaries is now from paginatedData.items
+    if (!cs) return null;
 
-  if (isLoading && customerSummaries.length === 0) {
-    return <div className="h-screen flex items-center justify-center bg-[#0B0E1C] text-white text-lg">Loading Inbox... <span className="animate-pulse">⏳</span></div>;
+    const previewText = cs.content || "No recent messages"; // cs.content is already formatted preview
+    const customerLastSeenString = lastSeenMap[cs.customer_id];
+    const messageTimestampString = cs.sent_time; // cs.sent_time is last_message_timestamp
+    let isUnread = (cs as any).unread_message_count > 0; // Assuming unread_message_count is on the item
+
+    // This unread logic might be simplified if backend provides clear unread status per summary
+    if (messageTimestampString) {
+      const messageDate = parseISO(messageTimestampString);
+      if (isValid(messageDate)) {
+        const lastSeenDate = customerLastSeenString ? parseISO(customerLastSeenString) : null;
+        if (lastSeenDate && isValid(lastSeenDate) && messageDate.getTime() <= lastSeenDate.getTime()) {
+          isUnread = false; // User has seen this or newer
+        }
+      }
+    }
+    if (cs.customer_id === activeCustomerId) { // If it's the active chat, mark as read
+      isUnread = false;
+    }
+
+    return (
+      <div style={style}>
+        <button
+          key={cs.customer_id}
+          onClick={() => {
+            setActiveCustomerId(cs.customer_id);
+            setShowMobileDrawer(false);
+            setLastSeenMap(prev => ({ ...prev, [cs.customer_id]: new Date().toISOString() }));
+          }}
+          className={clsx(
+            "w-full text-left p-3 hover:bg-[#242842] transition-colors border-b border-[#2A2F45]",
+            activeCustomerId === cs.customer_id ? "bg-[#2A2F45] ring-2 ring-blue-500" : "bg-transparent",
+          )}
+        >
+          <div className="flex justify-between items-center">
+            <h3 className={clsx("text-sm text-white truncate", isUnread ? "font-semibold" : "font-medium")}>
+              {cs.customer_name || "Unknown Customer"}
+            </h3>
+            {cs.sent_time && (
+              <span className={clsx("text-xs whitespace-nowrap ml-2", isUnread ? "text-blue-400" : "text-gray-400")}>
+                {formatDate(cs.sent_time)}
+              </span>
+            )}
+          </div>
+          <p className={clsx("text-xs truncate mt-1", isUnread ? "text-gray-200" : "text-gray-400")}>
+            {previewText}
+          </p>
+        </button>
+      </div>
+    );
+  };
+
+  if (businessIsLoading || (businessId && historyIsLoading && !paginatedData && !historyError && !conversationError)) {
+    return (
+      <div className="h-screen flex md:flex-row flex-col bg-[#0B0E1C]">
+        <aside className="w-full md:w-80 bg-[#1A1D2D] border-r border-[#2A2F45] flex flex-col h-full">
+          <div className="flex justify-between items-center p-4 border-b border-[#2A2F45] shrink-0">
+            <div className="h-6 bg-gray-700 rounded w-1/3 animate-pulse"></div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <CustomerListSkeleton count={ITEMS_PER_PAGE} />
+          </div>
+        </aside>
+        <main className="flex-1 flex flex-col bg-[#0F1221] h-full md:h-auto md:min-h-0">
+          <MessagePanelSkeleton />
+        </main>
+      </div>
+    );
   }
 
-  if (fetchError && customerSummaries.length === 0) {
+  if ((businessError || historyError || conversationError) && (!paginatedData || paginatedData.items.length === 0) && !activeCustomerConversation) {
     return <div className="h-screen flex flex-col items-center justify-center bg-[#0B0E1C] text-red-400 p-4 text-center">
       <AlertCircle className="w-12 h-12 mb-3 text-red-500" />
       <p className="text-xl font-semibold">Oops! Something went wrong.</p>
-      <p className="text-sm mt-1">{fetchError}</p>
+      <p className="text-sm mt-1">{businessError?.message || (historyError as any)?.message || (conversationError as any)?.message || "Failed to load data."}</p>
       <p className="text-xs mt-3">Please try refreshing the page. If the problem persists, contact support.</p>
     </div>;
   }
@@ -576,10 +558,10 @@ export default function InboxPage() {
         "transition-transform duration-300 ease-in-out",
         showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         "flex flex-col h-full",
-        "overflow-y-auto"
+        // "overflow-y-auto" // AutoSizer will manage scrolling for the List
       )}>
         <div className="flex justify-between items-center p-4 border-b border-[#2A2F45] shrink-0">
-          <h2 className="text-xl font-semibold text-white">{showMobileDrawer ? "Contacts" : "Inbox"}</h2>
+          <h2 className="text-xl font-semibold text-white">{showMobileDrawer ? "Contacts" : `Inbox (${totalCustomers})`}</h2>
           {showMobileDrawer && (
             <button
               onClick={() => setShowMobileDrawer(false)}
@@ -591,59 +573,50 @@ export default function InboxPage() {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {customerSummaries.length === 0 && !isLoading && (
+        <div className="flex-1 h-full w-full"> {/* Ensure AutoSizer has dimensions */}
+          {historyIsLoading && (!paginatedData || paginatedData.items.length === 0) ? (
+            <div className="flex-1 overflow-y-auto">
+                <CustomerListSkeleton count={ITEMS_PER_PAGE} />
+            </div>
+          ) : customerSummaries.length === 0 && !historyIsLoading ? (
             <p className="p-4 text-gray-400 text-center">No conversations yet.</p>
+          ) : (
+            <AutoSizer>
+              {({ height, width }) => (
+                <List
+                  height={height}
+                  itemCount={customerSummaries.length}
+                  itemSize={68}
+                  width={width}
+                  className="scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-800"
+                >
+                  {CustomerRow}
+                </List>
+              )}
+            </AutoSizer>
           )}
-          {customerSummaries.map((cs) => {
-            const previewText = cs.content || "No recent messages";
-            const customerLastSeenString = lastSeenMap[cs.customer_id];
-            const messageTimestampString = cs.sent_time;
-
-            let isUnread = false;
-            if (messageTimestampString && cs.messages && cs.messages.length > 0) {
-              const messageDate = parseISO(messageTimestampString);
-              if (isValid(messageDate)) {
-                const lastSeenDate = customerLastSeenString ? parseISO(customerLastSeenString) : null;
-                if (!lastSeenDate || !isValid(lastSeenDate) || messageDate.getTime() > lastSeenDate.getTime()) {
-                  isUnread = true;
-                }
-              }
-            }
-            if (cs.customer_id === activeCustomerId) {
-              isUnread = false;
-            }
-
-            return (
-              <button
-                key={cs.customer_id}
-                onClick={() => {
-                  setActiveCustomerId(cs.customer_id);
-                  setShowMobileDrawer(false);
-                  setLastSeenMap(prev => ({ ...prev, [cs.customer_id]: new Date().toISOString() }));
-                }}
-                className={clsx(
-                  "w-full text-left p-3 hover:bg-[#242842] transition-colors border-b border-[#2A2F45]",
-                  activeCustomerId === cs.customer_id ? "bg-[#2A2F45] ring-2 ring-blue-500" : "bg-transparent",
-                )}
-              >
-                <div className="flex justify-between items-center">
-                  <h3 className={clsx("text-sm text-white truncate", isUnread ? "font-semibold" : "font-medium")}>
-                    {cs.customer_name || "Unknown Customer"}
-                  </h3>
-                  {cs.sent_time && (
-                    <span className={clsx("text-xs whitespace-nowrap ml-2", isUnread ? "text-blue-400" : "text-gray-400")}>
-                      {formatDate(cs.sent_time)}
-                    </span>
-                  )}
-                </div>
-                <p className={clsx("text-xs truncate mt-1", isUnread ? "text-gray-200" : "text-gray-400")}>
-                  {previewText}
-                </p>
-              </button>
-            );
-          })}
         </div>
+        {totalPages > 1 && (
+            <div className="p-2 flex justify-between items-center border-t border-[#2A2F45] shrink-0">
+                <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1 || historyIsLoading}
+                    className="p-2 text-xs text-gray-300 hover:bg-[#242842] rounded disabled:opacity-50 flex items-center"
+                >
+                    <ChevronLeft size={16} className="mr-1" /> Previous
+                </button>
+                <span className="text-xs text-gray-400">
+                    Page {currentPage} of {totalPages}
+                </span>
+                <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages || historyIsLoading}
+                    className="p-2 text-xs text-gray-300 hover:bg-[#242842] rounded disabled:opacity-50 flex items-center"
+                >
+                    Next <ChevronRight size={16} className="ml-1" />
+                </button>
+            </div>
+        )}
       </aside>
 
       <main className="flex-1 flex flex-col bg-[#0F1221] h-full md:h-auto md:min-h-0">
@@ -660,26 +633,24 @@ export default function InboxPage() {
             </div>
 
             <div ref={chatContainerRef} className="flex flex-col flex-1 overflow-y-auto p-4 space-y-3 bg-[#0B0E1C]">
+              {/* Timeline entries will be populated by a new hook in the next subtask */}
+              {conversationIsLoading && <div className="flex-1 flex items-center justify-center text-gray-400">Loading messages...</div>}
+              {!conversationIsLoading && conversationError && <div className="flex-1 flex items-center justify-center text-red-400">Error loading messages.</div>}
+              {!conversationIsLoading && !conversationError && timelineEntries.length === 0 && (
+                <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
+                  <MessageSquare size={48} />
+                  <p className="mt-2">No messages in this conversation yet.</p>
+                </div>
+              )}
               {timelineEntries.map((entry) => (
                 <div
                 key={entry.id}
                 data-message-id={entry.id}
                 className={clsx(
                   "p-3 rounded-lg max-w-[70%] break-words text-sm shadow",
-                  "flex flex-col", // Handles internal layout of the bubble (text over timestamp)
-
-                  // Alignment classes - applied based on condition
+                  "flex flex-col",
                   (entry.type === "customer" || entry.type === "unknown_business_message") && "self-start mr-auto",
-                  (
-                    entry.type === "sent" ||
-                    entry.type === "outbound_ai_reply" ||
-                    entry.type === "ai_draft" ||
-                    entry.type === "scheduled" ||
-                    entry.type === "scheduled_pending" ||
-                    entry.type === "failed_to_send"
-                  ) && "self-end ml-auto",
-
-                  // Background and text color classes - applied as an object
+                  (entry.type === "sent" || entry.type === "outbound_ai_reply" || entry.type === "ai_draft" || entry.type === "scheduled" || entry.type === "scheduled_pending" || entry.type === "failed_to_send") && "self-end ml-auto",
                   {
                     "bg-[#2A2F45] text-white": entry.type === "customer",
                     "bg-blue-600 text-white": entry.type === "sent" || entry.type === "outbound_ai_reply",
@@ -687,6 +658,7 @@ export default function InboxPage() {
                     "bg-gray-500 text-white": entry.type === "scheduled" || entry.type === "scheduled_pending",
                     "bg-red-700 text-white": entry.type === "failed_to_send",
                     "bg-purple-600 text-white": entry.type === "unknown_business_message",
+                    "animate-pulse bg-blue-800": entry.status === 'sending' // Optimistic UI
                   }
                 )}
               >
@@ -697,31 +669,17 @@ export default function InboxPage() {
                       {entry.type === 'sent' && entry.status === 'delivered' && <CheckCheck className="inline-block w-4 h-4 ml-1 text-green-300" />}
                       {entry.type === 'sent' && (entry.status === 'sent' || entry.status === 'accepted') && <Check className="inline-block w-4 h-4 ml-1 text-gray-300" />}
                       {entry.type === 'sent' && entry.status === 'queued' && <Clock className="inline-block w-3 h-3 ml-1 text-gray-300" />}
+                      {entry.type === 'sent' && entry.status === 'sending' && <Clock className="inline-block w-3 h-3 ml-1 text-gray-300" />}
                       {(entry.type === 'scheduled' || entry.type === 'scheduled_pending') && <Clock className="inline-block w-3 h-3 ml-1" />}
                       {entry.type === 'failed_to_send' && <AlertCircle className="inline-block w-3 h-3 ml-1 text-red-300" />}
                     </span>
                   )}
-
                   {entry.is_faq_answer && <p className="text-xs text-blue-300 mt-1 italic self-start"> (Auto-reply: FAQ)</p>}
                   {entry.appended_opt_in_prompt && <p className="text-xs text-gray-400 mt-1 italic self-start"> (Opt-in prompt included)</p>}
-
-
                   {entry.type === "ai_draft" && entry.customer_id === activeCustomerId && (
                     <div className="flex gap-2 mt-2 self-end">
-                      <button
-                        onClick={() => handleEditDraft(entry)}
-                        className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors"
-                        title="Edit Draft"
-                      >
-                        <Edit3 size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteDraft(entry.id)}
-                        className="p-1.5 bg-red-800 hover:bg-red-700 rounded text-white transition-colors"
-                        title="Delete Draft"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <button onClick={() => handleEditDraft(entry)} className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors" title="Edit Draft"><Edit3 size={14} /></button>
+                      <button onClick={() => handleDeleteDraft(entry.id)} className="p-1.5 bg-red-800 hover:bg-red-700 rounded text-white transition-colors" title="Delete Draft"><Trash2 size={14} /></button>
                     </div>
                   )}
                 </div>
@@ -769,9 +727,10 @@ export default function InboxPage() {
             <MessageCircle className="w-16 h-16 mb-4 text-gray-500" />
             <p className="text-lg">Select a conversation</p>
             <p className="text-sm">Choose a customer from the list to view messages.</p>
-            {customerSummaries.length === 0 && !isLoading && !fetchError && (
-              <p className="text-sm mt-2">No conversations to display.</p>
+            {customerSummaries.length === 0 && !historyIsLoading && !businessError && !historyError && !businessIsLoading && (
+              <p className="text-sm mt-2">No conversations to display for this business.</p>
             )}
+             {historyIsLoading && <p className="text-sm mt-2">Loading conversations...</p>}
           </div>
         )}
       </main>
