@@ -129,7 +129,11 @@ class FollowUpPlanService:
                     args=[new_message.id],
                     eta=scheduled_time
                 )
-                new_message.message_metadata['celery_task_id'] = task.id
+                # Ensure SQLAlchemy detects the change to the JSON field
+                updated_metadata = new_message.message_metadata.copy()
+                updated_metadata['celery_task_id'] = task.id
+                new_message.message_metadata = updated_metadata
+
                 created_message_ids.append(new_message.id)
                 scheduled_tasks.append(task.id)
                 logger.info(f"{log_prefix} Queued Celery task {task.id} for Message ID {new_message.id} to be sent at {scheduled_time.isoformat()}.")
