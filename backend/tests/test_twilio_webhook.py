@@ -148,7 +148,7 @@ async def test_receive_sms_basic_success(
     response = test_app_client_fixture.post("/twilio/inbound", data=form_data)
 
     assert response.status_code == status.HTTP_200_OK
-    assert "SMS Received and Processed" in response.text
+    assert response.text == "SMS Received"
 
     mock_db_session.add.assert_called()
     mock_db_session.commit.assert_called()
