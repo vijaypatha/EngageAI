@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, Integer
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Literal
-import re 
-import sqlalchemy as sa 
+import re
+import sqlalchemy as sa
 import json
 
 import openai 

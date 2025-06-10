@@ -181,7 +181,7 @@ class SMSCreate(BaseModel):
 
     @validator('message') # Keep existing validator if it's Pydantic v1 style and working
     def validate_message_length(cls, v_msg_len):
-        if len(v_msg_len) > 160: 
+        if len(v_msg_len) > 160:
             raise ValueError("Message length exceeds 160 characters")
         return v_msg_len
 

@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 def slugify(name: str) -> str:
     name_str = str(name) if name is not None else ""
     name_str = name_str.strip().lower()
-    name_str = re.sub(r'\s+', '-', name_str)
-    name_str = re.sub(r'[^a-z0-9-]', '', name_str) # Keep only lowercase alphanumeric and hyphens
+    name_str = re.sub(r'\s+', '-', name_str) # Replace spaces with hyphens
+    name_str = re.sub(r'[^a-z0-9-]', '', name_str) # Remove non-alphanumeric chars except hyphens
+    name_str = re.sub(r'-+', '-', name_str) # Condense multiple hyphens to one
     return name_str.strip('-') # Remove leading/trailing hyphens
 
 router = APIRouter(

@@ -11,7 +11,7 @@ from app.models import (
     NudgeTypeEnum
 )
 # We'll need TwilioService to send SMS
-from app.services.twilio_service import TwilioService 
+from app.services.twilio_service import TwilioService
 from app.config import settings # For potential future use, like a base URL for review links
 from datetime import datetime # Import datetime
 

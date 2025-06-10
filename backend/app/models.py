@@ -1,7 +1,7 @@
 # backend/app/models.py
 
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, Index, JSON, func
-from sqlalchemy.orm import relationship, backref 
+from sqlalchemy.orm import relationship, backref
 from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP
 from app.database import Base
 import datetime # Keep this, it's used by your utc_now and other models
