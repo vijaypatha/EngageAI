@@ -1,5 +1,4 @@
-# backend/run_migrations.py (DEBUGGING VERSION)
-
+# backend/run_migrations.py (TEMPORARY ROLLBACK SCRIPT)
 import os
 from alembic.config import Config
 from alembic import command
@@ -19,20 +18,9 @@ alembic_cfg = Config(alembic_ini_path)
 alembic_cfg.set_main_option('sqlalchemy.url', database_url)
 print(f"--- Connection configured for: {alembic_cfg.get_main_option('sqlalchemy.url')} ---")
 
-# --- DIAGNOSTIC COMMANDS ---
-try:
-    print("\n--- [DIAGNOSTIC] Running 'alembic history' ---")
-    command.history(alembic_cfg, verbose=True)
 
-    print("\n--- [DIAGNOSTIC] Running 'alembic current' ---")
-    command.current(alembic_cfg, verbose=True)
-
-    print("\n--- [DIAGNOSTIC] Running 'alembic heads' ---")
-    command.heads(alembic_cfg, verbose=True)
-except Exception as e:
-    print(f"A diagnostic command failed: {e}")
-# --- END DIAGNOSTICS ---
-
-print("\n--- Attempting 'alembic upgrade head' ---")
-command.upgrade(alembic_cfg, "head")
-print("--- Database migrations complete ---")
+# --- THIS IS THE CRUCIAL STEP ---
+# We are telling alembic to downgrade to the version right BEFORE the broken files.
+print("\n--- [ACTION] Downgrading database to revision '0f37aa60ba2b' ---")
+command.downgrade(alembic_cfg, "0f37aa60ba2b")
+print("\n--- Downgrade complete. The next deployment will upgrade from this point. ---")
