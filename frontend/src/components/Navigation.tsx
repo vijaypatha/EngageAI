@@ -31,8 +31,8 @@ export function Navigation() {
   const business_name_param = params?.business_name;
   const business_name = Array.isArray(business_name_param) ? business_name_param[0] : business_name_param;
 
-  const { data: businessProfileData, error, isLoading: swrIsLoading } = useBusinessNavigationProfile(business_name);
-
+  const { data: businessProfileData, error, isLoading: swrIsLoading } = useBusinessNavigationProfile(business_name ?? null);
+  
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
