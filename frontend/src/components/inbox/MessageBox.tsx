@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { InboxCustomerSummary, TimelineEntry } from '@/types';
+import { InboxCustomerSummary } from '@/types';
 import { Send, Clock } from 'lucide-react';
 
 interface MessageBoxProps {
@@ -18,15 +18,23 @@ export default function MessageBox({ customer, selectedDraftId, onSendMessage, o
 
   useEffect(() => {
     setNewMessage(initialMessage);
+    setSendError(null); // Also clear previous errors when the customer changes
     inputRef.current?.focus();
-  }, [initialMessage]);
+  }, [initialMessage, customer.customer_id]); // Depend on customer_id to reset on convo switch
+
+  // --- MODIFIED LOGIC ---
+  // The backend now determines if a message can be sent (as a direct reply).
+  // The UI should only block sending if the customer has globally opted out.
+  const canSendMessage = customer.consent_status !== 'opted_out';
+  const disabledReason = "Cannot send messages. Customer has opted out.";
 
   const handleSend = async () => {
     const messageToSend = newMessage.trim();
     if (!messageToSend || isSending) return;
 
-    if (!customer.opted_in && customer.consent_status !== 'pending_opt_in') {
-      setSendError(`Cannot send message: ${customer.customer_name} has not opted in.`);
+    // The primary check is now much simpler.
+    if (!canSendMessage) {
+      setSendError(disabledReason);
       return;
     }
 
@@ -36,13 +44,13 @@ export default function MessageBox({ customer, selectedDraftId, onSendMessage, o
       await onSendMessage(messageToSend);
       setNewMessage("");
     } catch (err: any) {
+      // The backend provides the specific error message, which is more reliable.
       setSendError(err.response?.data?.detail || "Failed to send message.");
     } finally {
       setIsSending(false);
     }
   };
 
-  const canSendMessage = customer.opted_in || customer.consent_status === 'pending_opt_in';
 
   return (
     <div className="p-4 bg-[#1A1D2D] border-t border-[#2A2F45] shrink-0">
@@ -54,8 +62,8 @@ export default function MessageBox({ customer, selectedDraftId, onSendMessage, o
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyPress={(e) => e.key === "Enter" && !isSending && handleSend()}
-          placeholder={selectedDraftId ? "Edit draft..." : "Type a message..."}
-          className="flex-1 p-2 bg-[#2A2F45] border border-[#3B3F58] rounded-lg text-white placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+          placeholder={selectedDraftId ? "Edit draft..." : canSendMessage ? "Type a message..." : disabledReason}
+          className="flex-1 p-2 bg-[#2A2F45] border border-[#3B3F58] rounded-lg text-white placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:opacity-70"
           disabled={isSending || !canSendMessage}
         />
         <button onClick={handleSend} disabled={isSending || !newMessage.trim() || !canSendMessage} className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white disabled:opacity-50 transition-colors">
@@ -63,7 +71,7 @@ export default function MessageBox({ customer, selectedDraftId, onSendMessage, o
         </button>
       </div>
       {selectedDraftId && <button onClick={onCancelEdit} className="text-xs text-gray-400 hover:text-gray-200 mt-1">Cancel edit</button>}
-      {!canSendMessage && <p className="text-xs text-red-400 mt-1">Cannot send messages. Customer has not opted in.</p>}
+      {/* The main error is now shown above the input box */}
     </div>
   );
 }
