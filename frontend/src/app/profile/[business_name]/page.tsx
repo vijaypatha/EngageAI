@@ -20,6 +20,7 @@ interface BusinessProfileData {
   twilio_number?: string;
   business_phone_number?: string;
   notify_owner_on_reply_with_link?: boolean;
+  review_platform_url?: string;
 }
 
 interface FetchedBusinessProfile extends BusinessProfileData {
@@ -95,6 +96,7 @@ export default function ProfilePage() {
           twilio_number: fetchedData.twilio_number,
           business_phone_number: fetchedData.business_phone_number,
           notify_owner_on_reply_with_link: fetchedData.notify_owner_on_reply_with_link || false,
+          review_platform_url: fetchedData.review_platform_url,
         };
         
         setProfile(displayProfileData);
@@ -190,6 +192,7 @@ export default function ProfilePage() {
     { key: "representative_name", label: "Representative Name", type: "text" },
     { key: "twilio_number", label: "AI Nudge Number (System Assigned)", type: "text" },
     { key: "business_phone_number", label: "Your Contact Phone (for OTP & Notifications)", type: "tel" },
+    { key: "review_platform_url", label: "Review Link (e.g., Google, Yelp)", type: "url" },
   ];
 
   return (
