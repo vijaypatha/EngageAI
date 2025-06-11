@@ -40,7 +40,11 @@ from app.routes import (
     auth_routes,
     review,
     instant_nudge_routes,
-    tag_routes
+    copilot_nudge_routes,
+    targeted_event_routes,
+    tag_routes,
+    follow_up_plan_routes,
+    copilot_growth_routes
 )
 from app.schemas import (
     BusinessProfileCreate,
@@ -87,7 +91,9 @@ app.add_middleware(
     secret_key=settings.SECRET_KEY,
     same_site="lax",
     https_only=False,
-    session_cookie="session"
+    session_cookie="session",
+    max_age=30 * 24 * 60 * 60
+
 )
 
 # Register route handlers
@@ -107,10 +113,14 @@ app.include_router(engagement_workflow_routes.router, prefix="/engagement-workfl
 app.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["onboarding"])
 app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(review.router, prefix="/review", tags=["review"])
-app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
 app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
+app.include_router(copilot_nudge_routes.router, prefix="/ai-nudge-copilot", tags=["AI Nudge Co-Pilot"] )
+app.include_router(targeted_event_routes.router, prefix="/targeted-events", tags=["Targeted Events"] )
+app.include_router(follow_up_plan_routes.router, prefix="/follow-up-plans", tags=["Follow-up Plans"] )
 app.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
+app.include_router(copilot_growth_routes.router, tags=["AI Nudge Co-Pilot - Growth"])
+
 
 @app.get("/", response_model=Dict[str, str])
 async def read_root() -> Dict[str, str]:

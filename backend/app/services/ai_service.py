@@ -2,9 +2,9 @@
 import re
 import json
 import logging
-from datetime import datetime, timedelta, time 
-from typing import Dict, Any, Optional 
-import pytz 
+from datetime import datetime, timedelta, time
+from typing import Dict, Any, Optional
+import pytz
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -41,12 +41,30 @@ def parse_customer_notes(notes: str) -> dict:
     # Requires at least 3 letters for month name. \b for word boundaries.
     month_day_pattern = r'\b(?:birthday|bday)\s*(?:is|on)?\s*([a-zA-Z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?\b'
     
-    # Pattern 2: MM/DD or M/D (e.g., "birthday is 08/31", "bday: 3/5")
-    mm_dd_pattern = r'\b(?:birthday|bday)\s*(?:is|on)?\s*(\d{1,2})\s*\/\s*(\d{1,2})\b'
+    # Pattern 1: Original "Month Day" (e.g., "birthday on august 31", "bday is mar 1st")
+    # Added optional period at the end: \.? and refined (is on|is|on)?
+    og_month_day_pattern = r'\b(?:birthday|bday)\s*(?:is\s+on|is|on)?\s*([a-zA-Z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?\.?\b'
+
+    # Pattern 2: Original MM/DD or M/D (e.g., "birthday is 08/31", "bday: 3/5")
+    # Added optional period at the end: \.?
+    og_mm_dd_pattern = r'\b(?:birthday|bday)\s*(?:is|on)?\s*(\d{1,2})\s*\/\s*(\d{1,2})\.?\b'
+
+    # New, more flexible patterns:
+    # Pattern 3: Keyword, optional colon, Month Day (e.g., "Birthday: April 30", "Bday: Oct. 23")
+    flex_month_day_colon_pattern = r'\b(?:birthday|bday)\b\s*:?\s*([a-zA-Z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b'
+
+    # Pattern 4: Keyword, optional colon, MM/DD (e.g., "My birthday: 02/14")
+    flex_mm_dd_colon_pattern = r'\b(?:birthday|bday)\b\s*:?\s*(\d{1,2})\s*\/\s*(\d{1,2})\b'
+
+    # Pattern 5: Keyword, hyphen, Month Day (e.g., "Birthday - Nov 11")
+    flex_month_day_hyphen_pattern = r'\b(?:birthday|bday)\b\s*-\s*([a-zA-Z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b'
 
     patterns_to_try = [
-        ("Month-Day", month_day_pattern),
-        ("MM/DD", mm_dd_pattern)
+        ("Flex-Month-Day-Colon", flex_month_day_colon_pattern), # Try specific ones first
+        ("Flex-MM/DD-Colon", flex_mm_dd_colon_pattern),
+        ("Flex-Month-Day-Hyphen", flex_month_day_hyphen_pattern),
+        ("Original-Month-Day", og_month_day_pattern), # Original patterns as fallbacks
+        ("Original-MM/DD", og_mm_dd_pattern)
     ]
 
     for p_name, pattern in patterns_to_try:
@@ -78,20 +96,21 @@ def parse_customer_notes(notes: str) -> dict:
                 day = int(day_input_str)
                 month_num = None
                 
-                if p_name == "MM/DD": # Month string is a number
-                     if month_input_str.isdigit():
+                # Determine if month_input_str should be treated as a number or a name
+                if "MM/DD" in p_name: # Handles "Flex-MM/DD-Colon" and "Original-MM/DD"
+                    if month_input_str.isdigit():
                         month_num = int(month_input_str)
-                     else:
-                        logger.warning(f"AI_SERVICE_PN_V5: MM/DD pattern got non-digit month '{month_input_str}'. Skipping.")
+                    else:
+                        logger.warning(f"AI_SERVICE_PN_V5: {p_name} pattern expected a digit for month, got '{month_input_str}'. Skipping.")
                         continue
-                else: # Month string is a name (Month-Day pattern)
+                else: # Assumed to be a Month-Day pattern (e.g., "Flex-Month-Day-Colon", "Original-Month-Day")
                     month_lookup_key = month_input_str.lower().strip()
                     month_num = month_map.get(month_lookup_key) # Try full name
-                    if not month_num and len(month_lookup_key) >= 3:
-                        month_num = month_map.get(month_lookup_key[:3]) # Try 3-letter abbreviation
+                    if not month_num and len(month_lookup_key) >= 3: # Try abbreviation if full name not found
+                        month_num = month_map.get(month_lookup_key[:3])
                     
-                    if not month_num:
-                        logger.warning(f"AI_SERVICE_PN_V5: Could not map month name '{month_input_str}' to number.")
+                    if not month_num: # If month name still not found in map
+                        logger.warning(f"AI_SERVICE_PN_V5: Could not map month name '{month_input_str}' to number for pattern {p_name}.")
                         continue
                 
                 logger.debug(f"AI_SERVICE_PN_V5: Parsed day={day}, month_num={month_num}")
@@ -99,7 +118,7 @@ def parse_customer_notes(notes: str) -> dict:
                 if month_num and 1 <= month_num <= 12 and 1 <= day <= 31:
                     parsed_info['birthday_month'] = month_num
                     parsed_info['birthday_day'] = day
-                    today = datetime.utcnow().date() 
+                    today = datetime.utcnow().date()
                     current_year = today.year
                     try:
                         bday_this_year = datetime(current_year, month_num, day).date()
@@ -151,7 +170,9 @@ def parse_business_profile_for_campaigns(business_goal: str, primary_services: s
         if keyword in text_to_search: campaign_details["detected_sales_phrases"].append(keyword)
     percentage_matches = re.findall(r'(\d{1,2}(?:-\d{1,2})?%?\s*(?:off|discount))', text_to_search)
     if percentage_matches: campaign_details["discounts_mentioned"].extend(percentage_matches)
-    product_focus_matches = re.findall(r'(?:sale|discount|offer)s?[\s\w%-]*on\s+([\w\s]+?)(?:\s+for|\s+during|\s+on|\.|$)', text_to_search)
+    # New regex for product focus with positive lookahead for terminators
+    product_focus_pattern = r'(?:sale|discount|offer)(?:s|\b).*?\bon\s+([\w\s-]+?)(?=\s*(?:,|\.|for|and|or|with|$))'
+    product_focus_matches = re.findall(product_focus_pattern, text_to_search)
     if product_focus_matches: campaign_details["product_focus_for_sales"].extend([p.strip() for p in product_focus_matches])
     campaign_details["has_sales_info"] = bool(campaign_details["detected_sales_phrases"] or campaign_details["discounts_mentioned"])
     logger.info(f"AI_SERVICE_BCP: Parsed Campaign Details: {campaign_details}")
@@ -493,8 +514,12 @@ Output ONLY the JSON object: {{"messages": [...]}}. Each object: {{"days_from_to
             max_tokens=100 
         )
         raw_content = response.choices[0].message.content.strip()
-        answered_as_faq = bool(business.enable_ai_faq_auto_reply and raw_content.endswith(faq_marker))
-        final_content = raw_content[:-len(faq_marker)].strip() if answered_as_faq else raw_content
+        answered_as_faq = bool(business.enable_ai_faq_auto_reply and faq_marker in raw_content)
+        if answered_as_faq:
+            content_without_marker = raw_content.replace(faq_marker, "")
+            final_content = " ".join(content_without_marker.split()).strip() # Normalize spaces
+        else:
+            final_content = raw_content
         
         logger.info(f"AI_SERVICE_GSR: AI reply for Biz {business.id}: '{final_content}'. FAQ Autopilot: {answered_as_faq}")
         return {"text": final_content, "is_faq_answer": answered_as_faq, "ai_should_reply_directly_as_faq": answered_as_faq}

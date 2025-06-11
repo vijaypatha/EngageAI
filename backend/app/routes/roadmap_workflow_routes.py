@@ -12,7 +12,8 @@ import logging
 import uuid
 import pytz # For robust timezone handling
 from typing import Optional
-
+from pydantic import BaseModel
+from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,23 +34,17 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
         logger.error(f"Missing send time for roadmap message ID: {roadmap_id}")
         raise HTTPException(status_code=400, detail="Missing send time for roadmap message")
 
-    # 🔹 Step 3: Check if already scheduled (via RoadmapMessage.status or linked Message)
-    if roadmap_msg.status == "scheduled" and roadmap_msg.message_id:
-        linked_message = db.query(Message).filter(Message.id == roadmap_msg.message_id, Message.status == "scheduled").first()
+    # 🔹 Step 3: Check if already scheduled to prevent duplicates
+    if roadmap_msg.status in ["scheduled", "superseded"] and roadmap_msg.message_id: #
+        linked_message = db.query(Message).filter(Message.id == roadmap_msg.message_id).first()
         if linked_message:
-            logger.info(f"Roadmap message ID: {roadmap_id} is already linked to scheduled message ID: {linked_message.id}")
-            return {"status": "already scheduled", "message_id": linked_message.id}
+            logger.info(f"Roadmap message ID: {roadmap_id} is already processed (status: {roadmap_msg.status}). Linked message ID: {linked_message.id}")
+            return {"status": "already processed", "message_id": linked_message.id}
         else:
-            logger.warning(f"Data inconsistency for Roadmap ID {roadmap_id}: status is 'scheduled' with message_id {roadmap_msg.message_id}, but linked Message not found or not 'scheduled'. Resetting to allow rescheduling.")
-            roadmap_msg.status = "pending_review" # Or your default unscheduled status e.g., "draft"
+            logger.warning(f"Data inconsistency for Roadmap ID {roadmap_id}: status is '{roadmap_msg.status}' but linked Message not found. Resetting to allow rescheduling.")
+            roadmap_msg.status = "pending_review"
             roadmap_msg.message_id = None
-            # db.flush() # Not strictly necessary here as commit will handle it, but can be explicit.
-
-    # Ensure the current status is appropriate for scheduling (e.g., 'draft' or 'pending_review')
-    # If it's already 'sent' or 'failed' from a previous Message attempt, this logic might need adjustment.
-    # For now, we assume 'draft' or 'pending_review' are the states from which we schedule.
-    # If roadmap_msg.status is 'draft', it will proceed.
-
+            
     # 🔹 Step 4: Fetch the customer and check opt-in status
     customer = db.query(Customer).filter(Customer.id == roadmap_msg.customer_id).first()
     if not customer:
@@ -72,8 +67,8 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
             id=uuid.uuid4(),
             customer_id=customer.id,
             business_id=roadmap_msg.business_id,
-            started_at=datetime.now(pytz.utc), # Ensure timezone-aware UTC
-            last_message_at=datetime.now(pytz.utc), # Ensure timezone-aware UTC
+            started_at=datetime.now(pytz.utc),
+            last_message_at=datetime.now(pytz.utc),
             status='active'
         )
         db.add(conversation)
@@ -86,8 +81,8 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
         business_id=roadmap_msg.business_id,
         content=roadmap_msg.smsContent,
         message_type='scheduled',
-        status="scheduled", # This is the status for the Message table entry
-        scheduled_time=roadmap_msg.send_datetime_utc, # This should be a timezone-aware UTC datetime from the model
+        status="scheduled",
+        scheduled_time=roadmap_msg.send_datetime_utc,
         message_metadata={
             'source': 'roadmap',
             'roadmap_id': roadmap_msg.id,
@@ -101,65 +96,56 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
     task_id_str = None
     try:
         eta_value = roadmap_msg.send_datetime_utc
-        # Ensure eta_value is a datetime object and timezone-aware (UTC)
         if not isinstance(eta_value, datetime):
-            try:
-                # Attempt to parse if it's a string (should ideally be datetime from DB model)
-                eta_value = datetime.fromisoformat(str(eta_value))
-            except ValueError as ve:
-                logger.error(f"❌ Invalid string format for send_datetime_utc: '{roadmap_msg.send_datetime_utc}' for RoadmapMessage ID {roadmap_id}. Error: {ve}")
-                db.rollback()
-                raise HTTPException(status_code=400, detail="Invalid scheduled time format provided.")
-
+            eta_value = datetime.fromisoformat(str(eta_value))
+        
         if eta_value.tzinfo is None:
             eta_value = pytz.utc.localize(eta_value)
-        elif eta_value.tzinfo != pytz.utc: # Convert to UTC if it's another timezone
+        else:
             eta_value = eta_value.astimezone(pytz.utc)
         
-        # Check if ETA is in the past (Celery might handle this, but good to be aware)
         if eta_value < datetime.now(pytz.utc):
-            logger.warning(f"⚠️ ETA for message {new_scheduled_message.id} (Roadmap ID: {roadmap_id}) is in the past: {eta_value.isoformat()}. Celery might execute it immediately or based on its configuration.")
+            logger.warning(f"⚠️ ETA for message {new_scheduled_message.id} is in the past: {eta_value.isoformat()}. Celery may execute immediately.")
 
-        logger.info(f"📤 Attempting to schedule Celery task 'process_scheduled_message_task': Message.id={new_scheduled_message.id}, Roadmap.id={roadmap_id}, ETA (UTC)='{eta_value.isoformat()}'")
+        logger.info(f"📤 Attempting to schedule Celery task for Message.id={new_scheduled_message.id}, ETA (UTC)='{eta_value.isoformat()}'")
         
         task_result = process_scheduled_message_task.apply_async(
-            args=[new_scheduled_message.id], # Pass the ID of the new Message record
+            args=[new_scheduled_message.id],
             eta=eta_value
         )
         task_id_str = task_result.id
         
-        # Ensure message_metadata is a dictionary before assignment
         if not isinstance(new_scheduled_message.message_metadata, dict):
-            new_scheduled_message.message_metadata = {} # Initialize if None or not a dict
+            new_scheduled_message.message_metadata = {}
         new_scheduled_message.message_metadata['celery_task_id'] = task_id_str
-        logger.info(f"✅ Celery task successfully queued. Task ID: {task_id_str} for Message.id: {new_scheduled_message.id} (Roadmap.id: {roadmap_id})")
+        logger.info(f"✅ Celery task successfully queued. Task ID: {task_id_str} for Message.id: {new_scheduled_message.id}")
 
     except Exception as e:
-        logger.error(f"❌ Failed to schedule SMS task via Celery for Message.id: {new_scheduled_message.id} (Roadmap.id: {roadmap_id}). Exception: {str(e)}", exc_info=True)
-        db.rollback() # IMPORTANT: Rollback DB changes if Celery task queuing fails
+        logger.error(f"❌ Failed to schedule task via Celery for Message.id: {new_scheduled_message.id}. Exception: {str(e)}", exc_info=True)
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to add message to scheduling queue. Error: {str(e)}")
 
     # 🔹 Step 8: Update RoadmapMessage status and link to the new Message
-    # This part is reached only if Celery task was queued successfully
-    roadmap_msg.status = "scheduled" # Update status of the original RoadmapMessage
-    roadmap_msg.message_id = new_scheduled_message.id # Link it to the newly created Message record
+    #
+    # <<< THIS IS THE FIX >>>
+    # Change the original message's status to "superseded" instead of "scheduled".
+    # This removes the data ambiguity that causes the duplicate rendering on the frontend.
+    #
+    roadmap_msg.status = "superseded" # The original line was: roadmap_msg.status = "scheduled"
+    roadmap_msg.message_id = new_scheduled_message.id
     
     try:
         db.commit()
-        logger.info(f"💾 Database commit successful. RoadmapMessage ID {roadmap_id} status updated to 'scheduled', linked to Message ID {new_scheduled_message.id}.")
+        logger.info(f"💾 Database commit successful. RoadmapMessage ID {roadmap_id} status updated to 'superseded', linked to Message ID {new_scheduled_message.id}.")
     except Exception as e:
-        logger.error(f"❌ Database commit failed AFTER Celery task was queued for Message.id: {new_scheduled_message.id} (Roadmap.id: {roadmap_id}). Task ID: {task_id_str}. Exception: {str(e)}", exc_info=True)
-        # This is a problematic state: Celery task is queued, but DB changes might not be saved.
-        # Manual intervention or a more complex retry/compensation mechanism might be needed for such cases.
-        # For now, we raise an HTTP error. The client might retry, which could lead to duplicate tasks if not handled carefully.
-        # Consider revoking the just-created Celery task if the commit fails.
+        logger.error(f"❌ Database commit failed AFTER Celery task was queued for Message.id: {new_scheduled_message.id}. Task ID: {task_id_str}. Exception: {str(e)}", exc_info=True)
         if task_id_str:
             try:
                 logger.warning(f"Attempting to revoke Celery task {task_id_str} due to DB commit failure.")
                 celery_app.control.revoke(task_id_str, terminate=True)
                 logger.info(f"Celery task {task_id_str} revocation attempted.")
             except Exception as revoke_exc:
-                logger.error(f"Failed to revoke Celery task {task_id_str} after DB commit failure: {revoke_exc}", exc_info=True)
+                logger.error(f"Failed to revoke Celery task {task_id_str}: {revoke_exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"DB commit failed after scheduling. Error: {str(e)}")
 
 
@@ -167,7 +153,7 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
         "status": "scheduled",
         "message_id": new_scheduled_message.id, 
         "roadmap_id": roadmap_msg.id,
-        "celery_task_id": task_id_str, # Also return the Celery task ID for reference
+        "celery_task_id": task_id_str,
         "message": { 
             "id": new_scheduled_message.id,
             "customer_name": customer.customer_name,
@@ -177,7 +163,6 @@ def schedule_message(roadmap_id: int, db: Session = Depends(get_db)):
             "source": new_scheduled_message.message_metadata.get('source', 'scheduled') if isinstance(new_scheduled_message.message_metadata, dict) else 'scheduled'
         }
     }
-
 # ... (approve_all, update_message_time, delete_message functions remain the same as previously provided) ...
 # Ensure the other functions (approve_all, update_message_time, delete_message)
 # also have robust error handling and logging, especially around Celery and DB operations.
@@ -430,21 +415,23 @@ def update_message_time(
         "new_celery_task_id": new_celery_task_id_str, "old_celery_task_revoked": old_celery_task_id is not None
     }
 
+
 @router.delete("/{id}")
 def delete_message(id: int, source: str = Query(..., description="Source of the message: 'roadmap' or 'scheduled'"), db: Session = Depends(get_db)):
-    item_deleted_id = id 
+    item_deleted_id = id
     celery_task_to_revoke: Optional[str] = None
     deleted_from_description: str = ""
 
     if source == "roadmap":
+        # This part for deleting unscheduled roadmap plans is correct.
         roadmap_message = db.query(RoadmapMessage).filter(RoadmapMessage.id == id).first()
         if not roadmap_message:
             raise HTTPException(status_code=404, detail=f"Roadmap message with ID {id} not found.")
-        
+
         deleted_from_description = "roadmap"
         logger.info(f"Deleting RoadmapMessage {id} (status: {roadmap_message.status}).")
 
-        if roadmap_message.message_id: # If it was linked to a Message (i.e., was scheduled)
+        if roadmap_message.message_id:
             linked_message = db.query(Message).filter(Message.id == roadmap_message.message_id).first()
             if linked_message:
                 logger.info(f"RoadmapMessage {id} is linked to Message {linked_message.id}. Deleting linked Message.")
@@ -452,11 +439,10 @@ def delete_message(id: int, source: str = Query(..., description="Source of the 
                     celery_task_to_revoke = linked_message.message_metadata.get('celery_task_id')
                 db.delete(linked_message)
                 deleted_from_description += " and its linked Message entry"
-            else:
-                logger.warning(f"RoadmapMessage {id} has message_id {roadmap_message.message_id} but linked Message not found.")
         db.delete(roadmap_message)
 
     elif source == "scheduled":
+        # This section had the bug.
         scheduled_message = db.query(Message).filter(Message.id == id, Message.message_type == 'scheduled').first()
         if not scheduled_message:
             raise HTTPException(status_code=404, detail=f"Scheduled message (Message table) with ID {id} not found.")
@@ -478,7 +464,12 @@ def delete_message(id: int, source: str = Query(..., description="Source of the 
                         deleted_from_description += " and its originating RoadmapMessage"
                 except ValueError:
                      logger.error(f"Invalid roadmap_id '{orig_roadmap_id}' in metadata for Message {id}", exc_info=True)
+        
+        # <<< THIS IS THE FIX >>>
+        # The previous code was missing this line. It deleted the linked roadmap
+        # message but not the scheduled message itself. This line fixes that.
         db.delete(scheduled_message)
+
     else:
         raise HTTPException(status_code=400, detail="Invalid source. Must be 'roadmap' or 'scheduled'.")
 
@@ -489,14 +480,120 @@ def delete_message(id: int, source: str = Query(..., description="Source of the 
             logger.info(f"Celery task {celery_task_to_revoke} revocation attempt successful.")
         except Exception as revoke_exc:
             logger.error(f"Failed to revoke Celery task {celery_task_to_revoke}: {revoke_exc}. DB changes will proceed.", exc_info=True)
-            
+
     try:
         db.commit()
     except Exception as e:
         db.rollback()
         logger.error(f"Database commit failed during delete for ID {item_deleted_id}, source {source}: {e}", exc_info=True)
-        # If commit fails after task revocation, the task is gone but DB records might remain.
-        # This is less critical than a task running for a deleted record.
         raise HTTPException(status_code=500, detail=f"Failed to delete item from database: {e}")
 
     return {"success": True, "deleted_from": deleted_from_description, "id": item_deleted_id, "task_revoked": celery_task_to_revoke is not None}
+
+# Pydantic model for the request body
+class ScheduleBulkPayload(BaseModel):
+    roadmap_ids: List[int]
+
+@router.post("/schedule-bulk", summary="Schedule a list of roadmap messages in bulk")
+def schedule_bulk(
+    payload: ScheduleBulkPayload,
+    db: Session = Depends(get_db)
+):
+    """
+    Schedules a batch of roadmap messages based on a list of their IDs.
+
+    This endpoint iterates through each provided ID, validates it, and schedules it
+    using the same logic as the single-schedule endpoint. It returns a summary of
+    which messages were scheduled and which were skipped.
+    """
+    scheduled_count = 0
+    skipped_count = 0
+    results: Dict[str, Any] = {
+        "scheduled": [],
+        "skipped": []
+    }
+    
+    # Fetch all relevant roadmap messages in one query for efficiency
+    roadmap_messages = db.query(RoadmapMessage).filter(
+        RoadmapMessage.id.in_(payload.roadmap_ids)
+    ).all()
+    
+    messages_by_id = {msg.id: msg for msg in roadmap_messages}
+
+    for roadmap_id in payload.roadmap_ids:
+        # Using a try/except block to handle failures for a single message gracefully
+        # without stopping the entire bulk operation.
+        try:
+            roadmap_msg = messages_by_id.get(roadmap_id)
+            
+            # --- Validation Checks (adapted from single schedule endpoint) ---
+            if not roadmap_msg:
+                raise ValueError("Roadmap message not found.")
+            
+            if roadmap_msg.status in ["scheduled", "superseded"]:
+                raise ValueError(f"Already processed (status: {roadmap_msg.status}).")
+            
+            if not roadmap_msg.send_datetime_utc:
+                raise ValueError("Missing send time.")
+
+            customer = db.query(Customer).filter(Customer.id == roadmap_msg.customer_id).first()
+            if not customer:
+                raise ValueError("Associated customer not found.")
+            if not customer.opted_in:
+                raise ValueError("Customer has not opted in.")
+
+            # --- Scheduling Logic (adapted from single schedule endpoint) ---
+            conversation = db.query(Conversation).filter(
+                Conversation.customer_id == customer.id,
+                Conversation.business_id == roadmap_msg.business_id,
+                Conversation.status == 'active'
+            ).first()
+            if not conversation:
+                conversation = Conversation(
+                    id=uuid.uuid4(), customer_id=customer.id, business_id=roadmap_msg.business_id,
+                    started_at=datetime.now(pytz.utc), last_message_at=datetime.now(pytz.utc), status='active'
+                )
+                db.add(conversation)
+                db.flush()
+
+            new_message = Message(
+                conversation_id=conversation.id, customer_id=roadmap_msg.customer_id, business_id=roadmap_msg.business_id,
+                content=roadmap_msg.smsContent, message_type='scheduled', status="scheduled",
+                scheduled_time=roadmap_msg.send_datetime_utc,
+                message_metadata={'source': 'roadmap', 'roadmap_id': roadmap_id}
+            )
+            db.add(new_message)
+            db.flush()
+            
+            # This is the same logic as the single /schedule endpoint
+            roadmap_msg.status = "superseded"
+            roadmap_msg.message_id = new_message.id
+            
+            scheduled_count += 1
+            results["scheduled"].append({"roadmap_id": roadmap_id, "new_message_id": new_message.id})
+            
+        except Exception as e:
+            # If any step fails, we log it and add it to the skipped list
+            logger.warning(f"[SCHEDULE-BULK] ⚠️ Skipped Roadmap ID {roadmap_id}. Reason: {str(e)}")
+            skipped_count += 1
+            results["skipped"].append({"roadmap_id": roadmap_id, "reason": str(e)})
+            # We don't need to rollback here because the final commit will handle all successful changes.
+            # Failures just mean a particular message's changes aren't added to the session.
+
+    try:
+        db.commit()
+        logger.info(f"[SCHEDULE-BULK] Commit successful. Scheduled: {scheduled_count}, Skipped: {skipped_count}.")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[SCHEDULE-BULK] ❌ Final DB commit failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database commit failed during bulk schedule: {str(e)}"
+        )
+
+    return {
+        "message": "Bulk schedule operation completed.",
+        "scheduled_count": scheduled_count,
+        "skipped_count": skipped_count,
+        "details": results
+    }

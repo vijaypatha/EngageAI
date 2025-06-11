@@ -9,7 +9,7 @@ import uuid
 import re
 
 # Import the new enums from app.models
-from app.models import MessageTypeEnum, MessageStatusEnum, OptInStatus # OptInStatus is already used
+from app.models import MessageTypeEnum, MessageStatusEnum, OptInStatus, NudgeStatusEnum, NudgeTypeEnum # OptInStatus is already used
 
 # Helper function to normalize phone numbers (YOUR ORIGINAL FUNCTION)
 def normalize_phone_number(v: Optional[str]) -> Optional[str]:
@@ -78,6 +78,7 @@ class BusinessProfileBase(BaseModel):
     primary_services: str; representative_name: str
     timezone: Optional[str] = "UTC"
     business_phone_number: Optional[str] = None
+    review_platform_url: Optional[str] = None 
 
     _normalize_bp_phone = validator('business_phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before') 
@@ -100,6 +101,7 @@ class BusinessProfileUpdate(BaseModel):
     notify_owner_on_reply_with_link: Optional[bool] = None
     enable_ai_faq_auto_reply: Optional[bool] = None
     structured_faq_data: Optional[StructuredFaqDataSchema] = None
+    review_platform_url: Optional[str] = None
 
     _normalize_bp_update_phone = validator('business_phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     _normalize_twilio_update_phone = validator('twilio_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number) # Added always=True
@@ -129,9 +131,13 @@ class BusinessPhoneUpdate(BaseModel):
 
 # --- Customer Schemas (No direct change needed for MessageTypeEnum/MessageStatusEnum) ---
 class CustomerBase(BaseModel):
-    # ... (your existing code) ...
-    customer_name: str; phone: str; lifecycle_stage: str; pain_points: str
-    interaction_history: str; business_id: int
+    customer_name: str
+    phone: str
+    lifecycle_stage: str
+    # MODIFICATION: Changed to Optional[str] to allow None values from the database
+    pain_points: Optional[str] = None
+    interaction_history: Optional[str] = None
+    business_id: int
     timezone: Optional[str] = None
     opted_in: Optional[bool] = False 
     is_generating_roadmap: Optional[bool] = False
@@ -175,7 +181,7 @@ class SMSCreate(BaseModel):
 
     @validator('message') # Keep existing validator if it's Pydantic v1 style and working
     def validate_message_length(cls, v_msg_len):
-        if len(v_msg_len) > 160: 
+        if len(v_msg_len) > 160:
             raise ValueError("Message length exceeds 160 characters")
         return v_msg_len
 
@@ -247,17 +253,32 @@ class MessageBase(BaseModel):
     parent_id: Optional[int] = None
     scheduled_time: Optional[datetime] = None; sent_at: Optional[datetime] = None
     is_hidden: bool = False; message_metadata: Optional[Dict[str,Any]] = None
+
+    customer: Optional["Customer"] = None # Forward reference for Customer schema
+    business: Optional["BusinessProfile"] = None # Forward reference for BusinessProfile schema
+
+    # Ensure Config allows ORM mode if not already present at this level,
+    # though Message and MessageResponse will have it.
+    # class Config:
+    #     from_attributes = True
+
 class MessageCreate(MessageBase): pass
 class MessageUpdate(BaseModel):
     content: Optional[str] = None; 
     status: Optional[MessageStatusEnum] = None # MODIFIED: Use Enum
     scheduled_time: Optional[datetime] = None; sent_at: Optional[datetime] = None
     is_hidden: Optional[bool] = None; message_metadata: Optional[Dict[str,Any]] = None
+
 class Message(MessageBase):
     id: int; created_at: datetime
+    # customer: Optional[Customer] = None # Already in MessageBase
+    # business: Optional[BusinessProfile] = None # Already in MessageBase
     class Config: from_attributes = True
+
 class MessageResponse(MessageBase): 
     id: int; created_at: datetime; updated_at: Optional[datetime] = None
+    # customer: Optional[Customer] = None # Already in MessageBase
+    # business: Optional[BusinessProfile] = None # Already in MessageBase
     class Config: from_attributes = True
 
 class EngagementBase(BaseModel): 
@@ -371,3 +392,163 @@ class BusinessOwnerStyleResponse(BaseModel):
     id: int; business_id: int; scenario: str; response: str
     context_type: str; last_analyzed: Optional[datetime] = None
     class Config: from_attributes = True
+
+# --- CoPilot Nudge Schemas --- (Renamed from AINudge)
+class CoPilotNudgeBase(BaseModel):
+    business_id: int
+    customer_id: Optional[int] = None # Nudge might not always be customer-specific
+    nudge_type: NudgeTypeEnum # Using the Enum directly
+    status: NudgeStatusEnum = NudgeStatusEnum.ACTIVE # Default status
+    message_snippet: Optional[str] = None
+    ai_suggestion: Optional[str] = None
+    ai_evidence_snippet: Optional[Dict[str, Any]] = None
+    ai_suggestion_payload: Optional[Dict[str, Any]] = None
+
+class CoPilotNudgeCreate(CoPilotNudgeBase):
+    pass
+
+class CoPilotNudgeRead(CoPilotNudgeBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    customer_name: Optional[str] = None # Will be populated in the route logic
+
+    class Config:
+        from_attributes = True # Pydantic v2 way to enable ORM mode
+
+# --- Payload Schemas for Nudge Actions ---
+class DismissNudgePayload(BaseModel):
+    reason: Optional[str] = None
+
+class SentimentActionPayload(BaseModel):
+    action_type: str # e.g., "REQUEST_REVIEW"
+
+class ConfirmTimedCommitmentPayload(BaseModel):
+    # The owner confirms or provides the specific datetime for the event in UTC
+    confirmed_datetime_utc: datetime 
+    
+    # The owner confirms or provides the purpose of the event
+    confirmed_purpose: str = Field(..., min_length=1, max_length=500) # Purpose is required
+
+    class Config:
+        from_attributes = True # For Pydantic v2, if needed, though usually not for request bodies.
+
+# --- TargetedEvent Schemas ---
+class TargetedEventBase(BaseModel):
+    business_id: int
+    customer_id: int
+    event_datetime_utc: datetime
+    purpose: Optional[str] = None
+    status: str 
+    notes: Optional[str] = None
+    created_from_nudge_id: Optional[int] = None
+
+class TargetedEventCreate(TargetedEventBase): # For potential direct creation later
+    pass
+
+class TargetedEventRead(TargetedEventBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True # For Pydantic v2 ORM mode
+
+# --- NEW SCHEMAS FOR STRATEGIC ENGAGEMENT PLANS (ITERATION 4) ---
+
+# This schema defines a single message within an engagement plan payload
+class PlanMessage(BaseModel):
+    text: str = Field(..., min_length=1, description="The content of the SMS message.")
+    send_datetime_utc: datetime = Field(..., description="The absolute UTC datetime to send the message.")
+
+# This is the main payload for activating an AI-drafted engagement plan
+class ActivateEngagementPlanPayload(BaseModel):
+    customer_id: int = Field(..., description="The ID of the customer this plan is for.")
+    messages: List[PlanMessage] = Field(..., min_length=1, description="The list of messages to be scheduled as part of the plan.")
+
+
+# --- Inbox Schemas ---
+class InboxCustomerSummary(BaseModel):
+    customer_id: int
+    customer_name: str
+    phone: Optional[str] = None # Optional as it might not be strictly needed for summary
+    opted_in: bool
+    consent_status: str
+    last_message_content: Optional[str] = None
+    last_message_timestamp: Optional[datetime] = None
+    unread_message_count: int = 0 # Default to 0, can be updated by a more complex query
+    business_id: int
+
+    class Config:
+        from_attributes = True
+
+class PaginatedInboxSummaries(BaseModel):
+    items: List[InboxCustomerSummary]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+# --- Summary Schemas for Payload Reduction ---
+
+class CustomerSummarySchema(BaseModel):
+    id: int
+    customer_name: str
+    phone: Optional[str] = None
+    lifecycle_stage: Optional[str] = None
+    opted_in: bool = False # Default to false if not available
+    latest_consent_status: Optional[str] = None
+    latest_consent_updated: Optional[datetime] = None
+    tags: List[TagRead] = Field(default_factory=list)
+    business_id: int # Added business_id as it's in CustomerBase
+
+    class Config:
+        from_attributes = True
+
+class CustomerBasicInfo(BaseModel):
+    id: int
+    customer_name: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class BusinessBasicInfo(BaseModel):
+    id: int
+    business_name: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class MessageSummarySchema(BaseModel):
+    id: int
+    conversation_id: Optional[uuid.UUID] = None # Added conversation_id
+    business_id: int
+    customer_id: int
+    content_snippet: Optional[str] = None
+    message_type: Optional[MessageTypeEnum] = None # Use the enum
+    status: Optional[MessageStatusEnum] = None     # Use the enum
+    created_at: datetime
+    sent_at: Optional[datetime] = None
+    customer: Optional[CustomerBasicInfo] = None
+    business: Optional[BusinessBasicInfo] = None
+
+    class Config:
+        from_attributes = True
+
+# --- Customer Conversation Schemas ---
+# Re-using the existing Message schema for individual messages in a conversation for now.
+# If specific fields or formatting are needed for the timeline, a more specific schema can be created.
+# For example, ConversationMessageForTimeline(Message) could be used and customized if needed.
+class ConversationMessageForTimeline(Message): # This already inherits customer & business from MessageBase
+    pass
+
+class CustomerConversation(BaseModel):
+    customer_id: int
+    messages: List[ConversationMessageForTimeline]
+    class Config:
+        from_attributes = True
+
+# Update forward references for all models that might have them
+# This is good practice at the end of the schemas file.
+Customer.update_forward_refs()
+MessageBase.update_forward_refs() # MessageBase contains Optional["Customer"], Optional["BusinessProfile"]
+# Add other .update_forward_refs() if other models use string forward references.
+# For now, focusing on the ones modified or relevant to the new summary schemas.

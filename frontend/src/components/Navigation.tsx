@@ -16,11 +16,14 @@ import {
   MoreHorizontal, // Icon for "More" on mobile
   LogIn,
   LucideSquareStack,
-  LayoutDashboard,          // Example for Logout, if needed in "More"
+  LayoutDashboard,
+  Lightbulb,
+  BrainCircuit,
+  Sparkles          // Example for Logout, if needed in "More"
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
-import { apiClient } from "@/lib/api";
+import { useBusinessNavigationProfile } from "@/lib/api"; // Import the SWR hook
 
 export function Navigation() {
   const params = useParams();
@@ -28,13 +31,10 @@ export function Navigation() {
   const business_name_param = params?.business_name;
   const business_name = Array.isArray(business_name_param) ? business_name_param[0] : business_name_param;
 
+  const { data: businessProfileData, error, isLoading: swrIsLoading } = useBusinessNavigationProfile(business_name);
+
   const [isMobile, setIsMobile] = useState(false);
-  const [isLoading, setIsLoading] = useState(true); // Default to true
   const [showMobileMenu, setShowMobileMenu] = useState(false);
-  const [businessProfile, setBusinessProfile] = useState({
-    representative_name: "",
-    business_name: ""
-  });
 
   // Log initial params
   console.log("Navigation params:", params);
@@ -51,61 +51,20 @@ export function Navigation() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  useEffect(() => {
-    const fetchBusinessProfile = async () => {
-      console.log("fetchBusinessProfile called. business_name:", business_name);
-      if (!business_name || typeof business_name !== 'string') {
-        console.log("fetchBusinessProfile: Invalid or missing business_name, setting isLoading false.");
-        setIsLoading(false);
-        setBusinessProfile({ representative_name: "User", business_name: "Business" }); // Explicitly set default on invalid
-        return;
-      }
-      console.log("fetchBusinessProfile: Setting isLoading true.");
-      setIsLoading(true); // Ensure loading is true before fetch
-      try {
-        console.log(`WorkspaceBusinessProfile: Attempting to fetch /business-profile/business-id/slug/${business_name}`);
-        const response = await apiClient.get(`/business-profile/navigation-profile/slug/${business_name}`);
-        console.log("fetchBusinessProfile: API response received", response);
-        if (response?.data && response.data.business_name) { // Check specifically for business_name in response data
-            console.log("fetchBusinessProfile: Successfully fetched business_name:", response.data.business_name);
-            setBusinessProfile({
-              representative_name: response.data.representative_name || "User",
-              business_name: response.data.business_name // Use the fetched name
-            });
-        } else {
-           console.log("fetchBusinessProfile: API response missing data or business_name. response.data:", response?.data);
-           setBusinessProfile({ representative_name: "User", business_name: "Business" }); // Fallback if no name
-        }
-      } catch (error) {
-        console.error("fetchBusinessProfile: Failed to fetch business profile:", error);
-        setBusinessProfile({ representative_name: "User", business_name: "Business" }); // Fallback on error
-      } finally {
-        console.log("fetchBusinessProfile: Setting isLoading false in finally block.");
-        setIsLoading(false);
-      }
-    };
-
-    // Only fetch if business_name is valid
-    if (business_name && typeof business_name === 'string') {
-        fetchBusinessProfile();
-    } else {
-        // If business_name is not valid from the start, stop loading and use defaults
-        console.log("fetchBusinessProfile useEffect: business_name initially invalid. Setting isLoading false.");
-        setIsLoading(false);
-        setBusinessProfile({ representative_name: "User", business_name: "Business" });
-    }
-  }, [business_name]); // Dependency on business_name
-
-  const shouldRenderNav = !isLoading && business_name && typeof business_name === 'string' &&
+  const shouldRenderNav = !swrIsLoading && business_name && typeof business_name === 'string' &&
                          !(pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/onboarding"));
 
   // Log state before rendering decision
-  console.log("Navigation state before render check: isLoading:", isLoading, "businessProfile:", businessProfile, "shouldRenderNav:", shouldRenderNav, "pathname:", pathname);
+  console.log("Navigation state before render check: swrIsLoading:", swrIsLoading, "businessProfileData:", businessProfileData, "error:", error, "shouldRenderNav:", shouldRenderNav, "pathname:", pathname);
 
+  if (error) {
+    console.error("Navigation: Error fetching business profile:", error);
+    // Optionally, render an error message or fallback UI
+  }
 
   if (!shouldRenderNav) {
-    // You might want a more specific loading indicator here if isLoading is true but other conditions fail
-    if (isLoading && business_name && typeof business_name === 'string' && !(pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/onboarding"))) {
+    // You might want a more specific loading indicator here if swrIsLoading is true but other conditions fail
+    if (swrIsLoading && business_name && typeof business_name === 'string' && !(pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/onboarding"))) {
         console.log("Navigation: Rendering loading spinner for business profile fetch.");
         // return <div>Loading Business Profile...</div>; // Example loading spinner
     }
@@ -113,6 +72,8 @@ export function Navigation() {
     return null;
   }
 
+  const representative_name = businessProfileData?.representative_name || "User";
+  const display_business_name = businessProfileData?.business_name || "Business";
   // --- Define Navigation Items (rest of your component remains the same) ---
   const inputNavItems = [
     {
@@ -143,10 +104,10 @@ export function Navigation() {
       description: "View conversations"
     },
     {
-        name: "Replies",
-        href: `/replies/${business_name}`,
-        icon: MailCheck,
-        description: "Review & reply"
+        name: "Co-Pilot",
+        href: `/copilot/${business_name}`,
+        icon: Sparkles,
+        description: "Business growth assistant"
     },
     {
       name: "Dashboard",
@@ -270,7 +231,7 @@ export function Navigation() {
               <div className="flex flex-col">
                 <span className="font-medium text-sm text-white group-hover:text-emerald-300 transition-colors">
                   {/* Using the fix suggested previously */}
-                  {isLoading ? "Loading..." : (businessProfile.business_name || "Business")}
+                  {swrIsLoading ? "Loading..." : (display_business_name)}
                 </span>
               </div>
             </div>
@@ -360,7 +321,7 @@ export function Navigation() {
                 </Link>
               </div>
               {[
-                { name: "Replies", href: `/replies/${business_name}`, icon: MailCheck },
+                { name: "Co-Pilot", href: `/copilot/${business_name}`, icon: Sparkles },
                 { name: "Profile", href: `/profile/${business_name}`, icon: UserCircle },
               ].map((item) => (
                 <Link

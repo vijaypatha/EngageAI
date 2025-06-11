@@ -1,18 +1,19 @@
 # backend/app/celery_tasks.py
-# Handles background tasks for sending scheduled SMS messages based on the Message model.
+# Handles background tasks for sending scheduled SMS messages and generating Co-Pilot nudges.
 
 import asyncio
 import logging
-from datetime import datetime, timezone as dt_timezone # Alias timezone to avoid conflict
-from typing import Dict, Optional, Union
-from fastapi import HTTPException
+from datetime import datetime, timezone as dt_timezone
+from typing import Dict, Optional, Union, Any
 
+from fastapi import HTTPException
 from app.celery_app import celery_app as celery
 from app.database import SessionLocal
-from app.models import BusinessProfile, Customer, Message, Engagement # Added Engagement
-# Use the Twilio service that handles sending
-# Assuming send_sms_via_twilio exists and calls TwilioService.send_sms correctly
+from app.models import BusinessProfile, Customer, Message, Engagement, RoadmapMessage
+from sqlalchemy.orm import Session
 from app.services.twilio_service import send_sms_via_twilio
+from app.services.copilot_nudge_generation_service import CoPilotNudgeGenerationService
+from app.services.copilot_growth_opportunity_service import CoPilotGrowthOpportunityService
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -33,12 +34,20 @@ def process_scheduled_message_task(self, message_id: int) -> Dict[str, Union[boo
     """
     db = SessionLocal()
     message = None
-    engagement_to_update = None # To hold related engagement if needed
     log_prefix = f"[CELERY_TASK process_scheduled_message(MsgID:{message_id})]"
     logger.info(f"{log_prefix} Task started.")
 
+    # NEW: Helper function to update the original RoadmapMessage.
+    def update_roadmap_status(db_session: Session, msg_record: Message, new_status: str):
+        if isinstance(msg_record.message_metadata, dict):
+            roadmap_id = msg_record.message_metadata.get('roadmap_id')
+            if roadmap_id:
+                roadmap_msg = db_session.query(RoadmapMessage).filter(RoadmapMessage.id == int(roadmap_id)).first()
+                if roadmap_msg:
+                    roadmap_msg.status = new_status
+                    logger.info(f"{log_prefix} Updated original RoadmapMessage (ID: {roadmap_id}) status to '{new_status}'.")
+
     try:
-        # Step 1: Fetch the main message record
         logger.info(f"{log_prefix} Fetching Message record from DB.")
         message = db.query(Message).filter(Message.id == message_id).first()
 
@@ -46,20 +55,17 @@ def process_scheduled_message_task(self, message_id: int) -> Dict[str, Union[boo
             logger.error(f"{log_prefix} Message record not found in DB. Aborting task.")
             return {"success": False, "error": "Message not found"}
 
-        logger.info(f"{log_prefix} Found Message. Current status: '{message.status}', Scheduled time: {message.scheduled_time}, Content: '{message.content[:50]}...'")
-
-        # Step 2: Check if the message is still valid for sending
         if message.status != 'scheduled':
             logger.warning(f"{log_prefix} Message status is '{message.status}', not 'scheduled'. Skipping sending.")
             return {"success": False, "status": message.status, "info": "Skipped, status not 'scheduled'"}
 
-        # Step 3: Fetch related customer and business profiles
         logger.info(f"{log_prefix} Fetching Customer (ID: {message.customer_id}) and Business (ID: {message.business_id}).")
         customer = db.query(Customer).filter(Customer.id == message.customer_id).first()
         if not customer or not customer.phone:
             err_msg = f"{log_prefix} Customer (ID: {message.customer_id}) or phone number not found."
             logger.error(err_msg)
             message.status = "failed"
+            update_roadmap_status(db, message, "failed") # NEW: Update roadmap status on failure
             message.message_metadata = {**(message.message_metadata or {}), 'failure_reason': 'Customer/phone not found'}
             db.commit()
             return {"success": False, "error": "Customer or phone not found"}
@@ -68,16 +74,13 @@ def process_scheduled_message_task(self, message_id: int) -> Dict[str, Union[boo
              err_msg = f"{log_prefix} Customer (ID: {message.customer_id}) is opted-out. Skipping send."
              logger.warning(err_msg)
              message.status = "failed"
+             update_roadmap_status(db, message, "failed") # NEW: Update roadmap status on failure
              message.message_metadata = {**(message.message_metadata or {}), 'failure_reason': 'Customer opted out'}
-              # --- Find and update related Engagement if manual reply ---
              if message.message_metadata and message.message_metadata.get('source') == 'manual_reply_inbox':
                  engagement_to_fail = db.query(Engagement).filter(Engagement.message_id == message.id).first()
                  if engagement_to_fail:
-                     engagement_to_fail.status = "failed" # Match message status
+                     engagement_to_fail.status = "failed"
                      logger.info(f"{log_prefix} Updated related engagement (ID: {engagement_to_fail.id}) status to failed due to opt-out.")
-                 else:
-                      logger.warning(f"{log_prefix} Could not find related engagement for message_id {message.id} to mark as failed.")
-             # --- End Engagement update ---
              db.commit()
              return {"success": False, "error": "Customer opted out"}
 
@@ -86,21 +89,15 @@ def process_scheduled_message_task(self, message_id: int) -> Dict[str, Union[boo
             err_msg = f"{log_prefix} Business (ID: {message.business_id}) not found."
             logger.error(err_msg)
             message.status = "failed"
+            update_roadmap_status(db, message, "failed") # NEW: Update roadmap status on failure
             message.message_metadata = {**(message.message_metadata or {}), 'failure_reason': 'Business not found'}
             db.commit()
             return {"success": False, "error": "Business not found"}
         
         logger.info(f"{log_prefix} Found Customer: '{customer.customer_name}', Phone: '{customer.phone}'. Found Business: '{business.business_name}'.")
 
-        # Step 4: Attempt to send the SMS via Twilio Service
         try:
             logger.info(f"{log_prefix} Calling asyncio.run(send_sms_via_twilio(...)) for customer {customer.phone}.")
-            # Ensure the business object passed contains the necessary fields (twilio_number, messaging_service_sid)
-            logger.debug(f"{log_prefix} Business details for send: twilio_number='{business.twilio_number}', msid='{business.messaging_service_sid}'")
-            
-            # ***** CRITICAL: Ensure asyncio event loop handling is correct for your Celery setup *****
-            # Simple asyncio.run might cause issues in some Celery configurations.
-            # Consider using celery[asyncio] if problems persist.
             message_sid = asyncio.run(send_sms_via_twilio(
                 to=customer.phone,
                 message=message.content,
@@ -108,99 +105,233 @@ def process_scheduled_message_task(self, message_id: int) -> Dict[str, Union[boo
             ))
             logger.info(f"{log_prefix} send_sms_via_twilio call completed. Returned SID: {message_sid}")
 
-            # Step 5a: Update message status to 'sent'
             logger.info(f"{log_prefix} Attempting to update Message status to 'sent'.")
             message.status = "sent"
+            update_roadmap_status(db, message, "sent") # NEW: Update roadmap status on success
             message.sent_at = datetime.now(dt_timezone.utc)
             message.message_metadata = {**(message.message_metadata or {}), 'twilio_sid': message_sid}
             
-            # --- Update related Engagement status ---
             if message.message_metadata and message.message_metadata.get('source') == 'manual_reply_inbox':
                 logger.info(f"{log_prefix} Source is manual_reply_inbox, finding related engagement.")
                 engagement_to_update = db.query(Engagement).filter(Engagement.message_id == message.id).first()
                 if engagement_to_update:
-                    engagement_to_update.status = "sent" # Update engagement status
-                    engagement_to_update.sent_at = message.sent_at # Align timestamp
-                    db.add(engagement_to_update) # Add to session for commit
+                    engagement_to_update.status = "sent"
+                    engagement_to_update.sent_at = message.sent_at
+                    db.add(engagement_to_update)
                     logger.info(f"{log_prefix} Found engagement (ID: {engagement_to_update.id}) and updated status to 'sent'.")
-                else:
-                    logger.warning(f"{log_prefix} Could not find related engagement for message_id {message.id} to mark as sent.")
-            # --- End Engagement update ---
-
+            
             db.commit()
             logger.info(f"{log_prefix} Database commit successful. Message and potentially Engagement status updated to 'sent'.")
             return {"success": True, "message_sid": message_sid}
 
         except HTTPException as http_exc_send:
-             # Catch HTTP exceptions specifically from the send function (e.g., config errors)
              err_msg = f"HTTPException during send_sms_via_twilio: {http_exc_send.status_code} - {http_exc_send.detail}"
              logger.error(f"{log_prefix} {err_msg}", exc_info=True)
              message.status = "failed"
+             update_roadmap_status(db, message, "failed") # NEW: Update roadmap status on failure
              message.message_metadata = {**(message.message_metadata or {}), 'failure_reason': f"Send Error: {http_exc_send.detail}"}
-             # --- Update related Engagement status ---
              if message.message_metadata and message.message_metadata.get('source') == 'manual_reply_inbox':
                  engagement_to_fail = db.query(Engagement).filter(Engagement.message_id == message.id).first()
                  if engagement_to_fail:
                      engagement_to_fail.status = "failed"
                      logger.info(f"{log_prefix} Updated related engagement (ID: {engagement_to_fail.id}) status to failed due to send error.")
-             # --- End Engagement update ---
              db.commit()
              return {"success": False, "error": err_msg}
 
         except Exception as send_error:
-            # Catch other errors during the send process
             err_msg = f"Failed during send_sms_via_twilio call: {send_error}"
             logger.error(f"{log_prefix} {err_msg}", exc_info=True)
             message.status = "failed"
+            update_roadmap_status(db, message, "failed") # NEW: Update roadmap status on failure
             message.message_metadata = {**(message.message_metadata or {}), 'failure_reason': f"Send Exception: {str(send_error)}"}
-            # --- Update related Engagement status ---
             if message.message_metadata and message.message_metadata.get('source') == 'manual_reply_inbox':
                 engagement_to_fail = db.query(Engagement).filter(Engagement.message_id == message.id).first()
                 if engagement_to_fail:
                     engagement_to_fail.status = "failed"
                     logger.info(f"{log_prefix} Updated related engagement (ID: {engagement_to_fail.id}) status to failed due to send exception.")
-            # --- End Engagement update ---
             db.commit()
-            # Decide whether to retry
-            # self.retry(exc=send_error) # Uncomment to enable retries for generic send errors
             return {"success": False, "error": err_msg}
 
     except Exception as e:
-        # Catch unexpected errors during the task setup (DB fetches, etc.)
         err_msg = f"Unexpected task error: {str(e)}"
         logger.error(f"{log_prefix} {err_msg}", exc_info=True)
         db.rollback()
-
         if message and message.status == 'scheduled':
             try:
-                # Fetch again in a new query within this exception block if needed
                 message_to_fail = db.query(Message).filter(Message.id == message_id).first()
                 if message_to_fail:
                      message_to_fail.status = "failed"
+                     update_roadmap_status(db, message_to_fail, "failed") # NEW: Update roadmap status on failure
                      message_to_fail.message_metadata = {**(message_to_fail.message_metadata or {}), 'failure_reason': f"Task Error: {str(e)}"}
-                     # --- Update related Engagement status ---
                      if message_to_fail.message_metadata and message_to_fail.message_metadata.get('source') == 'manual_reply_inbox':
                          engagement_to_fail = db.query(Engagement).filter(Engagement.message_id == message_to_fail.id).first()
                          if engagement_to_fail:
                              engagement_to_fail.status = "failed"
                              logger.info(f"{log_prefix} Updated related engagement (ID: {engagement_to_fail.id}) status to failed due to task error.")
-                     # --- End Engagement update ---
                      db.commit()
                      logger.info(f"{log_prefix} Updated message status to failed after task error.")
             except Exception as update_fail_error:
                 logger.error(f"{log_prefix} Could not update message/engagement status to failed after task error: {update_fail_error}", exc_info=True)
                 db.rollback()
-
-        # Retry the task for potentially transient issues
         try:
             logger.warning(f"{log_prefix} Retrying task due to unexpected error.")
             self.retry(exc=e)
         except Exception as retry_error:
              logger.error(f"{log_prefix} Failed to enqueue retry: {retry_error}")
-
         return {"success": False, "error": err_msg}
 
     finally:
         if db:
             db.close()
         logger.info(f"{log_prefix} Task finished.")
+
+@celery.task(name='generate_sentiment_nudges')
+def generate_sentiment_nudges_task(business_id: int) -> Dict[str, any]:
+    """
+    Celery task to detect both positive and negative sentiment and create CoPilotNudges for a given business.
+    """
+    log_prefix = f"[CELERY_TASK generate_sentiment_nudges(BusinessID:{business_id})]"
+    logger.info(f"{log_prefix} Task started.")
+    
+    db = None
+    try:
+        db = SessionLocal()
+        nudge_generation_service = CoPilotNudgeGenerationService(db)
+        
+        logger.info(f"{log_prefix} Detecting positive sentiment...")
+        created_positive_nudges = nudge_generation_service.detect_positive_sentiment_and_create_nudges(business_id)
+        num_positive_created = len(created_positive_nudges)
+
+        logger.info(f"{log_prefix} Detecting negative sentiment...")
+        created_negative_nudges = nudge_generation_service.detect_negative_sentiment_and_create_nudges(business_id)
+        num_negative_created = len(created_negative_nudges)
+        
+        total_nudges_created_this_run = num_positive_created + num_negative_created
+        logger.info(f"{log_prefix} Task completed. Total nudges created: {total_nudges_created_this_run}.")
+        return {
+            "success": True, 
+            "business_id": business_id, 
+            "positive_nudges_created": num_positive_created,
+            "negative_nudges_created": num_negative_created,
+        }
+    except Exception as e:
+        error_message = f"Error during task execution: {str(e)}"
+        logger.error(f"{log_prefix} {error_message}", exc_info=True)
+        return {"success": False, "business_id": business_id, "error": error_message}
+    finally:
+        if db:
+            db.close()
+        logger.info(f"{log_prefix} Task finished.")
+
+@celery.task(name='trigger_strategic_engagement_plan_generation', bind=True, max_retries=2, default_retry_delay=30)
+def trigger_strategic_engagement_plan_generation_task(
+    self, 
+    business_id: int, 
+    customer_id: int, 
+    trigger_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Celery task to trigger the generation of a strategic engagement plan.
+    """
+    log_prefix = f"[CELERY_TASK trigger_strategic_plan B:{business_id} C:{customer_id}]"
+    logger.info(f"{log_prefix} Task started.")
+    
+    db = None
+    try:
+        db = SessionLocal()
+        nudge_gen_service = CoPilotNudgeGenerationService(db)
+        created_nudge = nudge_gen_service.generate_strategic_engagement_plan(
+            business_id=business_id,
+            customer_id=customer_id,
+            trigger_type="nuanced_sms",
+            trigger_data=trigger_data
+        )
+        
+        if created_nudge:
+            logger.info(f"{log_prefix} Strategic engagement plan nudge (ID: {created_nudge.id}) created successfully.")
+            return {"success": True, "nudge_id": created_nudge.id, "customer_id": customer_id}
+        else:
+            logger.warning(f"{log_prefix} No strategic engagement plan nudge was created by the service.")
+            return {"success": False, "info": "No nudge created by service.", "customer_id": customer_id}
+            
+    except Exception as e:
+        logger.error(f"{log_prefix} Error during strategic plan generation task: {e}", exc_info=True)
+        try:
+            self.retry(exc=e)
+        except Exception as retry_exc:
+            logger.error(f"{log_prefix} Failed to enqueue retry for strategic plan generation: {retry_exc}")
+        return {"success": False, "error": str(e), "customer_id": customer_id}
+    finally:
+        if db:
+            db.close()
+        logger.info(f"{log_prefix} Task finished.")  
+
+@celery.task(name="tasks.run_all_nudge_generation")
+def run_all_nudge_generation():
+    """
+    A periodic Celery task to run all nudge generation services for all businesses.
+    This includes reactive (sentiment, event) and proactive (growth) nudges. This
+    task should be scheduled to run periodically (e.g., every hour) via Celery Beat.
+    """
+    db = SessionLocal()
+    try:
+        logger.info("[CeleryTask] Starting run_all_nudge_generation for all businesses.")
+        businesses = db.query(BusinessProfile).all()
+        if not businesses:
+            logger.info("[CeleryTask] No businesses found to process.")
+            return
+
+        for business in businesses:
+            log_prefix = f"[CeleryTask B:{business.id}]"
+            logger.info(f"{log_prefix} Processing...")
+
+            # --- Initialize Services ---
+            reactive_nudge_service = CoPilotNudgeGenerationService(db)
+            proactive_growth_service = CoPilotGrowthOpportunityService(db)
+
+            # --- 1. Run Reactive Nudge Generation ---
+            # These services look for immediate opportunities in recent messages.
+            try:
+                logger.info(f"{log_prefix} Running reactive sentiment and event analysis...")
+                reactive_nudge_service.detect_positive_sentiment_and_create_nudges(business.id)
+                reactive_nudge_service.detect_negative_sentiment_and_create_nudges(business.id)
+                reactive_nudge_service.detect_potential_timed_commitments(business.id)
+                logger.info(f"{log_prefix} Completed reactive analysis.")
+            except Exception as e:
+                logger.error(f"{log_prefix} Error during reactive analysis: {e}", exc_info=True)
+
+            # --- 2. Run Proactive Growth Opportunity Generation ---
+            # These services perform deeper analysis on customer history.
+            try:
+                logger.info(f"{log_prefix} Running referral opportunity analysis...")
+                proactive_growth_service.identify_referral_opportunities(business.id)
+                logger.info(f"{log_prefix} Completed referral opportunity analysis.")
+            except Exception as e:
+                logger.error(f"{log_prefix} Error during referral opportunity analysis: {e}", exc_info=True)
+            
+            try:
+                logger.info(f"{log_prefix} Running re-engagement opportunity analysis...")
+                proactive_growth_service.identify_re_engagement_opportunities(business.id)
+                logger.info(f"{log_prefix} Completed re-engagement opportunity analysis.")
+            except Exception as e:
+                logger.error(f"{log_prefix} Error during re-engagement opportunity analysis: {e}", exc_info=True)
+
+            logger.info(f"{log_prefix} Finished processing.")
+
+    except Exception as e:
+        logger.error(f"[CeleryTask] A critical error occurred in run_all_nudge_generation: {e}", exc_info=True)
+    finally:
+        db.close()
+        logger.info("[CeleryTask] run_all_nudge_generation finished and DB session closed.")
+
+# To schedule this task, you would add it to your Celery Beat schedule.
+# For example, in your celery_app.py or a config file:
+#
+# from celery.schedules import crontab
+#
+# celery_app.conf.beat_schedule = {
+#     'run-nudge-generation-every-hour': {
+#         'task': 'tasks.run_all_nudge_generation',
+#         'schedule': crontab(minute=0),  # Run at the top of every hour
+#     },
+# }

@@ -11,14 +11,21 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '001'
-down_revision = None
+down_revision = 'base_initial_base_revision'
 branch_labels = None
 depends_on = None
 
 
+# backend/alembic/versions/001_add_business_phone_number.py
 def upgrade():
-    op.add_column('businesses', sa.Column('business_phone_number', sa.String(), nullable=True))
-
+    # The business_phone_number column is now created directly by Base.metadata.create_all
+    # based on the current BusinessProfile model, so this operation is redundant for new DB setups.
+    # op.add_column('business_profiles', sa.Column('business_phone_number', sa.String(), nullable=True))
+    pass # Add pass if no other operations in upgrade
 
 def downgrade():
-    op.drop_column('businesses', 'business_phone_number') 
+    # Correspondingly, if the column was created by Base.metadata,
+    # this drop might not be what you want unless you're managing everything via diffs.
+    # For a clean build, this also becomes less relevant if the model dictates the initial state.
+    # op.drop_column('business_profiles', 'business_phone_number')
+    pass # Add pass if no other operations in downgrade

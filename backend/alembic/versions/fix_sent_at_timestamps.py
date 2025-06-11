@@ -11,49 +11,33 @@ from datetime import datetime, timezone
 
 # revision identifiers, used by Alembic.
 revision = 'fix_sent_at_timestamps'
-down_revision = None  # will be set by alembic
+down_revision = '001'  # will be set by alembic
 branch_labels = None
 depends_on = None
 
 def upgrade():
-    # Get connection
     conn = op.get_bind()
-
-    # Update messages where status='sent' but sent_at is NULL
-    conn.execute("""
+    conn.execute(sa.text("""
         UPDATE messages 
-        SET sent_at = created_at,
-            status = 'sent'
-        WHERE status = 'sent' 
-        AND sent_at IS NULL
-        AND message_type = 'scheduled'
-    """)
-
-    # Update messages where sent_at is set but status isn't 'sent'
-    conn.execute("""
+        SET sent_at = created_at, status = 'sent'
+        WHERE status = 'sent' AND sent_at IS NULL AND message_type = 'scheduled'
+    """))
+    conn.execute(sa.text("""
         UPDATE messages
         SET status = 'sent'
-        WHERE sent_at IS NOT NULL
-        AND status != 'sent'
-        AND message_type = 'scheduled'
-    """)
-
-    # Update engagements where status='sent' but sent_at is NULL
-    conn.execute("""
+        WHERE sent_at IS NOT NULL AND status != 'sent' AND message_type = 'scheduled'
+    """))
+    conn.execute(sa.text("""
         UPDATE engagements
         SET sent_at = created_at
-        WHERE status = 'sent'
-        AND sent_at IS NULL
-    """)
-
-    # Update engagements where sent_at is set but status isn't 'sent'
-    conn.execute("""
+        WHERE status = 'sent' AND sent_at IS NULL
+    """))
+    conn.execute(sa.text("""
         UPDATE engagements
         SET status = 'sent'
-        WHERE sent_at IS NOT NULL
-        AND status != 'sent'
-    """)
+        WHERE sent_at IS NOT NULL AND status != 'sent'
+    """))
 
 def downgrade():
     # This migration is data fixing only, no schema changes to revert
-    pass 
+    pass

@@ -9,7 +9,9 @@ from sqlalchemy import and_, func, desc, cast, Integer, JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from app.celery_tasks import process_scheduled_message_task
 from app.services import MessageService
+from app.services import inbox_service # Uncommented and assuming it exists
 from app.services.stats_service import get_stats_for_business as get_stats_for_business, calculate_reply_stats
+from app.schemas import PaginatedInboxSummaries # Import the new schema
 import logging
 import uuid
 import pytz
@@ -118,10 +120,15 @@ def get_contact_stats(business_id: int, db: Session = Depends(get_db)):
         "customers_without_engagement": total_customers - customers_with_messages
     }
 
+# Replace the existing get_all_engagements function with this one.
+
 @router.get("/all-engagements")
 def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
-    """Get all engagement data for a business"""
-    # Get all customers for this business
+    """
+    Get all engagement data for a business.
+    This version ensures that once a roadmap message is scheduled, only the
+    authoritative 'Message' record is returned, preventing duplicates.
+    """
     customers = db.query(Customer).filter(
         Customer.business_id == business_id
     ).all()
@@ -130,41 +137,50 @@ def get_all_engagements(business_id: int, db: Session = Depends(get_db)):
     now_utc = datetime.now(timezone.utc)
 
     for customer in customers:
-        # Get latest consent status
         latest_consent = (
             db.query(ConsentLog)
             .filter(ConsentLog.customer_id == customer.id)
             .order_by(desc(ConsentLog.replied_at))
             .first()
         )
-
         consent_status = latest_consent.status if latest_consent else "pending"
         consent_updated = latest_consent.replied_at if latest_consent else None
-        opted_in = latest_consent.status == "opted_in" if latest_consent else False
+        opted_in = consent_status == "opted_in"
 
-        # Get roadmap messages
+        # --- THIS IS THE FIX ---
+        # We only fetch roadmap messages that are still pending.
+        # Once a message is 'scheduled' or 'superseded', it is handled by the 'Message' table query.
+        # This prevents sending the original "ghost" record to the frontend.
+        valid_roadmap_statuses = ["draft", "pending_review"]  # Add any other unscheduled statuses you use
         roadmap = db.query(RoadmapMessage).filter(
             RoadmapMessage.customer_id == customer.id,
-            RoadmapMessage.status != "deleted"
+            RoadmapMessage.status.in_(valid_roadmap_statuses)
         ).all()
 
-        # Get scheduled messages
+        # Get all scheduled messages (this query is correct)
         scheduled = db.query(Message).filter(
             Message.customer_id == customer.id,
             Message.message_type == 'scheduled'
         ).all()
 
-        # Format messages
         messages = []
+        # Add future-dated, pending roadmap messages
         for msg in roadmap:
             if msg.send_datetime_utc and msg.send_datetime_utc >= now_utc:
-                messages.append(format_roadmap_message(msg))
+                # Add a customer_timezone field to be consistent with the other message type
+                formatted_msg = format_roadmap_message(msg)
+                formatted_msg["customer_timezone"] = customer.timezone
+                messages.append(formatted_msg)
 
+        # Add future-dated, scheduled messages
         for msg in scheduled:
             if msg.scheduled_time and msg.scheduled_time >= now_utc:
-                messages.append(format_message(msg))
+                formatted_msg = format_message(msg)
+                # Add a customer_timezone field to be consistent with the other message type
+                formatted_msg["customer_timezone"] = customer.timezone
+                messages.append(formatted_msg)
 
-        if messages:  # Only include customers with messages
+        if messages:
             result.append({
                 "customer_id": customer.id,
                 "customer_name": customer.customer_name,
@@ -441,3 +457,26 @@ def get_received_messages_count(business_id: int, db: Session = Depends(get_db))
         Engagement.response != None
     ).count()
     return {"received_count": received_count}
+
+@router.get("/inbox/summaries", response_model=PaginatedInboxSummaries)
+def get_inbox_summaries(
+    business_id: int,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    """
+    Get paginated inbox summaries for a business.
+    Includes customer info, last message snippet, timestamp, and unread count.
+    """
+    summaries, total_count = inbox_service.get_paginated_inbox_summaries(
+        db=db, business_id=business_id, page=page, size=size
+    )
+
+    return {
+        "items": summaries,
+        "total": total_count,
+        "page": page,
+        "size": size,
+        "pages": (total_count + size - 1) // size
+    }
