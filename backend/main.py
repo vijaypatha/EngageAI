@@ -97,6 +97,10 @@ app.add_middleware(
 )
 
 # Register route handlers
+app.include_router(copilot_nudge_routes.router, prefix="/api/ai-nudge-copilot", tags=["AI Nudge Co-Pilot"] )
+app.include_router(targeted_event_routes.router, prefix="/api/targeted-events", tags=["Targeted Events"] )
+app.include_router(follow_up_plan_routes.router, prefix="/api/follow-up-plans", tags=["Follow-up Nudge Plans"] )
+app.include_router(copilot_growth_routes.router, prefix="/api/copilot-growth", tags=["AI Nudge Co-Pilot - Growth"])
 app.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
 app.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
 app.include_router(customer_routes.router, prefix="/customers", tags=["customers"])
@@ -115,11 +119,7 @@ app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(review.router, prefix="/review", tags=["review"])
 app.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
 app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
-app.include_router(copilot_nudge_routes.router, prefix="/ai-nudge-copilot", tags=["AI Nudge Co-Pilot"] )
-app.include_router(targeted_event_routes.router, prefix="/targeted-events", tags=["Targeted Events"] )
-app.include_router(follow_up_plan_routes.router, prefix="/follow-up-plans", tags=["Follow-up Plans"] )
 app.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
-app.include_router(copilot_growth_routes.router, tags=["AI Nudge Co-Pilot - Growth"])
 
 
 @app.get("/", response_model=Dict[str, str])
@@ -140,7 +140,7 @@ async def trigger_ping() -> Dict[str, str]:
 
 @app.get("/debug/celery-basic", response_model=Dict[str, str])
 async def trigger_basic_task() -> Dict[str, str]:
-    """Debug endpoint to verify basic Celery functionality."""
+    """Debug endpoint to verify basic functionality."""
     task = ping.delay()
     return {"ping_task_id": task.id}
 

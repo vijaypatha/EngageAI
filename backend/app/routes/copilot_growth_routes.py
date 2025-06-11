@@ -13,7 +13,6 @@ from app.services.copilot_growth_opportunity_service import CoPilotGrowthOpportu
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/copilot-growth",
     tags=["AI Nudge Co-Pilot - Growth"]
 )
 

@@ -14,7 +14,6 @@ from app.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/follow-up-plans",
     tags=["Follow-up Nudge Plans"]  # Tag for API documentation
 )
 
