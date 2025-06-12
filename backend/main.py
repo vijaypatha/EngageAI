@@ -53,6 +53,20 @@ app = FastAPI(
     version="1.0.0",
 )
 
+@app.middleware("http")
+async def strip_api_prefix(request: Request, call_next):
+    logger.info(f"[strip_api_prefix] Middleware received request for original_url_path: {request.url.path}, current_scope_path: {request.scope.get('path')}")
+    path_to_evaluate = request.scope.get('path') or request.url.path
+    if path_to_evaluate.startswith("/api"):
+        new_path_segment = path_to_evaluate[4:]
+        final_scope_path_for_router = "/" if not new_path_segment else ("/" + new_path_segment if not new_path_segment.startswith("/") else new_path_segment)
+        request.scope['path'] = final_scope_path_for_router
+        logger.info(f"[strip_api_prefix] Path started with /api. Original URL path: {request.url.path}. Path evaluated: {path_to_evaluate}. Scope for router set to: {final_scope_path_for_router}")
+    else:
+        logger.info(f"[strip_api_prefix] Path {path_to_evaluate} (from URL {request.url.path}) does not start with /api. No modification.")
+    response = await call_next(request)
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
