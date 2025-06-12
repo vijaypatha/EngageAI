@@ -90,11 +90,14 @@ Base.metadata.create_all(bind=engine)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
-    same_site="lax",
-    https_only=False,
+    same_site="none",
+    https_only=True,
     session_cookie="session",
     max_age=30 * 24 * 60 * 60
 )
+
+# (Keep all your app.include_router calls, @app.get('/'), debug routes, and exception handlers as they are in your file)
+# ... (The rest of your file, including all app.include_router, @app.get('/'), debug routes, and exception handlers) ...
 
 app.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
 app.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
@@ -176,4 +179,4 @@ for route in app.routes:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port="8000", reload=True)
