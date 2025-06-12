@@ -2,9 +2,9 @@
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query # Added Query import
 from sqlalchemy.orm import Session, joinedload
-from datetime import datetime # Import datetime
+from datetime import datetime
 
 from app.database import get_db
 from app.models import CoPilotNudge, Customer, NudgeStatusEnum, BusinessProfile
@@ -13,12 +13,8 @@ from app.schemas import (
     DismissNudgePayload,
     SentimentActionPayload,
 )
-from app.auth import get_current_user # For authentication and getting business_id
+from app.auth import get_current_user # Uncommented: Needed for authenticated routes
 from app.services.copilot_nudge_action_service import CoPilotNudgeActionService
-# NudgeGenerationService might not be directly used in these specific routes for Iteration 1,
-# but good to have if other nudge management routes are added later.
-# from app.services.copilot_nudge_generation_service import CoPilotNudgeGenerationService
-
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +29,20 @@ def get_copilot_nudge_action_service(db: Session = Depends(get_db)) -> CoPilotNu
 @router.get("/nudges", response_model=List[CoPilotNudgeRead])
 async def get_active_nudges(
     db: Session = Depends(get_db),
-    current_business_profile: BusinessProfile = Depends(get_current_user)
+    # REMOVED AUTH DEPENDENCY for public access to nudges for a given business_id:
+    # current_business_profile: BusinessProfile = Depends(get_current_user)
+    # Business ID must now be provided as a query parameter.
+    business_id: int = Query(..., description="The ID of the business to fetch nudges for.") # Added business_id as query parameter
 ):
     """
-    Fetches active CoPilotNudge records for the authenticated business.
+    Fetches active CoPilotNudge records for a specific business ID.
+    This endpoint does NOT require authentication.
     Includes customer_name if the nudge is associated with a customer.
     """
-    # --- START MODIFICATION ---
     logger.info("✅ --- Received request for /nudges endpoint. --- ✅")
-    # --- END MODIFICATION ---
-    business_id = current_business_profile.id
-    logger.info(f"Fetching active CoPilotNudges for business_id: {business_id}")
+    logger.info(f"Fetching active CoPilotNudges for provided business_id: {business_id} (without authentication)")
+
+    # The business_id is now directly from the query parameter
 
     nudges_orm = (
         db.query(CoPilotNudge)
@@ -71,11 +70,12 @@ async def dismiss_nudge(
     nudge_id: int,
     payload: DismissNudgePayload,
     db: Session = Depends(get_db),
-    current_business_profile: BusinessProfile = Depends(get_current_user)
+    current_business_profile: BusinessProfile = Depends(get_current_user) # AUTH REQUIRED FOR DISMISS
 ):
     """
     Dismisses a CoPilotNudge, updating its status.
     Optionally logs a reason for dismissal.
+    Requires authentication.
     """
     business_id = current_business_profile.id
     logger.info(f"Dismissing CoPilotNudge ID: {nudge_id} for business_id: {business_id}. Reason: {payload.reason}")
@@ -125,11 +125,12 @@ async def handle_sentiment_action(
     nudge_id: int,
     payload: SentimentActionPayload,
     db: Session = Depends(get_db),
-    current_business_profile: BusinessProfile = Depends(get_current_user),
+    current_business_profile: BusinessProfile = Depends(get_current_user), # AUTH REQUIRED FOR ACTION
     action_service: CoPilotNudgeActionService = Depends(get_copilot_nudge_action_service)
 ):
     """
     Handles actions for sentiment-based CoPilotNudges, like requesting a review.
+    Requires authentication.
     """
     business_id = current_business_profile.id
     logger.info(f"Handling sentiment action '{payload.action_type}' for CoPilotNudge ID: {nudge_id}, Business ID: {business_id}")

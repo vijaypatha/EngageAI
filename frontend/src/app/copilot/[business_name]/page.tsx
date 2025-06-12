@@ -1,7 +1,7 @@
 'use client';
 
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+// Removed NEXT_PUBLIC_BACKEND_URL fallback as per previous discussion and api.ts update
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 import React, { useState, useEffect, useCallback, useMemo, use, FC } from 'react';
 import {
   StarIcon,
@@ -66,11 +66,13 @@ type ActionCenterProps = {
   setIsActionLoading: React.Dispatch<React.SetStateAction<number | string | null>>;
   addNotification: (notif: Omit<NotificationInfo, 'id'>) => void;
   businessSlug: string;
+  businessId: number | null; // Pass businessId down
 };
 type SentimentSectionProps = Omit<ActionCenterProps, 'isLoading' | 'nudges'> & { groupedNudges: GroupedNudgesMap };
-type GrowthSectionProps = Omit<ActionCenterProps, 'businessSlug'> & { 
+type GrowthSectionProps = Omit<ActionCenterProps, 'businessSlug'> & {
   isActionLoading: number | string | null;
   businessSlug: string;
+  businessId: number | null; // Pass businessId down
 };
 // --- End Interface Definitions ---
 
@@ -90,6 +92,7 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
   const [isActionLoading, setIsActionLoading] = useState<number | string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeBusinessDisplayName, setActiveBusinessDisplayName] = useState<string>('');
+  const [businessId, setBusinessId] = useState<number | null>(null); // New state for business ID
   const [notifications, setNotifications] = useState<NotificationInfo[]>([]);
 
   // --- Utility Functions ---
@@ -102,12 +105,57 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
   }, []);
 
   // --- Data Fetching and Effects ---
-  const fetchNudges = useCallback(async (showLoadingIndicator = true) => {
-    if (showLoadingIndicator) setIsLoading(true);
-    setError(null);
+
+  // Effect to fetch business_id and display name first
+  useEffect(() => {
+    const fetchBusinessDetails = async () => {
+      setIsLoading(true); // Start loading when fetching business details
+      try {
+        const res = await fetch(`${API_BASE_URL}/business-profile/business-id/slug/${businessSlug}`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setBusinessId(data.business_id); // Set the business ID
+          // Fetch navigation profile for display name, but don't block
+          fetch(`${API_BASE_URL}/business-profile/navigation-profile/slug/${businessSlug}`, { credentials: 'include' })
+            .then(navRes => navRes.json())
+            .then(navData => setActiveBusinessDisplayName(navData.business_name || decodeURIComponent(businessSlug)))
+            .catch(navErr => {
+              console.warn("Could not fetch business name by slug (navigation profile)", navErr);
+              setActiveBusinessDisplayName(decodeURIComponent(businessSlug));
+            });
+        } else {
+          // If business ID not found, set error and default display name
+          setError('Business not found or invalid slug.');
+          setActiveBusinessDisplayName(decodeURIComponent(businessSlug));
+          setBusinessId(null); // Ensure businessId is null on error
+          addNotification({ type: 'error', title: 'Business Not Found', message: 'The specified business could not be loaded.' });
+        }
+      } catch (e) {
+        console.error("Error fetching business ID by slug", e);
+        setError('Failed to load business details. Please try again.');
+        setActiveBusinessDisplayName(decodeURIComponent(businessSlug));
+        setBusinessId(null);
+        addNotification({ type: 'error', title: 'Loading Error', message: 'Could not fetch business details.' });
+      } finally {
+        // Keep loading true until nudges are fetched or initial error is final
+      }
+    };
+    if (businessSlug) {
+      fetchBusinessDetails();
+    }
+  }, [businessSlug, addNotification]);
+
+
+  // fetchNudges now depends on businessId
+  const fetchNudges = useCallback(async (id: number, showLoadingIndicator = true) => {
+    if (showLoadingIndicator) setIsLoading(true); // Only show loading if explicitly requested
+    setError(null); // Clear previous errors
     try {
-      const response = await fetch(API_BASE_URL + '/ai-nudge-copilot/nudges', { credentials: 'include' });
-      if (!response.ok) throw new Error((await response.json()).detail || `Failed to fetch nudges`);
+      // MODIFIED: Added business_id as a query parameter
+      const response = await fetch(`${API_BASE_URL}/ai-nudge-copilot/nudges?business_id=${id}`, { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error((await response.json()).detail || `Failed to fetch nudges for business ID ${id}`);
+      }
       const data: CoPilotNudge[] = await response.json();
       setAllActiveNudges(data.filter(nudge => nudge.status === 'active'));
     } catch (err) {
@@ -120,29 +168,17 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
     }
   }, [addNotification]);
 
+  // Effect to fetch nudges once businessId is available
   useEffect(() => {
-    const fetchBusinessDetails = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/business-profile/navigation-profile/slug/${businessSlug}`, { credentials: 'include' });
-        if (res.ok) {
-          const data = await res.json();
-          setActiveBusinessDisplayName(data.business_name || decodeURIComponent(businessSlug));
-        } else {
-          setActiveBusinessDisplayName(decodeURIComponent(businessSlug));
-        }
-      } catch (e) {
-        console.warn("Could not fetch business name by slug", e);
-        setActiveBusinessDisplayName(decodeURIComponent(businessSlug));
-      }
-    };
-    if (businessSlug) {
-      fetchBusinessDetails();
+    if (businessId !== null) { // Only fetch nudges if businessId has been successfully resolved
+      fetchNudges(businessId);
+    } else if (!isLoading && !error && businessSlug) {
+      // If businessId is null and not loading (meaning initial business details fetch failed),
+      // ensure loading is false and error is shown.
+      setIsLoading(false);
     }
-  }, [businessSlug]);
+  }, [businessId, fetchNudges, isLoading, error, businessSlug]);
 
-  useEffect(() => {
-    fetchNudges();
-  }, [fetchNudges]);
 
   // --- Memoized Grouping Logic ---
   const { actionableNudges, growthNudges, groupedSentimentNudges, noActiveNudgesOfAnyType } = useMemo(() => {
@@ -160,10 +196,25 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
       return acc;
     }, {} as GroupedNudgesMap);
 
+    // Consider all types of nudges for "no nudges" message
     const noNudges = !isLoading && actionable.length === 0 && sentiment.length === 0 && growth.length === 0;
 
     return { actionableNudges: actionable, growthNudges: growth, groupedSentimentNudges: groupedSentiment, noActiveNudgesOfAnyType: noNudges };
   }, [allActiveNudges, isLoading]);
+
+  // Render a loader if businessId is still null and we're in the initial loading phase for it
+  if (businessId === null && isLoading && !error) {
+    return <PageLoader />;
+  }
+  // Render an error message if businessId is null and there was an error
+  if (error && businessId === null) {
+    return (
+        <div className="flex-1 bg-slate-900 text-slate-100 min-h-screen font-sans flex items-center justify-center p-4">
+            <ErrorMessage message={error} />
+        </div>
+    );
+  }
+
 
   return (
     <div className="flex-1 bg-slate-900 text-slate-100 min-h-screen font-sans">
@@ -181,6 +232,7 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
               setIsActionLoading={setIsActionLoading}
               addNotification={addNotification}
               businessSlug={businessSlug}
+              businessId={businessId} // Pass businessId down
             />
           </main>
           <aside className="lg:col-span-1 space-y-12">
@@ -190,6 +242,7 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
               setIsActionLoading={setIsActionLoading}
               addNotification={addNotification}
               businessSlug={businessSlug}
+              businessId={businessId} // Pass businessId down
             />
             <GrowthSection
               nudges={growthNudges}
@@ -199,6 +252,7 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
               setIsActionLoading={setIsActionLoading}
               addNotification={addNotification}
               businessSlug={businessSlug}
+              businessId={businessId} // Pass businessId down
             />
           </aside>
         </div>
@@ -272,7 +326,7 @@ const ErrorMessage: FC<ErrorMessageProps> = ({ message }) => (
   </div>
 );
 
-const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNudges, setIsActionLoading, addNotification, businessSlug }) => {
+const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNudges, setIsActionLoading, addNotification, businessSlug, businessId }) => {
   const router = useRouter();
   const [expandedActionItems, setExpandedActionItems] = useState<Record<string, boolean>>({});
 
@@ -287,8 +341,13 @@ const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNu
   };
 
   const handleDismiss = useCallback(async (nudgeId: number) => {
+    if (businessId === null) {
+      addNotification({ type: 'error', title: 'Action Failed', message: 'Business ID not available for this action.' });
+      return;
+    }
     setIsActionLoading(nudgeId);
     try {
+      // NOTE: Dismiss still requires authentication and business_id on backend
       const res = await fetch(`${API_BASE_URL}/ai-nudge-copilot/nudges/${nudgeId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}), credentials: 'include' });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to dismiss');
       setAllActiveNudges(prev => prev.filter(n => n.id !== nudgeId));
@@ -298,11 +357,16 @@ const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNu
     } finally {
       setIsActionLoading(null);
     }
-  }, [setIsActionLoading, setAllActiveNudges, addNotification]);
+  }, [setIsActionLoading, setAllActiveNudges, addNotification, businessId]);
 
   const handleActivatePlan = useCallback(async (nudgeId: number, customerId: number, finalMessages: any[]) => {
+    if (businessId === null) {
+      addNotification({ type: 'error', title: 'Action Failed', message: 'Business ID not available for this action.' });
+      return;
+    }
     setIsActionLoading(nudgeId);
     try {
+      // NOTE: Activate Plan still requires authentication
       const response = await fetch(`${API_BASE_URL}/follow-up-plans/activate-from-nudge/${nudgeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer_id: customerId, messages: finalMessages }), credentials: 'include' });
       if (!response.ok) throw new Error((await response.json()).detail || 'Failed to activate plan');
       const nudge = nudges.find(n => n.id === nudgeId);
@@ -313,11 +377,16 @@ const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNu
     } finally {
       setIsActionLoading(null);
     }
-  }, [setIsActionLoading, setAllActiveNudges, addNotification, nudges, router, businessSlug]);
+  }, [setIsActionLoading, setAllActiveNudges, addNotification, nudges, router, businessSlug, businessId]);
 
   const handleConfirmEvent = useCallback(async (nudgeId: number, confirmedDatetimeUtc: string, confirmedPurpose: string) => {
+    if (businessId === null) {
+      addNotification({ type: 'error', title: 'Action Failed', message: 'Business ID not available for this action.' });
+      return;
+    }
     setIsActionLoading(nudgeId);
     try {
+      // NOTE: Confirm Event still requires authentication
       const response = await fetch(`${API_BASE_URL}/targeted-events/confirm-from-nudge/${nudgeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed_datetime_utc: confirmedDatetimeUtc, confirmed_purpose: confirmedPurpose }), credentials: 'include' });
       if (!response.ok) throw new Error((await response.json()).detail || 'Failed to confirm event');
       const nudge = nudges.find(n => n.id === nudgeId);
@@ -328,7 +397,7 @@ const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNu
     } finally {
       setIsActionLoading(null);
     }
-  }, [setIsActionLoading, setAllActiveNudges, addNotification, nudges]);
+  }, [setIsActionLoading, setAllActiveNudges, addNotification, nudges, businessId]);
 
   const handleViewConversation = useCallback((nudge: CoPilotNudge) => {
     if (nudge.customer_id && businessSlug) {
@@ -406,13 +475,18 @@ const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNu
   );
 };
 
-const SentimentSection: FC<SentimentSectionProps> = ({ groupedNudges, setAllActiveNudges, setIsActionLoading, addNotification, businessSlug }) => {
+const SentimentSection: FC<SentimentSectionProps> = ({ groupedNudges, setAllActiveNudges, setIsActionLoading, addNotification, businessSlug, businessId }) => {
   const router = useRouter();
   const [expandedSentimentCustomers, setExpandedSentimentCustomers] = useState<Record<string, boolean>>({});
 
   const handleDismiss = useCallback(async (nudgeId: number) => {
+    if (businessId === null) {
+      addNotification({ type: 'error', title: 'Action Failed', message: 'Business ID not available for this action.' });
+      return;
+    }
     setIsActionLoading(nudgeId);
     try {
+      // NOTE: Dismiss still requires authentication
       const res = await fetch(`${API_BASE_URL}/ai-nudge-copilot/nudges/${nudgeId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}), credentials: 'include' });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to dismiss');
       setAllActiveNudges(prev => prev.filter(n => n.id !== nudgeId));
@@ -422,7 +496,7 @@ const SentimentSection: FC<SentimentSectionProps> = ({ groupedNudges, setAllActi
     } finally {
       setIsActionLoading(null);
     }
-  }, [setIsActionLoading, setAllActiveNudges, addNotification]);
+  }, [setIsActionLoading, setAllActiveNudges, addNotification, businessId]);
 
   const handleViewConversation = useCallback((nudge: CoPilotNudge) => {
     if (nudge.customer_id && businessSlug) {
@@ -471,13 +545,17 @@ const SentimentSection: FC<SentimentSectionProps> = ({ groupedNudges, setAllActi
   )
 };
 
-const GrowthSection: FC<GrowthSectionProps> = ({ nudges, isLoading, isActionLoading, addNotification, setAllActiveNudges, setIsActionLoading, businessSlug }) => {
+const GrowthSection: FC<GrowthSectionProps> = ({ nudges, isLoading, isActionLoading, addNotification, setAllActiveNudges, setIsActionLoading, businessSlug, businessId }) => {
   const router = useRouter();
 
   const handleLaunchGrowthCampaign = useCallback(async (nudgeId: number) => {
+    if (businessId === null) {
+      addNotification({ type: 'error', title: 'Action Failed', message: 'Business ID not available for this action.' });
+      return;
+    }
     setIsActionLoading(nudgeId);
     try {
-      // CORRECTED: Ensure the fetch URL starts with /api/
+      // NOTE: Launch Growth Campaign still requires authentication
       const res = await fetch(`${API_BASE_URL}/copilot-growth/nudges/${nudgeId}/launch-campaign`, { method: 'POST', credentials: 'include' });
       
       if (!res.ok) {
@@ -501,7 +579,7 @@ const GrowthSection: FC<GrowthSectionProps> = ({ nudges, isLoading, isActionLoad
       addNotification({ type: 'error', title: 'Draft Creation Failed', message: err instanceof Error ? err.message : 'Unknown error' });
       setIsActionLoading(null);
     }
-  }, [setIsActionLoading, setAllActiveNudges, addNotification, router, businessSlug]);
+  }, [setIsActionLoading, setAllActiveNudges, addNotification, router, businessSlug, businessId]);
 
   return (
     <section>
