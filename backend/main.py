@@ -1,16 +1,14 @@
 # backend/app/main.py
 import logging
-from typing import Dict, Optional, Callable, Awaitable
-import os
+from typing import Dict, Optional
+import os 
 
-from fastapi import FastAPI, HTTPException, Request, APIRouter
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute as FastAPIRoute
-from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi.routing import APIRoute
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import Response
 
 from app.celery_app import ping
 from app.config import settings
@@ -58,17 +56,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# --- Define a middleware to strip the /api prefix if it exists ---
-class StripApiPrefixMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        if request.url.path.startswith("/api"):
-            # Modify the scope to remove the /api prefix
-            request.scope['path'] = request.scope['path'][4:]
-        response = await call_next(request)
-        return response
-
-# Add the custom middleware
-app.add_middleware(StripApiPrefixMiddleware)
+# --- Middleware to strip the /api prefix if it exists ---
+@app.middleware("http")
+async def strip_api_prefix(request: Request, call_next):
+    if request.url.path.startswith("/api"):
+        # Modify the scope to remove the /api prefix
+        request.scope['path'] = request.scope['path'][4:]
+    response = await call_next(request)
+    return response
 
 # Configure CORS
 app.add_middleware(
@@ -92,8 +87,15 @@ app.add_middleware(
 # Initialize database
 Base.metadata.create_all(bind=engine)
 
-# Add session middleware
-app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+# Add session middleware (restored to original configuration)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SECRET_KEY,
+    same_site="lax",
+    https_only=False,
+    session_cookie="session",
+    max_age=30 * 24 * 60 * 60
+)
 
 # --- Register route handlers without the /api prefix ---
 app.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
@@ -152,7 +154,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 # 🛣️ Log active routes for debugging
 logger.info(f"🟢 TWILIO_DEFAULT_MESSAGING_SERVICE_SID: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
 for route in app.routes:
-    if isinstance(route, FastAPIRoute):
+    if isinstance(route, APIRoute):
         logger.info(f"🔵  Active route: {route.path} [{','.join(route.methods)}]")
 
 if __name__ == "__main__":
