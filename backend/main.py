@@ -1,14 +1,16 @@
 # backend/app/main.py
 import logging
-from typing import Dict, Optional
-import os 
+from typing import Dict, Optional, Callable, Awaitable
+import os
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, APIRouter
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import Response
 
 from app.celery_app import ping
 from app.config import settings
@@ -60,7 +62,7 @@ app = FastAPI(
 @app.middleware("http")
 async def strip_api_prefix(request: Request, call_next):
     if request.url.path.startswith("/api"):
-        # Modify the scope to remove the /api prefix
+        # Modify the scope to remove the /api prefix for routing
         request.scope['path'] = request.scope['path'][4:]
     response = await call_next(request)
     return response
@@ -87,7 +89,7 @@ app.add_middleware(
 # Initialize database
 Base.metadata.create_all(bind=engine)
 
-# Add session middleware (restored to original configuration)
+# Add session middleware
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
@@ -127,25 +129,20 @@ async def read_root() -> Dict[str, str]:
     return {"message": "Welcome to the AI SMS Scheduler!"}
 
 # ... (rest of your debug routes and exception handlers remain the same) ...
-
 @app.get("/debug/redis-url", response_model=Dict[str, Optional[str]])
 async def debug_redis_url() -> Dict[str, Optional[str]]:
     return {"REDIS_URL": os.getenv("REDIS_URL")}
-
 @app.get("/debug-ping", response_model=Dict[str, str])
 async def trigger_ping() -> Dict[str, str]:
     task = ping.delay()
     return {"task_id": task.id}
-
 @app.get("/debug/celery-basic", response_model=Dict[str, str])
 async def trigger_basic_task() -> Dict[str, str]:
     task = ping.delay()
     return {"ping_task_id": task.id}
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
-
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
