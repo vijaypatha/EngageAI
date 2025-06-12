@@ -13,7 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.celery_app import ping
 from app.config import settings
 from app.database import Base, engine
-from app.models import BusinessProfile, ConsentLog, Customer, ScheduledSMS
+from app.models import BusinessProfile, ConsentLog, Customer, ScheduledSMS 
 from app.routes import (
     ai_routes,
     business_routes,
@@ -53,6 +53,27 @@ app = FastAPI(
     version="1.0.0",
 )
 
+@app.middleware("http")
+async def strip_api_prefix(request: Request, call_next):
+    logger.info(f"[strip_api_prefix] Received request for original_url_path: {request.url.path}, current_scope_path: {request.scope.get('path')}")
+    original_url_path = request.url.path
+    current_scope_path = request.scope.get('path', original_url_path)
+    final_scope_path_for_router = current_scope_path
+    if current_scope_path.startswith("/api"):
+        new_path_segment = current_scope_path[4:]
+        if not new_path_segment:
+            final_scope_path_for_router = "/"
+        elif not new_path_segment.startswith("/"):
+            final_scope_path_for_router = "/" + new_path_segment
+        else:
+            final_scope_path_for_router = new_path_segment
+        request.scope['path'] = final_scope_path_for_router
+        logger.info(f"[strip_api_prefix] Original URL path: {original_url_path}. Scope path before strip: {current_scope_path}. Stripped scope path for router to: {final_scope_path_for_router}")
+    else:
+        logger.info(f"[strip_api_prefix] Scope path {current_scope_path} (from URL path {original_url_path}) does not start with /api, no modification by this middleware.")
+    response = await call_next(request)
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -82,6 +103,22 @@ app.add_middleware(
     max_age=30 * 24 * 60 * 60
 )
 
+@app.get("/api/{full_path:path}", name="debug_api_path_catcher")
+async def debug_api_path_catcher(request: Request, full_path: str):
+    logger.critical(f"[DEBUG_API_CATCHER] Request successfully routed to /api/{{full_path:path}}. Path parameter: /{full_path}")
+    logger.critical(f"[DEBUG_API_CATCHER] Original URL from request: {request.url.path}")
+    logger.critical(f"[DEBUG_API_CATCHER] Client host: {request.client.host}, Port: {request.client.port}")
+    logger.critical(f"[DEBUG_API_CATCHER] Headers: {{dict(request.headers)}}")
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "DEBUG: API path successfully caught by debug_api_path_catcher",
+            "requested_path_parameter": full_path,
+            "original_url_path": request.url.path,
+            "note": "If you see this, requests prefixed with /api ARE reaching the FastAPI application. The strip_api_prefix middleware should then process it for actual routing."
+        }
+    )
+
 app.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
 app.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
 app.include_router(customer_routes.router, prefix="/customers", tags=["customers"])
@@ -108,7 +145,7 @@ app.include_router(copilot_growth_routes.router, prefix="/copilot-growth", tags=
 
 @app.get("/", response_model=Dict[str, str])
 async def read_root() -> Dict[str, str]:
-    return {"message": "Welcome to the AI SMS Scheduler! (Served via /api path)"}
+    return {"message": "Welcome to the AI SMS Scheduler!"}
 
 @app.get("/debug/redis-url", response_model=Dict[str, Optional[str]])
 async def debug_redis_url() -> Dict[str, Optional[str]]:
@@ -136,7 +173,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def custom_http_exception_logger_handler(request: Request, exc: HTTPException):
     log_message_prefix = f"[CustomHTTPExceptionHandler] Path: {request.method} {request.url.path}"
     if exc.status_code == 404:
-        logger.warning(f"{log_message_prefix} - Result: 404 Not Found. Detail: {exc.detail}")
+        # Check if it was our debug route that was "not found" by a POST, etc.
+        # This check is a bit simplistic, relies on debug route being GET only.
+        if "/api/" in request.url.path and request.method != "GET":
+             logger.critical(f"{log_message_prefix} - A non-GET request was made to an /api/... path that might have been intended for the debug GET catcher. Status={{exc.status_code}}, Detail: {exc.detail}")
+        else:
+            logger.warning(f"{log_message_prefix} - Result: 404 Not Found. Detail: {exc.detail}")
         logger.debug(f"{log_message_prefix} - Request Headers for 404: {{dict(request.headers)}}")
     else:
         logger.error(f"{log_message_prefix} - Result: HTTPException Status={{exc.status_code}}, Detail: {exc.detail}")
@@ -158,7 +200,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 logger.info(f"🟢 TWILIO_DEFAULT_MESSAGING_SERVICE_SID: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
 for route in app.routes:
     if isinstance(route, APIRoute):
-        logger.info(f"🔵 Active internal route: {route.path} (Externally: /api{route.path if route.path != '/' else ''}) [{','.join(route.methods)}]")
+        logger.info(f"🔵 Active route: {route.path} [{','.join(route.methods)}]")
 
 if __name__ == "__main__":
     import uvicorn
