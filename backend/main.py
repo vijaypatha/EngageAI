@@ -85,8 +85,8 @@ Base.metadata.create_all(bind=engine)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
-    same_site="lax",
-    https_only=False,
+    same_site="none",
+    https_only=True,
     session_cookie="session",
     max_age=30 * 24 * 60 * 60
 )
