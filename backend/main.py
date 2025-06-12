@@ -52,23 +52,14 @@ from app.schemas import (
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
-app = FastAPI(
+internal_app = FastAPI(
     title="AI SMS Scheduler",
     description="API for scheduling and sending AI-powered SMS messages",
     version="1.0.0",
 )
 
-# --- Middleware to strip the /api prefix if it exists ---
-@app.middleware("http")
-async def strip_api_prefix(request: Request, call_next):
-    if request.url.path.startswith("/api"):
-        # Modify the scope to remove the /api prefix for routing
-        request.scope['path'] = request.scope['path'][4:]
-    response = await call_next(request)
-    return response
-
 # Configure CORS
-app.add_middleware(
+internal_app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
@@ -90,7 +81,7 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 # Add session middleware
-app.add_middleware(
+internal_app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
     same_site="lax",
@@ -100,59 +91,65 @@ app.add_middleware(
 )
 
 # --- Register route handlers without the /api prefix ---
-app.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
-app.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
-app.include_router(customer_routes.router, prefix="/customers", tags=["customers"])
-app.include_router(consent_routes.router, prefix="/consent", tags=["consent"])
-app.include_router(style_routes.router, prefix="/sms-style", tags=["style"])
-app.include_router(ai_routes.router, prefix="/ai", tags=["ai"])
-app.include_router(roadmap_routes.router, prefix="/roadmap", tags=["roadmap"])
-app.include_router(roadmap_workflow_routes.router, prefix="/roadmap-workflow", tags=["roadmap-workflow"])
-app.include_router(conversation_routes.router, prefix="/conversations", tags=["conversations"])
-app.include_router(message_routes.router, prefix="/messages", tags=["messages"])
-app.include_router(message_workflow_routes.router, prefix="/message-workflow", tags=["message-workflow"])
-app.include_router(engagement_routes.router, prefix="/engagements", tags=["engagements"])
-app.include_router(engagement_workflow_routes.router, prefix="/engagement-workflow", tags=["engagement-actions"])
-app.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["onboarding"])
-app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
-app.include_router(review.router, prefix="/review", tags=["review"])
-app.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
-app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
-app.include_router(copilot_nudge_routes.router, prefix="/ai-nudge-copilot", tags=["AI Nudge Co-Pilot"])
-app.include_router(targeted_event_routes.router, prefix="/targeted-events", tags=["Targeted Events"])
-app.include_router(follow_up_plan_routes.router, prefix="/follow-up-plans", tags=["Follow-up Nudge Plans"])
-app.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
-app.include_router(copilot_growth_routes.router, prefix="/copilot-growth", tags=["AI Nudge Co-Pilot - Growth"])
+internal_app.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
+internal_app.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
+internal_app.include_router(customer_routes.router, prefix="/customers", tags=["customers"])
+internal_app.include_router(consent_routes.router, prefix="/consent", tags=["consent"])
+internal_app.include_router(style_routes.router, prefix="/sms-style", tags=["style"])
+internal_app.include_router(ai_routes.router, prefix="/ai", tags=["ai"])
+internal_app.include_router(roadmap_routes.router, prefix="/roadmap", tags=["roadmap"])
+internal_app.include_router(roadmap_workflow_routes.router, prefix="/roadmap-workflow", tags=["roadmap-workflow"])
+internal_app.include_router(conversation_routes.router, prefix="/conversations", tags=["conversations"])
+internal_app.include_router(message_routes.router, prefix="/messages", tags=["messages"])
+internal_app.include_router(message_workflow_routes.router, prefix="/message-workflow", tags=["message-workflow"])
+internal_app.include_router(engagement_routes.router, prefix="/engagements", tags=["engagements"])
+internal_app.include_router(engagement_workflow_routes.router, prefix="/engagement-workflow", tags=["engagement-actions"])
+internal_app.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["onboarding"])
+internal_app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
+internal_app.include_router(review.router, prefix="/review", tags=["review"])
+internal_app.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
+internal_app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
+internal_app.include_router(copilot_nudge_routes.router, prefix="/ai-nudge-copilot", tags=["AI Nudge Co-Pilot"])
+internal_app.include_router(targeted_event_routes.router, prefix="/targeted-events", tags=["Targeted Events"])
+internal_app.include_router(follow_up_plan_routes.router, prefix="/follow-up-plans", tags=["Follow-up Nudge Plans"])
+internal_app.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
+internal_app.include_router(copilot_growth_routes.router, prefix="/copilot-growth", tags=["AI Nudge Co-Pilot - Growth"])
 
-@app.get("/", response_model=Dict[str, str])
+@internal_app.get("/", response_model=Dict[str, str])
 async def read_root() -> Dict[str, str]:
     return {"message": "Welcome to the AI SMS Scheduler!"}
 
 # ... (rest of your debug routes and exception handlers remain the same) ...
-@app.get("/debug/redis-url", response_model=Dict[str, Optional[str]])
+@internal_app.get("/debug/redis-url", response_model=Dict[str, Optional[str]])
 async def debug_redis_url() -> Dict[str, Optional[str]]:
     return {"REDIS_URL": os.getenv("REDIS_URL")}
-@app.get("/debug-ping", response_model=Dict[str, str])
+@internal_app.get("/debug-ping", response_model=Dict[str, str])
 async def trigger_ping() -> Dict[str, str]:
     task = ping.delay()
     return {"task_id": task.id}
-@app.get("/debug/celery-basic", response_model=Dict[str, str])
+@internal_app.get("/debug/celery-basic", response_model=Dict[str, str])
 async def trigger_basic_task() -> Dict[str, str]:
     task = ping.delay()
     return {"ping_task_id": task.id}
-@app.exception_handler(RequestValidationError)
+@internal_app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
-@app.exception_handler(Exception)
+@internal_app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
+# Create a new top-level FastAPI app
+app = FastAPI(title="Root AI SMS Scheduler")
+
+# Mount the internal_app with the /api prefix
+app.mount("/api", internal_app)
+
 # 🛣️ Log active routes for debugging
 logger.info(f"🟢 TWILIO_DEFAULT_MESSAGING_SERVICE_SID: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
-for route in app.routes:
+for route in internal_app.routes:
     if isinstance(route, APIRoute):
-        logger.info(f"🔵  Active route: {route.path} [{','.join(route.methods)}]")
+        logger.info(f"🔵  Active route: /api{route.path} [{','.join(route.methods)}]")
 
 if __name__ == "__main__":
     import uvicorn
