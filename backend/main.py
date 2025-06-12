@@ -59,34 +59,6 @@ app = FastAPI(
 )
 
 # --- Middleware to strip the /api prefix if it exists ---
-@app.middleware("http")
-async def strip_api_prefix(request: Request, call_next):
-    logger.info(f"[strip_api_prefix] Received request for original_url_path: {request.url.path}, current_scope_path: {request.scope.get('path')}")
-    original_url_path = request.url.path # Unmodified URL path
-    current_scope_path = request.scope.get('path', original_url_path) # Path that router will see, possibly modified by other middleware
-
-    final_scope_path_for_router = current_scope_path # Assume no change initially
-
-    if current_scope_path.startswith("/api"):
-        new_path_segment = current_scope_path[4:] # Remove '/api'
-
-        if not new_path_segment: # Original scope path was "/api" or "/api/"
-            final_scope_path_for_router = "/"
-        elif not new_path_segment.startswith("/"):
-            final_scope_path_for_router = "/" + new_path_segment
-        else:
-            final_scope_path_for_router = new_path_segment
-
-        request.scope['path'] = final_scope_path_for_router
-        logger.info(f"[strip_api_prefix] Original URL path: {original_url_path}. Scope path before strip: {current_scope_path}. Stripped scope path for router to: {final_scope_path_for_router}")
-    else:
-        logger.info(f"[strip_api_prefix] Scope path {current_scope_path} (from URL path {original_url_path}) does not start with /api, no modification by this middleware.")
-
-    response = await call_next(request)
-    # Optional: log response status code here if needed
-    # logger.info(f"[strip_api_prefix] Responding to {original_url_path}. Router saw {final_scope_path_for_router}. Status: {response.status_code}")
-    return response
-
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
