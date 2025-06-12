@@ -1,5 +1,7 @@
 'use client';
 
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 import React, { useState, useEffect, useCallback, useMemo, use, FC } from 'react';
 import {
   StarIcon,
@@ -104,7 +106,7 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
     if (showLoadingIndicator) setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/ai-nudge-copilot/nudges');
+      const response = await fetch(API_BASE_URL + '/ai-nudge-copilot/nudges');
       if (!response.ok) throw new Error((await response.json()).detail || `Failed to fetch nudges`);
       const data: CoPilotNudge[] = await response.json();
       setAllActiveNudges(data.filter(nudge => nudge.status === 'active'));
@@ -121,7 +123,7 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
   useEffect(() => {
     const fetchBusinessDetails = async () => {
       try {
-        const res = await fetch(`/api/business-profile/navigation-profile/slug/${businessSlug}`);
+        const res = await fetch(`${API_BASE_URL}/business-profile/navigation-profile/slug/${businessSlug}`);
         if (res.ok) {
           const data = await res.json();
           setActiveBusinessDisplayName(data.business_name || decodeURIComponent(businessSlug));
@@ -287,7 +289,7 @@ const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNu
   const handleDismiss = useCallback(async (nudgeId: number) => {
     setIsActionLoading(nudgeId);
     try {
-      const res = await fetch(`/api/ai-nudge-copilot/nudges/${nudgeId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const res = await fetch(`${API_BASE_URL}/ai-nudge-copilot/nudges/${nudgeId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to dismiss');
       setAllActiveNudges(prev => prev.filter(n => n.id !== nudgeId));
       addNotification({ type: 'success', title: 'Dismissed', message: 'The suggestion has been dismissed.' });
@@ -301,7 +303,7 @@ const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNu
   const handleActivatePlan = useCallback(async (nudgeId: number, customerId: number, finalMessages: any[]) => {
     setIsActionLoading(nudgeId);
     try {
-      const response = await fetch(`/api/follow-up-plans/activate-from-nudge/${nudgeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer_id: customerId, messages: finalMessages }) });
+      const response = await fetch(`${API_BASE_URL}/follow-up-plans/activate-from-nudge/${nudgeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer_id: customerId, messages: finalMessages }) });
       if (!response.ok) throw new Error((await response.json()).detail || 'Failed to activate plan');
       const nudge = nudges.find(n => n.id === nudgeId);
       addNotification({ type: 'success', title: `Plan for ${nudge?.customer_name || 'customer'} activated!`, message: 'You can view the messages on your Nudge Plans page.', linkAction: () => router.push(`/${businessSlug}/nudge-plans`), linkText: 'View Plans' });
@@ -316,7 +318,7 @@ const ActionCenter: FC<ActionCenterProps> = ({ nudges, isLoading, setAllActiveNu
   const handleConfirmEvent = useCallback(async (nudgeId: number, confirmedDatetimeUtc: string, confirmedPurpose: string) => {
     setIsActionLoading(nudgeId);
     try {
-      const response = await fetch(`/api/targeted-events/confirm-from-nudge/${nudgeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed_datetime_utc: confirmedDatetimeUtc, confirmed_purpose: confirmedPurpose }) });
+      const response = await fetch(`${API_BASE_URL}/targeted-events/confirm-from-nudge/${nudgeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed_datetime_utc: confirmedDatetimeUtc, confirmed_purpose: confirmedPurpose }) });
       if (!response.ok) throw new Error((await response.json()).detail || 'Failed to confirm event');
       const nudge = nudges.find(n => n.id === nudgeId);
       addNotification({ type: 'success', title: `Event for ${nudge?.customer_name || 'customer'} confirmed!`, message: 'Reminders will be sent automatically.' });
@@ -411,7 +413,7 @@ const SentimentSection: FC<SentimentSectionProps> = ({ groupedNudges, setAllActi
   const handleDismiss = useCallback(async (nudgeId: number) => {
     setIsActionLoading(nudgeId);
     try {
-      const res = await fetch(`/api/ai-nudge-copilot/nudges/${nudgeId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const res = await fetch(`${API_BASE_URL}/ai-nudge-copilot/nudges/${nudgeId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to dismiss');
       setAllActiveNudges(prev => prev.filter(n => n.id !== nudgeId));
       addNotification({ type: 'success', title: 'Dismissed', message: 'The sentiment insight has been dismissed.' });
@@ -476,7 +478,7 @@ const GrowthSection: FC<GrowthSectionProps> = ({ nudges, isLoading, isActionLoad
     setIsActionLoading(nudgeId);
     try {
       // CORRECTED: Ensure the fetch URL starts with /api/
-      const res = await fetch(`/api/copilot-growth/nudges/${nudgeId}/launch-campaign`, { method: 'POST' });
+      const res = await fetch(`${API_BASE_URL}/copilot-growth/nudges/${nudgeId}/launch-campaign`, { method: 'POST' });
       
       if (!res.ok) {
         // Provide more detailed error feedback from the backend
