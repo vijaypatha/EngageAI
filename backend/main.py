@@ -1,3 +1,4 @@
+# backend/app/main.py
 # Main entry point for the AI SMS Scheduler application
 # Provides businesses with an intelligent SMS platform for customer engagement and automated communications
 from datetime import datetime
@@ -5,7 +6,7 @@ import logging
 from typing import Dict, Optional
 import os 
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, APIRouter
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -96,30 +97,39 @@ app.add_middleware(
 
 )
 
-# Register route handlers
-app.include_router(copilot_nudge_routes.router, prefix="/api/ai-nudge-copilot", tags=["AI Nudge Co-Pilot"] )
-app.include_router(targeted_event_routes.router, prefix="/api/targeted-events", tags=["Targeted Events"] )
-app.include_router(follow_up_plan_routes.router, prefix="/api/follow-up-plans", tags=["Follow-up Nudge Plans"] )
-app.include_router(copilot_growth_routes.router, prefix="/api/copilot-growth", tags=["AI Nudge Co-Pilot - Growth"])
-app.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
-app.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
-app.include_router(customer_routes.router, prefix="/customers", tags=["customers"])
-app.include_router(consent_routes.router, prefix="/consent", tags=["consent"])
-app.include_router(style_routes.router, prefix="/sms-style", tags=["style"])
-app.include_router(ai_routes.router, prefix="/ai", tags=["ai"])
-app.include_router(roadmap_routes.router, prefix="/roadmap", tags=["roadmap"])
-app.include_router(roadmap_workflow_routes.router, prefix="/roadmap-workflow", tags=["roadmap-workflow"])
-app.include_router(conversation_routes.router, prefix="/conversations", tags=["conversations"])
-app.include_router(message_routes.router, prefix="/messages", tags=["messages"])
-app.include_router(message_workflow_routes.router, prefix="/message-workflow", tags=["message-workflow"])
-app.include_router(engagement_routes.router, prefix="/engagements", tags=["engagements"])
-app.include_router(engagement_workflow_routes.router, prefix="/engagement-workflow", tags=["engagement-actions"])
-app.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["onboarding"])
-app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
-app.include_router(review.router, prefix="/review", tags=["review"])
-app.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
+# --- Define a parent router for all API endpoints ---
+api_router = APIRouter(prefix="/api")
+
+# Register all child routers with the parent api_router
+api_router.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
+api_router.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
+api_router.include_router(customer_routes.router, prefix="/customers", tags=["customers"])
+api_router.include_router(consent_routes.router, prefix="/consent", tags=["consent"])
+api_router.include_router(style_routes.router, prefix="/sms-style", tags=["style"])
+api_router.include_router(ai_routes.router, prefix="/ai", tags=["ai"])
+api_router.include_router(roadmap_routes.router, prefix="/roadmap", tags=["roadmap"])
+api_router.include_router(roadmap_workflow_routes.router, prefix="/roadmap-workflow", tags=["roadmap-workflow"])
+api_router.include_router(conversation_routes.router, prefix="/conversations", tags=["conversations"])
+api_router.include_router(message_routes.router, prefix="/messages", tags=["messages"])
+api_router.include_router(message_workflow_routes.router, prefix="/message-workflow", tags=["message-workflow"])
+api_router.include_router(engagement_routes.router, prefix="/engagements", tags=["engagements"])
+api_router.include_router(engagement_workflow_routes.router, prefix="/engagement-workflow", tags=["engagement-actions"])
+api_router.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["onboarding"])
+api_router.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
+api_router.include_router(review.router, prefix="/review", tags=["review"])
+api_router.include_router(instant_nudge_routes.router, prefix="/instant-nudge", tags=["instant-nudge"])
+api_router.include_router(copilot_nudge_routes.router, prefix="/ai-nudge-copilot", tags=["AI Nudge Co-Pilot"] )
+api_router.include_router(targeted_event_routes.router, prefix="/targeted-events", tags=["Targeted Events"] )
+api_router.include_router(follow_up_plan_routes.router, prefix="/follow-up-plans", tags=["Follow-up Nudge Plans"] )
+api_router.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
+api_router.include_router(copilot_growth_routes.router, prefix="/copilot-growth", tags=["AI Nudge Co-Pilot - Growth"])
+
+# Include the main api_router in the app
+app.include_router(api_router)
+
+# --- Non-API routes (if any) can be included directly on the app ---
+# This Twilio webhook is often kept outside the /api prefix
 app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
-app.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
 
 
 @app.get("/", response_model=Dict[str, str])
