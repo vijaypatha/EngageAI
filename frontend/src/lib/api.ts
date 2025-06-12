@@ -10,7 +10,7 @@ const fetcher = (url: string) => apiClient.get(url).then(res => res.data);
 
 // --- Existing apiClient setup ---
 export const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000',
+  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000',
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
