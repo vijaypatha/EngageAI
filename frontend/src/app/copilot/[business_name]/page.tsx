@@ -137,7 +137,7 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
         setBusinessId(null);
         addNotification({ type: 'error', title: 'Loading Error', message: 'Could not fetch business details.' });
       } finally {
-        // Keep loading true until nudges are fetched or initial error is final
+        // The main isLoading state will be set to false by fetchNudges or error handler later.
       }
     };
     if (businessSlug) {
@@ -166,18 +166,18 @@ const CoPilotPage: FC<CoPilotPageProps> = ({ params: paramsProp }) => {
     } finally {
       if (showLoadingIndicator) setIsLoading(false);
     }
-  }, [addNotification]);
+  }, [addNotification, setIsLoading, setError, setAllActiveNudges]); // Added setIsLoading, setError, setAllActiveNudges as dependencies
 
   // Effect to fetch nudges once businessId is available
   useEffect(() => {
     if (businessId !== null) { // Only fetch nudges if businessId has been successfully resolved
       fetchNudges(businessId);
-    } else if (!isLoading && !error && businessSlug) {
-      // If businessId is null and not loading (meaning initial business details fetch failed),
-      // ensure loading is false and error is shown.
-      setIsLoading(false);
+    } else if (businessId === null && !isLoading && !error && businessSlug) {
+      // If businessId is explicitly null (after a failed fetchBusinessDetails) and not loading
+      // we can stop showing the loader if it somehow lingered.
+      setIsLoading(false); // Make sure the loader is off if businessId never resolved
     }
-  }, [businessId, fetchNudges, isLoading, error, businessSlug]);
+  }, [businessId, fetchNudges]); // Removed isLoading, error, businessSlug from dependencies to prevent loop
 
 
   // --- Memoized Grouping Logic ---
