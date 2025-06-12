@@ -22,11 +22,13 @@ const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDr
       data-message-id={entry.id}
       className={clsx(
         "p-3 rounded-lg max-w-[70%] break-words text-sm shadow flex flex-col",
-        (entry.type === "customer" || entry.type === "unknown_business_message") && "self-start mr-auto",
-        (entry.type === "sent" || entry.type === "outbound_ai_reply" || entry.type === "ai_draft" || entry.type === "scheduled" || entry.type === "scheduled_pending" || entry.type === "failed_to_send") && "self-end ml-auto",
+        // Incoming messages (customer, unknown_business_message) should be on the right
+        (entry.type === "customer" || entry.type === "unknown_business_message") && "self-end ml-auto",
+        // Outgoing messages (sent, ai_draft, scheduled, etc.) should be on the left
+        (entry.type === "sent" || entry.type === "outbound_ai_reply" || entry.type === "ai_draft" || entry.type === "scheduled" || entry.type === "scheduled_pending" || entry.type === "failed_to_send") && "self-start mr-auto",
         {
-          "bg-[#2A2F45] text-white": entry.type === "customer",
-          "bg-blue-600 text-white": entry.type === "sent" || entry.type === "outbound_ai_reply",
+          "bg-[#2A2F45] text-white": entry.type === "customer", // Customer messages background
+          "bg-blue-600 text-white": entry.type === "sent" || entry.type === "outbound_ai_reply", // Sent by business/AI background
           "bg-yellow-500 text-black": entry.type === "ai_draft",
           "bg-gray-500 text-white": entry.type === "scheduled" || entry.type === "scheduled_pending",
           "bg-red-700 text-white": entry.type === "failed_to_send",

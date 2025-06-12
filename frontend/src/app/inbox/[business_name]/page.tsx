@@ -190,7 +190,7 @@ export default function InboxPage() {
 
     const endpoint = selectedDraft
       ? `/engagement-workflow/reply/${selectedDraft.id.toString().replace('eng-ai-','')}/send`
-      : `/conversations/customer/${activeCustomerId}/reply`;
+      : `/conversations/customer/${activeCustomerId}/send-message`; // Changed this line
     
     const payload = selectedDraft ? { updated_content: message } : { message };
     const method = selectedDraft ? 'put' : 'post';

@@ -563,22 +563,67 @@ def schedule_bulk(
                 message_metadata={'source': 'roadmap', 'roadmap_id': roadmap_id}
             )
             db.add(new_message)
-            db.flush()
-            
-            # This is the same logic as the single /schedule endpoint
-            roadmap_msg.status = "superseded"
-            roadmap_msg.message_id = new_message.id
-            
-            scheduled_count += 1
-            results["scheduled"].append({"roadmap_id": roadmap_id, "new_message_id": new_message.id})
-            
-        except Exception as e:
-            # If any step fails, we log it and add it to the skipped list
-            logger.warning(f"[SCHEDULE-BULK] ⚠️ Skipped Roadmap ID {roadmap_id}. Reason: {str(e)}")
+            db.flush() # Get new_message.id
+
+            task_id_str = None
+            try:
+                eta_value = roadmap_msg.send_datetime_utc
+                if not isinstance(eta_value, datetime):
+                    # Attempt to parse if it's a string, though it should be datetime from model
+                    try:
+                        eta_value = datetime.fromisoformat(str(eta_value))
+                    except ValueError:
+                        raise ValueError(f"Invalid send_datetime_utc format: {eta_value}")
+
+                if eta_value.tzinfo is None:
+                    eta_value = pytz.utc.localize(eta_value)
+                else:
+                    eta_value = eta_value.astimezone(pytz.utc)
+
+                if eta_value < datetime.now(pytz.utc):
+                    logger.warning(f"[SCHEDULE-BULK] ETA for Message ID {new_message.id} (Roadmap ID {roadmap_id}) is in the past: {eta_value.isoformat()}. Celery may execute immediately.")
+
+                logger.info(f"[SCHEDULE-BULK] Attempting to queue Celery task for Message ID {new_message.id} (Roadmap ID {roadmap_id}), ETA: {eta_value.isoformat()}")
+                task_result = process_scheduled_message_task.apply_async(
+                    args=[new_message.id],
+                    eta=eta_value
+                )
+                task_id_str = task_result.id
+
+                if not isinstance(new_message.message_metadata, dict):
+                    new_message.message_metadata = {} # Initialize if None or not a dict
+                new_message.message_metadata['celery_task_id'] = task_id_str
+                logger.info(f"[SCHEDULE-BULK] Celery task {task_id_str} queued for Message ID {new_message.id} (Roadmap ID {roadmap_id})")
+
+                # Only if Celery task is successfully queued, proceed to mark as superseded
+                roadmap_msg.status = "superseded"
+                roadmap_msg.message_id = new_message.id
+
+                scheduled_count += 1
+                results["scheduled"].append({
+                    "roadmap_id": roadmap_id,
+                    "new_message_id": new_message.id,
+                    "celery_task_id": task_id_str
+                })
+
+            except Exception as e_celery:
+                logger.error(f"[SCHEDULE-BULK] Celery task creation failed for Roadmap ID {roadmap_id}, Message ID {new_message.id}. Error: {str(e_celery)}")
+                skipped_count += 1
+                results["skipped"].append({
+                    "roadmap_id": roadmap_id,
+                    "new_message_id": new_message.id, # Message was created but Celery task failed
+                    "reason": f"Celery task scheduling error: {str(e_celery)}"
+                })
+                # The new_message is in session and will be committed, but without celery_task_id in metadata.
+                # RoadmapMessage status for this item will NOT be 'superseded'.
+
+        except Exception as e_outer: # Catch exceptions from validation or Message creation
+            logger.warning(f"[SCHEDULE-BULK] ⚠️ Skipped Roadmap ID {roadmap_id} due to pre-Celery error. Reason: {str(e_outer)}")
             skipped_count += 1
-            results["skipped"].append({"roadmap_id": roadmap_id, "reason": str(e)})
-            # We don't need to rollback here because the final commit will handle all successful changes.
-            # Failures just mean a particular message's changes aren't added to the session.
+            results["skipped"].append({"roadmap_id": roadmap_id, "reason": str(e_outer)})
+            # No new_message_id to add here if Message creation itself failed or was skipped.
+            # If new_message was added but this outer exception occurred after flush() but before Celery block,
+            # it would be committed without Celery task and without roadmap_msg update.
 
     try:
         db.commit()
