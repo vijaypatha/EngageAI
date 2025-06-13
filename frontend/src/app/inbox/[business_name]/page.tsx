@@ -1,4 +1,4 @@
-// FILE: frontend/src/app/inbox/[business_name]/page.tsx
+// FILE: frontend/app/inbox/[business_name]/page.tsx
 
 "use client";
 
@@ -121,9 +121,8 @@ export default function InboxPage() {
   }, []);
 
   const customerSummaries = useMemo<InboxCustomerSummary[]>(() => {
-    const processed = rawSummaries.map(cs => processCustomerSummary(cs, lastSeenMap));
-    processed.sort((a, b) => new Date(b.last_message_timestamp).getTime() - new Date(a.last_message_timestamp).getTime());
-    return processed;
+    // REFACTOR: Removed client-side sort. The API now provides pre-sorted data.
+    return rawSummaries.map(cs => processCustomerSummary(cs, lastSeenMap));
   }, [rawSummaries, lastSeenMap]);
 
   const timelineEntries = useMemo<TimelineEntry[]>(() => {
@@ -217,6 +216,7 @@ export default function InboxPage() {
     if (typeof draftId === 'undefined' || !window.confirm("Delete this draft?")) return;
     
     try {
+      // The endpoint uses the engagement ID, which is ai_draft_id
       await apiClient.delete(`/engagement-workflow/${draftId}`);
       if (businessId) await fetchFullHistory(businessId);
       setSelectedDraft(null);
