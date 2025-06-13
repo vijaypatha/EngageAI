@@ -271,8 +271,14 @@ export default function InboxPage() {
       <aside className={clsx("w-full md:w-80 lg:w-96 bg-[#1A1D2D] border-r border-[#2A2F45] md:relative fixed inset-0 z-30 flex flex-col h-full overflow-y-auto transition-transform", showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0")}>
         <div className="flex justify-between items-center p-4 border-b border-[#2A2F45] shrink-0">
           <h2 className="text-xl font-semibold text-white">Nudge Inbox</h2>
-          <button onClick={handleNewMessageClick} className="p-2 rounded-md hover:bg-slate-700 transition-colors" title="New Message">
-            <UserPlus className="w-5 h-5 text-white" />
+          {/* NEW MESSAGE BUTTON */}
+          <button
+            onClick={handleNewMessageClick}
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-[#1A1D2D] transition-colors"
+            title="Start a new conversation"
+          >
+            <UserPlus className="w-5 h-5" />
+            <span>New Message</span>
           </button>
           {showMobileDrawer && <button onClick={() => setShowMobileDrawer(false)} className="p-2" aria-label="Close contact list">✕</button>}
         </div>
