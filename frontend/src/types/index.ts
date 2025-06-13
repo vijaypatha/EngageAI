@@ -120,3 +120,16 @@ export interface Tag {
     // or made optional if not strictly used by the component in its current rendering.
     // We'll primarily rely on 'content' and 'scheduled_time' for the UI display.
   }
+  
+  // NEW: Define and export CustomerSummarySchema to match backend's response for /customers/by-business
+  export interface CustomerSummarySchema {
+      id: number;
+      customer_name: string;
+      phone: string;
+      lifecycle_stage: string;
+      opted_in: boolean;
+      latest_consent_status: string | null;
+      latest_consent_updated: string | null;
+      tags: Tag[]; // List of tags
+      business_id: number;
+  }
