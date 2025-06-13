@@ -281,6 +281,11 @@ class MessageResponse(MessageBase):
     # business: Optional[BusinessProfile] = None # Already in MessageBase
     class Config: from_attributes = True
 
+
+class MessageCreateSchema(BaseModel):
+    message: str = Field(..., description="The content of the message to be sent.")
+
+
 class EngagementBase(BaseModel): 
     message_id: Optional[int] = None; customer_id: int; business_id: int
     response: Optional[str] = None; ai_response: Optional[str] = None

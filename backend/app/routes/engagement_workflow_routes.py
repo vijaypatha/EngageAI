@@ -10,10 +10,15 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Body, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Engagement, Customer, BusinessProfile
+from app.models import (
+    Engagement, Customer, BusinessProfile, Message, Conversation as ConversationModel,
+    MessageTypeEnum, MessageStatusEnum
+)
 from app.config import settings
 from app.services.twilio_service import send_sms_via_twilio
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
+import uuid # For Conversation ID
+# import json # For message_metadata if needed as string, but dict is fine
 from pydantic import BaseModel
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
@@ -128,12 +133,61 @@ def send_reply(
             )
 
         engagement.status = "sent"
-        engagement.sent_at = datetime.utcnow()
-        engagement.message_id = engagement.message_id # Keep existing link if any, or this could be source of original message
+        engagement.sent_at = datetime.now(dt_timezone.utc) # Use timezone-aware datetime
+        engagement.message_id = engagement.message_id
         engagement.message_metadata = {**(engagement.message_metadata or {}), 'twilio_sid': twilio_api_response.sid}
+
+        # --- Create Message Record ---
+        now_utc = engagement.sent_at # Use the same timestamp for consistency
+
+        # Find or create conversation
+        conversation = db.query(ConversationModel).filter(
+            ConversationModel.customer_id == customer.id,
+            ConversationModel.business_id == business.id,
+            ConversationModel.status == 'active'
+        ).first()
+
+        if not conversation:
+            conversation = ConversationModel(
+                id=uuid.uuid4(),
+                customer_id=customer.id,
+                business_id=business.id,
+                started_at=now_utc,
+                last_message_at=now_utc,
+                status='active'
+            )
+            db.add(conversation)
+            db.flush() # Ensure conversation gets an ID if new before message is linked
+
+        # Create the new message for the sent draft
+        new_db_message = Message(
+            conversation_id=conversation.id,
+            business_id=business.id,
+            customer_id=customer.id,
+            content=message_content, # This is payload.updated_content
+            message_type=MessageTypeEnum.OUTBOUND.value,
+            status=MessageStatusEnum.SENT.value,
+            created_at=now_utc, # Align with engagement sent_at
+            sent_at=now_utc,    # Align with engagement sent_at
+            message_metadata={
+                'source': 'ai_draft_sent',
+                'engagement_id': engagement.id,
+                'twilio_sid': twilio_api_response.sid
+            },
+            # Link to the original inbound message if engagement.message_id is set
+            # Assuming engagement.message_id refers to an existing Message record
+            parent_id=engagement.message_id if engagement.message_id else None
+        )
+        db.add(new_db_message)
+
+        # Update conversation's last_message_at
+        conversation.last_message_at = now_utc
 
         db.commit()
         db.refresh(engagement)
+        db.refresh(new_db_message) # Refresh the new message
+        if db.object_session(conversation): # Refresh conversation only if it's part of the session
+            db.refresh(conversation)
 
         logger.info(f"[SEND_REPLY] ✅ Draft reply sent successfully. Engagement ID: {engagement.id}, New Status: {engagement.status}, SMS SID: {twilio_api_response.sid}")
         return {
@@ -173,7 +227,7 @@ class ManualReplyPayload(BaseModel):
     message: str
 
 @router.post("/manual-reply/{customer_id}")
-async def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: Session = Depends(get_db)):
+async def send_manual_reply(customer_id: uuid.UUID, payload: ManualReplyPayload, db: Session = Depends(get_db)): # Changed customer_id to uuid.UUID
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -188,14 +242,31 @@ async def send_manual_reply(customer_id: int, payload: ManualReplyPayload, db: S
         print(f"❌ Twilio send failed for manual reply: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to send SMS: {str(e)}")
 
-    new_engagement = Engagement(
-        customer_id=customer_id,
-        ai_response=payload.message,  # Consider renaming this field or using a different one for manual messages
-        status="sent",
-        sent_at=datetime.utcnow()
+    # TODO: This manual reply should also create a Message record similar to send_reply.
+    # For now, keeping original logic but noting the need for alignment.
+    # It also uses send_sms_via_twilio which is a direct Twilio call, not TwilioService.
+    # This might need its own Message creation logic if it doesn't go through a similar flow.
+
+    # For consistency, let's ensure sent_at is timezone-aware
+    now_utc_manual = datetime.now(dt_timezone.utc)
+
+    # --- Placeholder for creating a Message record for manual reply ---
+    # This section would be similar to the one in `send_reply`
+    # 1. Find/Create Conversation
+    # 2. Create Message object (OUTBOUND, SENT, metadata with source 'manual_reply')
+    # 3. Add to DB session
+    # --- End Placeholder ---
+
+    new_engagement = Engagement( # This engagement seems to be used as a log for the manual message.
+        customer_id=customer_id, # Make sure customer_id is compatible (int vs UUID)
+        business_id=business.id, # Add business_id for completeness
+        response=payload.message, # Storing the sent message here, not ai_response
+        status="sent", # Status of this "engagement log"
+        sent_at=now_utc_manual,
+        # message_id= new_message.id # Link to the actual Message record once created
     )
     db.add(new_engagement)
-    db.commit()
+    db.commit() # This would commit both the new_engagement and the new_message
     return {"message": "Manual reply sent and saved successfully."}
 
 
@@ -313,7 +384,7 @@ def update_engagement_status(
 
     logger.info(f"Updating status of engagement ID {engagement_id} from '{engagement.status}' to '{new_status}'.")
     engagement.status = new_status
-    engagement.updated_at = datetime.utcnow() # Update the timestamp
+    engagement.updated_at = datetime.now(dt_timezone.utc) # Update the timestamp, ensure timezone aware
 
 
     try:

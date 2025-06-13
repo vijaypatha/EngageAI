@@ -27,11 +27,114 @@ from app.services.consent_service import ConsentService
 from app.config import settings
 from app.services.twilio_service import TwilioService
 
-from app.schemas import normalize_phone_number as normalize_phone
+from app.schemas import normalize_phone_number as normalize_phone, MessageCreateSchema
+from app.models import MessageTypeEnum, MessageStatusEnum
 import re
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.post("/customer/{customer_id}/send-message")
+async def send_message_from_inbox(
+    customer_id: uuid.UUID,
+    payload: MessageCreateSchema,
+    db: Session = Depends(get_db)
+):
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+
+    business = db.query(BusinessProfile).filter(BusinessProfile.id == customer.business_id).first()
+    if not business:
+        # This should ideally not happen if data integrity is maintained
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business profile not found for customer")
+
+    conversation = db.query(ConversationModel).filter(
+        ConversationModel.customer_id == customer.id,
+        ConversationModel.business_id == business.id,
+        ConversationModel.status == 'active'
+    ).first()
+
+    now_utc = datetime.now(dt_timezone.utc)
+
+    if not conversation:
+        conversation = ConversationModel(
+            id=uuid.uuid4(),
+            customer_id=customer.id,
+            business_id=business.id,
+            started_at=now_utc,
+            last_message_at=now_utc,
+            status='active'
+        )
+        db.add(conversation)
+        db.flush()  # Flush to get conversation.id if it's new
+
+    db_message = Message(
+        conversation_id=conversation.id,
+        business_id=business.id,
+        customer_id=customer.id,
+        content=payload.message,
+        message_type=MessageTypeEnum.OUTBOUND.value,
+        status=MessageStatusEnum.QUEUED.value, # Initial status
+        created_at=now_utc,
+        sent_at=None,
+        message_metadata={'source': 'manual_inbox_reply'}
+    )
+    db.add(db_message)
+    db.flush() # Flush to get db_message.id for twilio_service and for metadata updates
+
+    twilio_service = TwilioService(db=db)
+
+    try:
+        sent_message_sid = await twilio_service.send_sms(
+            to=customer.phone,
+            message_body=payload.message,
+            business=business,
+            customer=customer, # Pass customer object
+            is_direct_reply=True # Explicitly state this is a direct reply
+        )
+
+        if sent_message_sid:
+            db_message.status = MessageStatusEnum.SENT.value
+            db_message.sent_at = datetime.now(dt_timezone.utc)
+            db_message.message_metadata['twilio_sid'] = sent_message_sid
+            logger.info(f"Message SID {sent_message_sid} from Twilio stored for message {db_message.id}")
+        else:
+            # This case might indicate an issue with how send_sms signals failure,
+            # as it's expected to raise HTTPException on failure.
+            db_message.status = MessageStatusEnum.FAILED.value
+            db_message.message_metadata['error'] = 'Send SMS returned no SID and did not raise error.'
+            logger.error(f"Send SMS returned no SID for message {db_message.id}. Payload: {payload.message}")
+            # We will commit this FAILED status, but also raise to inform client
+            db.commit()
+            db.refresh(db_message)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send message via Twilio, no SID received.")
+
+    except HTTPException as e:
+        db_message.status = MessageStatusEnum.FAILED.value
+        db_message.message_metadata['error'] = str(e.detail)
+        db_message.message_metadata['error_code'] = e.status_code
+        logger.error(f"HTTPException when sending SMS for message {db_message.id}: {e.detail}")
+        db.commit() # Commit the failure status
+        db.refresh(db_message)
+        raise e # Re-throw the exception to the client
+    except Exception as e:
+        # Catch any other unexpected errors
+        db_message.status = MessageStatusEnum.FAILED.value
+        db_message.message_metadata['error'] = f"Unexpected error: {str(e)}"
+        logger.error(f"Unexpected error when sending SMS for message {db_message.id}: {str(e)}", exc_info=True)
+        db.commit()
+        db.refresh(db_message)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred: {str(e)}")
+
+    conversation.last_message_at = db_message.sent_at if db_message.sent_at else now_utc
+    db.commit()
+    db.refresh(db_message)
+    db.refresh(conversation)
+
+    return {"message": "Message sent successfully", "message_details": json.loads(db_message.to_json())}
+
 
 @router.post("/inbound", response_class=PlainTextResponse)
 async def receive_sms(

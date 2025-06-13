@@ -193,15 +193,18 @@ async def receive_sms(
         if engagement.status == MessageStatusEnum.PENDING_REVIEW:
             if business.notify_owner_on_reply_with_link and business.business_phone_number and business.slug:
                 logger.info(f"{log_prefix}: Notifying business owner for manual review.")
-                notification_link = f"https://app.ainudge.com/dashboard/conversations/{business.slug}?customer_id={customer.id}"
+                # Updated notification link
+                notification_link = f"{settings.FRONTEND_APP_URL}/inbox/{business.slug}?activeCustomer={customer.id}"
                 notification_msg = f"AI Nudge: New reply from {customer.customer_name or customer.phone}. View: {notification_link}"
                 await twilio_service.send_sms(to=business.business_phone_number, message_body=notification_msg, business=business, is_owner_notification=True)
 
-        # Commit primary transaction
+        # Commit primary transaction (moved before opt-in logic that might also commit)
         db.commit()
-        logger.info(f"{log_prefix}: Main transaction committed.")
+        logger.info(f"{log_prefix}: Main transaction committed (customer, message, engagement).")
+
 
         # --- Nudge and Strategy Logic (PRESERVED) ---
+        # This section might also commit if it creates nudges, so it's fine here.
         nudge_generation_service = CoPilotNudgeGenerationService(db)
         potential_timed_event_nudge_created = False
         if inbound_message_record_id_for_nudges:
@@ -219,16 +222,54 @@ async def receive_sms(
             logger.info(f"{log_prefix}: Dispatching strategic plan generation task for CustID {customer.id}")
             trigger_strategic_engagement_plan_generation_task.delay(business_id=business.id, customer_id=customer.id, trigger_data=trigger_data)
         
-        # --- MODIFICATION: Final Step - Trigger Opt-In Request ---
-        # Step 5: Process Consent Request
-        if ai_handled_reply:
-            logger.info(f"{log_prefix}: Triggering automatic double opt-in request after AI reply.")
-            await consent_service.send_double_optin_sms(customer_id=customer.id, business_id=business.id)
+
+        # --- MODIFIED OPT-IN TRIGGER LOGIC ---
+        should_send_opt_in = False
+        if customer: # Ensure customer object exists
+            # Refresh customer object to get latest state if changed by prior operations in this session
+            db.refresh(customer)
+
+            latest_consent_for_opt_in_trigger = db.query(ConsentLog).filter(
+                ConsentLog.customer_id == customer.id
+            ).order_by(desc(ConsentLog.created_at)).first()
+
+            # Check if customer is not opted in and their status implies they could be prompted
+            # OptInStatus.NOT_SET means they've never interacted with consent system (new customer)
+            # OptInStatus.PENDING means they were sent an opt-in but haven't replied (or initial state for new inbound)
+            # 'pending_confirmation' is an older status that might still be in use or equivalent to PENDING
+            if not customer.opted_in and \
+               (customer.sms_opt_in_status == OptInStatus.NOT_SET.value or \
+                customer.sms_opt_in_status == OptInStatus.PENDING.value):
+
+                # Further check on ConsentLog: if the latest log is missing or is 'pending' or 'not_set'
+                if not latest_consent_for_opt_in_trigger or \
+                   latest_consent_for_opt_in_trigger.status in [OptInStatus.NOT_SET.value, OptInStatus.PENDING.value, 'pending_confirmation']:
+                    should_send_opt_in = True
+
+        if should_send_opt_in:
+            logger.info(f"{log_prefix}: Customer {customer.id} requires opt-in. sms_opt_in_status: '{customer.sms_opt_in_status}', opted_in flag: {customer.opted_in}. Triggering double opt-in SMS.")
+            try:
+                # send_double_optin_sms internally checks if an opt-in message was sent recently to avoid spamming.
+                await consent_service.send_double_optin_sms(customer_id=customer.id, business_id=business.id)
+                # send_double_optin_sms also commits its own transaction for ConsentLog updates.
+            except Exception as opt_in_exc:
+                logger.error(f"{log_prefix}: Error sending double opt-in SMS for customer {customer.id}: {opt_in_exc}", exc_info=True)
+        else:
+            logger.info(f"{log_prefix}: Opt-in SMS not required for customer {customer.id} (Opted-in: {customer.opted_in}, SMS Opt-in Status: {customer.sms_opt_in_status}, Latest ConsentLog: {latest_consent_for_opt_in_trigger.status if latest_consent_for_opt_in_trigger else 'None'}).")
+
+        # Final commit for any changes not covered by specific service calls that commit themselves.
+        # For example, if nudge generation doesn't commit but adds to session.
+        # Most critical objects (Customer, Message, Engagement, initial ConsentLog) were committed earlier.
+        # Opt-in service commits its own ConsentLog updates.
+        if db.dirty or db.new or db.deleted: # Check if there's anything to commit
+            logger.info(f"{log_prefix}: Committing final session changes before returning.")
+            db.commit()
 
         return PlainTextResponse("SMS Received", status_code=status.HTTP_200_OK)
 
     except Exception as e:
-        logger.error(f"UNHANDLED EXCEPTION in webhook. Error: {e}", exc_info=True)
+        current_form_data_str = str(dict(form_data))[:500]
+        logger.error(f"UNHANDLED EXCEPTION in webhook. SID: {message_sid_from_twilio}, From: {from_number_raw}, To: {to_number_raw}, Form (partial): {current_form_data_str}. Error: {e}", exc_info=True)
         if 'db' in locals() and db.is_active:
             db.rollback()
         return PlainTextResponse("Internal Server Error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
