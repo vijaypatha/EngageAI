@@ -27,7 +27,6 @@ export interface Customer {
 }
 
 // Represents the raw message object from the API.
-// 'ai_draft' is no longer a type. 'ai_response' is now a field on other messages.
 export interface BackendMessage {
   id: string | number;
   type: "inbound" | "outbound" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
@@ -39,8 +38,8 @@ export interface BackendMessage {
   customer_id: number;
   is_hidden?: boolean;
   response?: string;
-  ai_response?: string; // The content of a pending AI draft
-  ai_draft_id?: number; // The ID of the engagement to use for draft actions
+  ai_response?: string; // The content of a pending AI draft, attached to an inbound message
+  ai_draft_id?: number; // The ID of the engagement for draft actions
 }
 
 // Represents the raw customer object from the `/review/full-customer-history` endpoint

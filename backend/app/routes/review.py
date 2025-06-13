@@ -252,80 +252,65 @@ def get_full_customer_history(
     business_id: int = Query(...),
     db: Session = Depends(get_db)
 ):
-    logger.info(f"Fetching full customer history for business_id: {business_id}")
+    logger.info(f"Fetching definitive customer history for business_id: {business_id}")
     customers = db.query(Customer).filter(Customer.business_id == business_id).all()
     result = []
 
     for customer in customers:
         logger.debug(f"Processing customer_id: {customer.id}")
         
-        # --- Data Fetching ---
-        all_messages = db.query(Message).filter(Message.customer_id == customer.id).all()
-        all_engagements = db.query(Engagement).filter(Engagement.customer_id == customer.id).all()
+        # 1. The 'messages' table is the SINGLE SOURCE OF TRUTH for the timeline.
+        #    We fetch all messages and sort them correctly in one database query.
+        all_customer_messages = (
+            db.query(Message)
+            .filter(Message.customer_id == customer.id, Message.is_hidden == False)
+            .order_by(Message.created_at.asc())
+            .all()
+        )
 
-        # --- Data Processing ---
+        if not all_customer_messages:
+            continue
+
+        # 2. Get all pending AI drafts from the 'engagements' table.
+        #    We put them in a map for efficient lookup, keyed by the original message's ID.
+        message_ids = [msg.id for msg in all_customer_messages if msg.message_type == 'inbound']
+        draft_map = {}
+        if message_ids:
+            pending_drafts_query = (
+                db.query(Engagement.message_id, Engagement.ai_response, Engagement.id)
+                .filter(
+                    Engagement.message_id.in_(message_ids),
+                    Engagement.status == 'pending_review',
+                    Engagement.ai_response != None
+                )
+                .all()
+            )
+            draft_map = {message_id: (ai_response, eng_id) for message_id, ai_response, eng_id in pending_drafts_query}
+
+        # 3. Build the final, clean message history.
         message_history = []
-        
-        # Create a set of Engagement IDs that resulted in a sent message to prevent duplication
-        sent_engagement_ids = {eng.id for eng in all_engagements if eng.status in ['sent', 'auto_replied_faq']}
-
-        # Create a map of pending drafts, keyed by their engagement ID
-        draft_map = {eng.id: eng.ai_response for eng in all_engagements if eng.status == 'pending_review' and eng.ai_response}
-
-        # 1. Process Engagements to get all INBOUND messages and attach their drafts
-        for eng in all_engagements:
-            if not eng.response:
-                continue
-            
-            inbound_message = {
-                "id": f"eng-cust-{eng.id}",
-                "type": "inbound",
-                "content": eng.response,
-                "status": "received",
-                "sent_time": eng.created_at.isoformat(),
-                "customer_id": eng.customer_id,
-                "timestamp_for_sorting": eng.created_at
-            }
-            
-            # Attach the pending AI draft directly to its parent inbound message
-            if eng.id in draft_map:
-                inbound_message["ai_response"] = draft_map[eng.id]
-                inbound_message["ai_draft_id"] = eng.id # Pass the engagement ID for draft actions
-
-            message_history.append(inbound_message)
-
-        # 2. Process all OUTBOUND and SCHEDULED messages
-        for msg in all_messages:
-            # Skip messages that were replies sent from an engagement, as they are part of the engagement flow
-            # and displaying them separately can cause confusion or visual duplication.
-            # The sent status is visible on the inbound message they replied to.
-            # We only add standalone messages (e.g., proactive scheduled nudges).
-            
-            # A simpler approach for now to ensure everything shows up: add all messages.
-            # The frontend logic will handle display.
-            
-            if msg.is_hidden:
+        for msg in all_customer_messages:
+            # Skip any messages that have no content. This fixes the "[No Content]" bug.
+            if not msg.content:
                 continue
 
-            message_history.append({
+            message_entry = {
                 "id": f"msg-{msg.id}",
-                "type": msg.message_type, # 'outbound', 'outbound_ai_reply', 'scheduled', etc.
+                "type": msg.message_type,
                 "content": msg.content,
                 "status": msg.status,
-                "scheduled_time": msg.scheduled_time.isoformat() if msg.scheduled_time else None,
-                "sent_time": msg.sent_at.isoformat() if msg.sent_at else None,
+                "sent_time": msg.sent_at.isoformat() if msg.sent_at else msg.created_at.isoformat(),
                 "customer_id": msg.customer_id,
-                "is_hidden": msg.is_hidden,
-                "timestamp_for_sorting": msg.sent_at or msg.scheduled_time or msg.created_at
-            })
+            }
 
-        # 3. Sort the unified list of all messages chronologically
-        message_history.sort(
-            key=lambda x: x.get("timestamp_for_sorting") or datetime.min.replace(tzinfo=timezone.utc),
-            reverse=False
-        )
-        
-        # Final customer object for the API response
+            # If the message is 'inbound', check if it has a pending draft and attach it.
+            if msg.message_type == 'inbound' and msg.id in draft_map:
+                ai_response, engagement_id = draft_map[msg.id]
+                message_entry["ai_response"] = ai_response
+                message_entry["ai_draft_id"] = engagement_id
+
+            message_history.append(message_entry)
+
         latest_consent = db.query(ConsentLog).filter(ConsentLog.customer_id == customer.id).order_by(desc(ConsentLog.replied_at)).first()
         result.append({
             "customer_id": customer.id,

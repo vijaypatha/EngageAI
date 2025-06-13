@@ -18,8 +18,9 @@ interface TimelineItemProps {
   onDeleteDraft: (draftId: number | undefined) => void;
 }
 
+// A new sub-component to render the AI Draft cleanly
 const AiDraft = ({ entry, onEditDraft, onDeleteDraft }: TimelineItemProps) => (
-  <div className="mt-2 p-3 rounded-lg bg-yellow-500 text-black text-sm shadow relative">
+  <div className="mt-2 p-3 rounded-lg bg-yellow-500 text-black text-sm shadow relative border border-yellow-600">
     <p className="font-semibold text-xs mb-1 opacity-80">AI Draft:</p>
     <p className="whitespace-pre-wrap">{entry.ai_response}</p>
     <div className="flex gap-2 mt-2 justify-end">
@@ -34,14 +35,14 @@ const AiDraft = ({ entry, onEditDraft, onDeleteDraft }: TimelineItemProps) => (
 );
 
 const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDraft }: TimelineItemProps) {
-  const isIncoming = entry.type === "inbound" || entry.type === "unknown_business_message";
+  const isIncoming = entry.type === "inbound";
   
   return (
     <div
       data-message-id={entry.id}
       className={clsx(
         "p-3 rounded-lg max-w-[70%] break-words text-sm shadow flex flex-col",
-        isIncoming ? "self-start mr-auto" : "self-end ml-auto",
+        isIncoming ? "self-start mr-auto" : "self-end ml-auto", // Incoming left, Outgoing right
         {
           "bg-[#2A2F45] text-white": isIncoming,
           "bg-blue-600 text-white": !isIncoming && (entry.type === "outbound" || entry.type === "outbound_ai_reply"),

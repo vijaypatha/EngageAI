@@ -59,7 +59,7 @@ const processTimelineEntry = (msg: BackendMessage, customerId: number): Timeline
 
 const processCustomerSummary = (cs: RawCustomerSummary, lastSeenMap: Record<number, string>): InboxCustomerSummary => {
   const validMessages = (Array.isArray(cs.messages) ? cs.messages : [])
-    .filter(m => ['inbound', 'outbound', 'outbound_ai_reply', 'scheduled', 'scheduled_pending', 'failed_to_send'].includes(m.type) && !m.is_hidden)
+    .filter(m => ['inbound', 'outbound', 'outbound_ai_reply'].includes(m.type) && !m.is_hidden)
     .sort((a, b) => new Date(b.sent_time || b.scheduled_time || 0).getTime() - new Date(a.sent_time || a.scheduled_time || 0).getTime());
   
   const lastMsg = validMessages[0] || null;
@@ -130,10 +130,10 @@ export default function InboxPage() {
     const currentCustomer = rawSummaries.find(cs => cs.customer_id === activeCustomerId);
     if (!currentCustomer || !currentCustomer.messages) return [];
     
+    // The API now provides a perfectly sorted list, so we just process it.
     const entries = currentCustomer.messages
       .map(msg => processTimelineEntry(msg, currentCustomer.customer_id))
       .filter((entry): entry is TimelineEntry => entry !== null);
-      // No longer need to sort here, as the API provides the correct sort order
     return entries;
   }, [rawSummaries, activeCustomerId]);
 
