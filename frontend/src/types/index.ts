@@ -3,6 +3,7 @@
 // Define the Tag type
 export interface Tag {
     id: number;
+    name: string;
   }
   
   // Represents the raw message object from the API.
@@ -23,7 +24,7 @@ export interface Tag {
       };
   }
   
-  // Represents the raw customer object from the `/review/full-customer_history` endpoint
+  // Represents the raw customer object from the `/review/full-customer-history` endpoint
   // (Note: This type will now primarily be used for the active conversation's detailed history)
   export interface RawCustomerSummary {
       customer_id: number;
@@ -59,7 +60,6 @@ export interface Tag {
       pages: number;
   }
   
-  
   // Represents a processed message object for display in the timeline.
   export interface TimelineEntry {
       id: string | number;
@@ -77,4 +77,27 @@ export interface Tag {
           nudge_id: number; // The ID of the related nudge
           ai_suggestion?: string; // AI's suggestion for this action
       };
+  }
+  
+  // NEW: Define and export the Customer interface as it's used by other frontend pages.
+  // This should mirror the structure returned by your backend's Customer schema (excluding relationships).
+  export interface Customer {
+    id: number;
+    customer_name: string;
+    phone: string;
+    lifecycle_stage: string;
+    pain_points?: string | null;
+    interaction_history?: string | null;
+    business_id: number;
+    timezone?: string | null;
+    opted_in?: boolean;
+    sms_opt_in_status: string;
+    is_generating_roadmap?: boolean;
+    last_generation_attempt?: string | null; // Assuming datetime is string (ISO)
+    created_at: string;
+    updated_at?: string | null;
+    latest_consent_status?: string | null;
+    latest_consent_updated?: string | null;
+    tags?: Tag[]; // Assuming Tag is defined
+    last_read_at?: string | null; // Add if used by frontend directly
   }
