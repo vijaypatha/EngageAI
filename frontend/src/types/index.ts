@@ -101,3 +101,16 @@ export interface Tag {
     tags?: Tag[]; // Assuming Tag is defined
     last_read_at?: string | null; // Add if used by frontend directly
   }
+  
+  // NEW: Define and export the AutopilotMessage interface for the AutopilotPlanView.
+  // This is a common structure for messages in a plan. Adjust fields if your backend returns more.
+  export interface AutopilotMessage {
+    id: number;
+    smsContent: string;
+    smsTiming: string; // e.g., "Day 0, 10:00 AM" or "30 days from today"
+    status: string; // e.g., "draft", "scheduled", "sent"
+    send_datetime_utc: string; // ISO format string
+    relevance?: string | null;
+    success_indicator?: string | null;
+    no_response_plan?: string | null;
+  }
