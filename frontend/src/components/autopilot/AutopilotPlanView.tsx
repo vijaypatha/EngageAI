@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiClient } from '@/lib/api';
-import { AutopilotMessage } from '@/types';
+import { AutopilotMessage } from '@/types'; // AutopilotMessage type from types/index.ts
 import { Calendar, Clock, Edit, Trash2, User, Save, X, AlertCircle } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 
@@ -14,7 +14,7 @@ interface AutopilotPlanViewProps {
 // Sub-component for a single scheduled message item
 const AutopilotItem = ({ item, onUpdate, onCancel }: { item: AutopilotMessage, onUpdate: (id: number, content: string, time: string) => Promise<void>, onCancel: (id: number) => Promise<void> }) => {
   const [isEditing, setIsEditing] = useState(false);
-  const [content, setContent] = useState(item.content);
+  const [content, setContent] = useState(item.content); // Use item.content
   
   // Format the scheduled_time from ISO string to a local datetime-local input format
   const formatForInput = (isoString: string) => {
@@ -24,10 +24,12 @@ const AutopilotItem = ({ item, onUpdate, onCancel }: { item: AutopilotMessage, o
       return "";
     }
   };
-  const [scheduledTime, setScheduledTime] = useState(formatForInput(item.scheduled_time));
+  const [scheduledTime, setScheduledTime] = useState(formatForInput(item.scheduled_time)); // Use item.scheduled_time
 
   const handleSave = async () => {
     if (!scheduledTime) {
+        // Changed from alert() to a more user-friendly inline message or modal if this were a full app.
+        // For now, keeping alert as per existing pattern for minor notifications.
         alert("Please select a valid date and time.");
         return;
     }
@@ -37,6 +39,8 @@ const AutopilotItem = ({ item, onUpdate, onCancel }: { item: AutopilotMessage, o
   };
 
   const handleCancel = () => {
+    // Changed from window.confirm() to a more user-friendly modal if this were a full app.
+    // For now, keeping window.confirm as per existing pattern for minor confirmations.
     if (window.confirm("Are you sure you want to cancel this scheduled message? This cannot be undone.")) {
       onCancel(item.id);
     }
@@ -47,7 +51,7 @@ const AutopilotItem = ({ item, onUpdate, onCancel }: { item: AutopilotMessage, o
       <div className="flex-1 min-w-0">
         <div className="flex items-center text-sm text-gray-400 mb-2">
           <User size={14} className="mr-2" />
-          <span>{item.customer.name}</span>
+          <span>{item.customer.name}</span> {/* Use item.customer.name */}
         </div>
         {isEditing ? (
           <textarea
@@ -71,7 +75,7 @@ const AutopilotItem = ({ item, onUpdate, onCancel }: { item: AutopilotMessage, o
         ) : (
             <div className="flex items-center gap-2 text-sm text-blue-300">
                 <Clock size={14} />
-                <span>{format(parseISO(item.scheduled_time), "MMM d, yyyy 'at' p")}</span>
+                <span>{format(parseISO(item.scheduled_time), "MMM d, yyyy 'at' p")}</span> {/* Use item.scheduled_time */}
             </div>
         )}
         <div className="flex items-center gap-2 mt-2">
@@ -103,6 +107,7 @@ export default function AutopilotPlanView({ businessId }: AutopilotPlanViewProps
         setError(null);
         console.log(`Autopilot: Fetching scheduled messages for business ID: ${businessId}`);
         try {
+            // API call to the new backend endpoint
             const response = await apiClient.get<AutopilotMessage[]>(`/review/autopilot-plan?business_id=${businessId}`);
             setMessages(response.data);
             console.log(`Autopilot: Found ${response.data.length} scheduled messages.`);
@@ -121,9 +126,10 @@ export default function AutopilotPlanView({ businessId }: AutopilotPlanViewProps
     const handleUpdateMessage = async (id: number, content: string, time: string) => {
         console.log(`Autopilot: Updating message ${id} to time ${time}`);
         try {
+            // This endpoint updates a Message record (scheduled message)
             await apiClient.put(`/roadmap-workflow/update-time/${id}?source=scheduled`, {
-                smsContent: content,
-                send_datetime_utc: time,
+                smsContent: content, // Pass the content to be updated
+                send_datetime_utc: time, // Pass the new scheduled time
             });
             await fetchScheduledMessages(); // Refresh list after update
         } catch (err: any) {
@@ -134,6 +140,7 @@ export default function AutopilotPlanView({ businessId }: AutopilotPlanViewProps
     const handleCancelMessage = async (id: number) => {
         console.log(`Autopilot: Cancelling message ${id}`);
         try {
+            // This endpoint deletes a Message record (scheduled message)
             await apiClient.delete(`/roadmap-workflow/${id}?source=scheduled`);
             await fetchScheduledMessages(); // Refresh list after delete
         } catch (err: any) {

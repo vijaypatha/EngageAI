@@ -6,6 +6,12 @@ export interface Tag {
     name: string;
   }
   
+  // Basic Customer Info for nested objects
+  export interface CustomerBasicInfo {
+    id: number;
+    name: string;
+  }
+  
   // Represents the raw message object from the API.
   export interface BackendMessage {
       id: string | number;
@@ -102,15 +108,15 @@ export interface Tag {
     last_read_at?: string | null; // Add if used by frontend directly
   }
   
-  // NEW: Define and export the AutopilotMessage interface for the AutopilotPlanView.
-  // This is a common structure for messages in a plan. Adjust fields if your backend returns more.
+  // UPDATED: Define and export the AutopilotMessage interface for the AutopilotPlanView.
+  // Now includes 'content' and a nested 'customer' object.
   export interface AutopilotMessage {
     id: number;
-    smsContent: string;
-    smsTiming: string; // e.g., "Day 0, 10:00 AM" or "30 days from today"
+    content: string; // The message text (aligned with backend output)
     status: string; // e.g., "draft", "scheduled", "sent"
-    send_datetime_utc: string; // ISO format string
-    relevance?: string | null;
-    success_indicator?: string | null;
-    no_response_plan?: string | null;
+    scheduled_time: string; // The exact date and time the message will be sent (ISO format string)
+    customer: CustomerBasicInfo; // Nested customer object with id and name
+    // smsContent, smsTiming, send_datetime_utc, relevance, success_indicator, no_response_plan are removed
+    // or made optional if not strictly used by the component in its current rendering.
+    // We'll primarily rely on 'content' and 'scheduled_time' for the UI display.
   }
