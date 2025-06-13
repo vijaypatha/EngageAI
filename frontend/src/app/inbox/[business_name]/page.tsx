@@ -1,3 +1,5 @@
+// FILE: frontend/src/app/inbox/[business_name]/page.tsx
+
 "use client";
 
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
@@ -17,23 +19,39 @@ import MessageBox from "@/components/inbox/MessageBox";
 
 const processTimelineEntry = (msg: BackendMessage, customerId: number): TimelineEntry | null => {
   if (!msg.type || typeof msg.id === 'undefined') return null;
-  let content = "", is_faq_answer = false, appended_opt_in_prompt = false;
-  try {
-    if (typeof msg.content === 'string') {
-      const parsed = JSON.parse(msg.content);
-      content = parsed.text || msg.content;
-      is_faq_answer = !!parsed.is_faq_answer;
-      appended_opt_in_prompt = !!parsed.appended_opt_in_prompt;
-    } else if (typeof msg.content === 'object' && msg.content !== null) {
-      content = (msg.content as any).text || JSON.stringify(msg.content);
-    } else if (msg.type === "customer" && msg.response) {
-      content = msg.response;
-    } else {
-      content = msg.ai_response || "[No content]";
-    }
-  } catch { content = msg.content; }
+
+  let content: string = "[No Content]";
+  let is_faq_answer = false;
+  let appended_opt_in_prompt = false;
+
+  switch (msg.type) {
+    case 'outbound':
+    case 'outbound_ai_reply':
+      if (typeof msg.content === 'string') {
+        try {
+          const parsed = JSON.parse(msg.content);
+          content = parsed.text || msg.content;
+          is_faq_answer = !!parsed.is_faq_answer;
+          appended_opt_in_prompt = !!parsed.appended_opt_in_prompt;
+        } catch (e) {
+          content = msg.content;
+        }
+      } else if (msg.content) {
+        content = String(msg.content);
+      }
+      break;
+
+    case 'ai_draft':
+      content = msg.ai_response || "[No Content]";
+      break;
+
+    default: // Handles 'inbound', 'scheduled', 'failed_to_send', etc.
+      content = msg.content || msg.response || "[No Content]";
+      break;
+  }
+
   return {
-    id: msg.type === 'ai_draft' ? `eng-ai-${msg.id}` : String(msg.id),
+    id: msg.type === 'ai_draft' ? `eng-ai-${msg.id}` : msg.id,
     type: msg.type,
     content,
     timestamp: msg.sent_time || msg.scheduled_time || null,
@@ -46,8 +64,9 @@ const processTimelineEntry = (msg: BackendMessage, customerId: number): Timeline
 
 const processCustomerSummary = (cs: RawCustomerSummary, lastSeenMap: Record<number, string>): InboxCustomerSummary => {
   const validMessages = (Array.isArray(cs.messages) ? cs.messages : [])
-    .filter(m => ['sent', 'customer', 'outbound_ai_reply', 'scheduled', 'scheduled_pending'].includes(m.type) && !m.is_hidden)
+    .filter(m => ['inbound', 'outbound', 'outbound_ai_reply', 'scheduled', 'scheduled_pending', 'failed_to_send'].includes(m.type) && !m.is_hidden)
     .sort((a, b) => new Date(b.sent_time || b.scheduled_time || 0).getTime() - new Date(a.sent_time || a.scheduled_time || 0).getTime());
+  
   const lastMsg = validMessages[0] || null;
   
   let previewContent = "[No recent messages]";
@@ -76,7 +95,6 @@ const processCustomerSummary = (cs: RawCustomerSummary, lastSeenMap: Record<numb
   };
 };
 
-
 export default function InboxPage() {
   const { business_name } = useParams<{ business_name: string }>();
   const searchParams = useSearchParams();
@@ -99,6 +117,7 @@ export default function InboxPage() {
 
   const fetchFullHistory = useCallback(async (bId: number) => {
     try {
+      // Assuming your API is now updated to return 'inbound'/'outbound' types
       const res = await apiClient.get<RawCustomerSummary[]>(`/review/full-customer-history?business_id=${bId}`);
       setRawSummaries(res.data || []);
       return res.data || [];
@@ -165,7 +184,7 @@ export default function InboxPage() {
     if (!businessId) return;
     const intervalId = setInterval(() => {
       if (document.visibilityState === 'visible') fetchFullHistory(businessId);
-    }, 30000); // Poll less aggressively
+    }, 30000);
     return () => clearInterval(intervalId);
   }, [businessId, fetchFullHistory]);
 
@@ -190,19 +209,19 @@ export default function InboxPage() {
 
     const endpoint = selectedDraft
       ? `/engagement-workflow/reply/${selectedDraft.id.toString().replace('eng-ai-','')}/send`
-      : `/conversations/customer/${activeCustomerId}/send-message`; // Changed this line
+      : `/conversations/customer/${activeCustomerId}/send-message`;
     
     const payload = selectedDraft ? { updated_content: message } : { message };
     const method = selectedDraft ? 'put' : 'post';
 
     try {
       await apiClient[method](endpoint, payload);
-      if (businessId) await fetchFullHistory(businessId); // Refresh data
+      if (businessId) await fetchFullHistory(businessId);
       setSelectedDraft(null);
     } catch (err: any) {
       console.error("Failed to send message", err);
       if (businessId) await fetchFullHistory(businessId);
-      throw err; // Re-throw to be caught by MessageBox
+      throw err;
     }
   };
 

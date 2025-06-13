@@ -22,13 +22,13 @@ const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDr
       data-message-id={entry.id}
       className={clsx(
         "p-3 rounded-lg max-w-[70%] break-words text-sm shadow flex flex-col",
-        // Incoming messages (customer, unknown_business_message) should be on the right
-        (entry.type === "customer" || entry.type === "unknown_business_message") && "self-end ml-auto",
-        // Outgoing messages (sent, ai_draft, scheduled, etc.) should be on the left
-        (entry.type === "sent" || entry.type === "outbound_ai_reply" || entry.type === "ai_draft" || entry.type === "scheduled" || entry.type === "scheduled_pending" || entry.type === "failed_to_send") && "self-start mr-auto",
+        // INCOMING (Customer): on the left
+        (entry.type === "inbound" || entry.type === "unknown_business_message") && "self-start mr-auto",
+        // OUTGOING (Business/AI): on the right
+        (entry.type === "outbound" || entry.type === "outbound_ai_reply" || entry.type === "ai_draft" || entry.type === "scheduled" || entry.type === "scheduled_pending" || entry.type === "failed_to_send") && "self-end ml-auto",
         {
-          "bg-[#2A2F45] text-white": entry.type === "customer", // Customer messages background
-          "bg-blue-600 text-white": entry.type === "sent" || entry.type === "outbound_ai_reply", // Sent by business/AI background
+          "bg-[#2A2F45] text-white": entry.type === "inbound", // Customer message background
+          "bg-blue-600 text-white": entry.type === "outbound" || entry.type === "outbound_ai_reply", // Sent by business/AI
           "bg-yellow-500 text-black": entry.type === "ai_draft",
           "bg-gray-500 text-white": entry.type === "scheduled" || entry.type === "scheduled_pending",
           "bg-red-700 text-white": entry.type === "failed_to_send",
@@ -40,9 +40,9 @@ const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDr
       {entry.timestamp && (
         <span className="text-xs text-gray-300 mt-1 self-end opacity-80">
           {formatMessageTimestamp(entry.timestamp)}
-          {entry.type === 'sent' && entry.status === 'delivered' && <CheckCheck className="inline-block w-4 h-4 ml-1 text-green-300" />}
-          {entry.type === 'sent' && (entry.status === 'sent' || entry.status === 'accepted') && <Check className="inline-block w-4 h-4 ml-1 text-gray-300" />}
-          {entry.type === 'sent' && entry.status === 'queued' && <Clock className="inline-block w-3 h-3 ml-1 text-gray-300" />}
+          {entry.type === 'outbound' && entry.status === 'delivered' && <CheckCheck className="inline-block w-4 h-4 ml-1 text-green-300" />}
+          {entry.type === 'outbound' && (entry.status === 'sent' || entry.status === 'accepted') && <Check className="inline-block w-4 h-4 ml-1 text-gray-300" />}
+          {entry.type === 'outbound' && entry.status === 'queued' && <Clock className="inline-block w-3 h-3 ml-1 text-gray-300" />}
           {(entry.type === 'scheduled' || entry.type === 'scheduled_pending') && <Clock className="inline-block w-3 h-3 ml-1" />}
           {entry.type === 'failed_to_send' && <AlertCircle className="inline-block w-3 h-3 ml-1 text-red-300" />}
         </span>

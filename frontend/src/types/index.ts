@@ -1,33 +1,35 @@
+// FILE: frontend/src/types/index.ts
+
 // Define the Tag type
 export interface Tag {
-    id: number;
-    name: string;
-  }
-  
-  // Define the Customer structure
-  export interface Customer {
-    id: number;
-    customer_name: string;
-    phone: string;
-    lifecycle_stage: string;
-    pain_points: string;
-    interaction_history: string;
-    business_id: number;
-    timezone?: string | null;
-    opted_in?: boolean | null;
-    is_generating_roadmap?: boolean | null;
-    last_generation_attempt?: string | null;
-    created_at: string;
-    updated_at?: string | null;
-    latest_consent_status?: string | null;
-    latest_consent_updated?: string | null;
-    tags?: Tag[] | null;
-  }
-  
-// Represents the raw message object from the `/review/full-customer-history` endpoint
+  id: number;
+  name: string;
+}
+
+// Define the Customer structure
+export interface Customer {
+  id: number;
+  customer_name: string;
+  phone: string;
+  lifecycle_stage: string;
+  pain_points: string;
+  interaction_history: string;
+  business_id: number;
+  timezone?: string | null;
+  opted_in?: boolean | null;
+  is_generating_roadmap?: boolean | null;
+  last_generation_attempt?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  latest_consent_status?: string | null;
+  latest_consent_updated?: string | null;
+  tags?: Tag[] | null;
+}
+
+// Represents the raw message object from the API, now aligned with backend enums.
 export interface BackendMessage {
   id: string | number;
-  type: "sent" | "customer" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
+  type: "inbound" | "outbound" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
   content: any;
   status?: string;
   scheduled_time?: string | null;
@@ -58,10 +60,10 @@ export interface InboxCustomerSummary extends RawCustomerSummary {
   is_unread: boolean;
 }
 
-// Represents a processed message object for display in the timeline
+// Represents a processed message object for display in the timeline, now aligned.
 export interface TimelineEntry {
   id: string | number;
-  type: "customer" | "sent" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
+  type: "inbound" | "outbound" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
   content: string;
   timestamp: string | null;
   customer_id: number;
