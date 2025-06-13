@@ -57,19 +57,19 @@ export function Navigation() {
   // REFACTORED: Updated navigation items to match the new UI structure.
   const mainNavItems = [
     {
-      name: "Inbox",
+      name: "Nudge Inbox",
       href: `/inbox/${business_name}`,
       icon: MessageSquare,
       description: "React to live conversations"
     },
     {
-      name: "Composer",
+      name: "Nudge Composer",
       href: `/composer/${business_name}`, // New Route
       icon: Edit3,
       description: "Create proactive messages"
     },
     {
-      name: "Autopilot",
+      name: "Nudge Autopilot",
       href: `/autopilot/${business_name}`, // New Route
       icon: CalendarCheck,
       description: "Review scheduled messages"
