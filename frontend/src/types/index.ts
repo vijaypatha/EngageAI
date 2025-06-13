@@ -26,6 +26,31 @@ export interface Customer {
   tags?: Tag[] | null;
 }
 
+// Defines the summary data for a customer, used in lists.
+export interface CustomerSummarySchema {
+  id: number;
+  customer_name: string;
+  phone?: string | null;
+  lifecycle_stage?: string | null;
+  opted_in: boolean;
+  latest_consent_status?: string | null;
+  latest_consent_updated?: string | null;
+  tags: Tag[];
+  business_id: number;
+}
+
+// NEW: Defines the shape of a scheduled message for the Autopilot Plan view.
+export interface AutopilotMessage {
+  id: number;
+  content: string;
+  status: string;
+  scheduled_time: string; // ISO string
+  customer: {
+    id: number;
+    name: string;
+  };
+}
+
 // Represents the raw message object from the API.
 export interface BackendMessage {
   id: string | number;
@@ -38,8 +63,8 @@ export interface BackendMessage {
   customer_id: number;
   is_hidden?: boolean;
   response?: string;
-  ai_response?: string; // The content of a pending AI draft, attached to an inbound message
-  ai_draft_id?: number; // The ID of the engagement for draft actions
+  ai_response?: string;
+  ai_draft_id?: number;
 }
 
 // Represents the raw customer object from the `/review/full-customer-history` endpoint
@@ -71,6 +96,6 @@ export interface TimelineEntry {
   status?: string;
   is_faq_answer?: boolean;
   appended_opt_in_prompt?: boolean;
-  ai_response?: string; // The content of a pending AI draft
-  ai_draft_id?: number; // The ID for draft actions
+  ai_response?: string;
+  ai_draft_id?: number;
 }

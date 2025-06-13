@@ -8,22 +8,16 @@ import {
   Users,
   CalendarCheck,
   MessageSquare,
-  BarChart,
   UserCircle,
   Settings,
-  Zap,            // Icon for Instant Nudge
-  MailCheck,      // Icon for Replies
-  MoreHorizontal, // Icon for "More" on mobile
-  LogIn,
-  LucideSquareStack,
+  MoreHorizontal,
   LayoutDashboard,
-  Lightbulb,
-  BrainCircuit,
-  Sparkles          // Example for Logout, if needed in "More"
+  Sparkles,
+  Edit3 // Icon for Composer
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
-import { useBusinessNavigationProfile } from "@/lib/api"; // Import the SWR hook
+import { useBusinessNavigationProfile } from "@/lib/api";
 
 export function Navigation() {
   const params = useParams();
@@ -35,10 +29,6 @@ export function Navigation() {
   
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
-
-  // Log initial params
-  console.log("Navigation params:", params);
-  console.log("Derived business_name for API:", business_name);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -54,55 +44,45 @@ export function Navigation() {
   const shouldRenderNav = !swrIsLoading && business_name && typeof business_name === 'string' &&
                          !(pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/onboarding"));
 
-  // Log state before rendering decision
-  console.log("Navigation state before render check: swrIsLoading:", swrIsLoading, "businessProfileData:", businessProfileData, "error:", error, "shouldRenderNav:", shouldRenderNav, "pathname:", pathname);
-
   if (error) {
     console.error("Navigation: Error fetching business profile:", error);
-    // Optionally, render an error message or fallback UI
   }
 
   if (!shouldRenderNav) {
-    // You might want a more specific loading indicator here if swrIsLoading is true but other conditions fail
-    if (swrIsLoading && business_name && typeof business_name === 'string' && !(pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/onboarding"))) {
-        console.log("Navigation: Rendering loading spinner for business profile fetch.");
-        // return <div>Loading Business Profile...</div>; // Example loading spinner
-    }
-    console.log("Navigation: shouldRenderNav is false, returning null.");
     return null;
   }
 
-  const representative_name = businessProfileData?.representative_name || "User";
   const display_business_name = businessProfileData?.business_name || "Business";
-  // --- Define Navigation Items (rest of your component remains the same) ---
-  const inputNavItems = [
+  
+  // REFACTORED: Updated navigation items to match the new UI structure.
+  const mainNavItems = [
+    {
+      name: "Inbox",
+      href: `/inbox/${business_name}`,
+      icon: MessageSquare,
+      description: "React to live conversations"
+    },
+    {
+      name: "Composer",
+      href: `/composer/${business_name}`, // New Route
+      icon: Edit3,
+      description: "Create proactive messages"
+    },
+    {
+      name: "Autopilot",
+      href: `/autopilot/${business_name}`, // New Route
+      icon: CalendarCheck,
+      description: "Review scheduled messages"
+    },
     {
       name: "Contacts",
       href: `/contacts/${business_name}`,
       icon: Users,
       description: "Manage your community"
     },
-    {
-      name: "Nudge Plans",
-      href: `/all-engagement-plans/${business_name}`,
-      icon: CalendarCheck,
-      description: "Schedule engagements"
-    },
-    {
-      name: "Instant Nudge",
-      href: `/instant-nudge/${business_name}`,
-      icon: Zap,
-      description: "Send quick messages"
-    }
   ];
 
-  const outputNavItems = [
-    {
-      name: "Inbox",
-      href: `/inbox/${business_name}`,
-      icon: MessageSquare,
-      description: "View conversations"
-    },
+  const secondaryNavItems = [
     {
         name: "Co-Pilot",
         href: `/copilot/${business_name}`,
@@ -134,22 +114,22 @@ export function Navigation() {
       <nav className="fixed left-0 top-0 bottom-0 hidden md:flex flex-col w-64 bg-[#131625] border-r border-gray-700/50 z-[40]">
         <div className="p-6 border-b border-gray-700/30">
           <Link href={`/dashboard/${business_name}`} className="flex items-center space-x-2 group">
-          <Image
-              src="/AI Nudge Logo.png" // Assuming the logo is in frontend/public/
+            <Image
+              src="/AI Nudge Logo.png"
               alt="AI Nudge Logo"
-              width={150} // Adjust width as needed for the sidebar
-              height={30}  // Adjust height as needed, ensure it maintains aspect ratio
+              width={150}
+              height={30}
               priority
             />
           </Link>
         </div>
 
         <div className="flex-1 px-4 pt-4 space-y-6 overflow-y-auto">
+          {/* Main Navigation Section */}
           <div className="space-y-1">
-            <h2 className="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Inputs</h2>
-            {inputNavItems.map((item) => {
+            {mainNavItems.map((item) => {
               const safeHref = item.href || '#';
-              const isActive = pathname === safeHref || (safeHref !== `/contacts/${business_name}` && pathname.startsWith(safeHref + '/'));
+              const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
               return (
                 <Link
                   key={item.name}
@@ -179,9 +159,10 @@ export function Navigation() {
             })}
           </div>
 
+          {/* Secondary Navigation Section */}
           <div className="space-y-1">
-            <h2 className="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Outputs</h2>
-            {outputNavItems.map((item) => {
+            <h2 className="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Analytics</h2>
+            {secondaryNavItems.map((item) => {
                const safeHref = item.href || '#';
                const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
               return (
@@ -230,7 +211,6 @@ export function Navigation() {
               <UserCircle className="w-7 h-7 text-gray-400 group-hover:text-gray-200" />
               <div className="flex flex-col">
                 <span className="font-medium text-sm text-white group-hover:text-emerald-300 transition-colors">
-                  {/* Using the fix suggested previously */}
                   {swrIsLoading ? "Loading..." : (display_business_name)}
                 </span>
               </div>
@@ -241,29 +221,15 @@ export function Navigation() {
         </div>
       </nav>
 
-      {/* Mobile Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-[#131625]/95 backdrop-blur-sm border-t border-gray-700/50 z-[40] ">
+      {/* REFACTORED: Mobile Navigation Bar */}
+      <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-[#131625]/95 backdrop-blur-sm border-t border-gray-700/50 z-[40]">
         <div className="flex justify-around items-stretch h-16">
           {[
-              { name: "Contacts", href: `/contacts/${business_name}`, icon: Users },
-              { name: "Plans", href: `/all-engagement-plans/${business_name}`, icon: CalendarCheck },
-              { name: "Instant", href: `/instant-nudge/${business_name}`, icon: Zap },
               { name: "Inbox", href: `/inbox/${business_name}`, icon: MessageSquare },
+              { name: "Composer", href: `/composer/${business_name}`, icon: Edit3 },
+              { name: "Autopilot", href: `/autopilot/${business_name}`, icon: CalendarCheck },
+              { name: "Contacts", href: `/contacts/${business_name}`, icon: Users },
               { name: "Dashboard", href: `/dashboard/${business_name}`, icon: LayoutDashboard },
-              // {
-              //   name: "LogoToDashboard", // A unique name for the key
-              //   href: `/dashboard/${business_name}`, // Link destination
-              //   icon: () => ( // Render function for the icon
-              //     <Image
-              //       src="/AI Nudge Logo.png"
-              //       alt="AI Nudge Dashboard"
-              //       width={60}  // Adjust for compact mobile view
-              //       height={12} // Adjust for compact mobile view
-              //       className="opacity-90 group-hover:opacity-100" // Example styling
-              //     />
-              //   ),
-              //   isLogo: true // Custom flag to identify this item
-              // },
           ].map((item) => {
             const safeHref = item.href || '#';
             const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
@@ -315,7 +281,7 @@ export function Navigation() {
                   <Image
                     src="/AI Nudge Logo.png"
                     alt="AI Nudge Logo"
-                    width={400} // Adjust as needed for the "More" menu
+                    width={400}
                     height={80}
                   />
                 </Link>
@@ -327,13 +293,8 @@ export function Navigation() {
                 <Link
                   key={item.name}
                   href={item.href || '#'}
-                  onClick={() => {
-                    if ((item as any).onClick) (item as any).onClick();
-                    setShowMobileMenu(false);
-                  }}
-                  className={cn(
-                    "flex items-center p-3 rounded-md transition-colors duration-150 text-gray-300 hover:bg-gray-700/60 hover:text-white group"
-                  )}
+                  onClick={() => setShowMobileMenu(false)}
+                  className={cn("flex items-center p-3 rounded-md transition-colors duration-150 text-gray-300 hover:bg-gray-700/60 hover:text-white group")}
                 >
                   <item.icon className="w-5 h-5 mr-3 text-gray-400 group-hover:text-emerald-400" />
                   <span className="text-sm font-medium">{item.name}</span>
