@@ -24,34 +24,27 @@ const processTimelineEntry = (msg: BackendMessage, customerId: number): Timeline
   let is_faq_answer = false;
   let appended_opt_in_prompt = false;
 
-  switch (msg.type) {
-    case 'outbound':
-    case 'outbound_ai_reply':
-      if (typeof msg.content === 'string') {
+  const rawContent = msg.content || msg.response;
+
+  if (msg.type === 'outbound' || msg.type === 'outbound_ai_reply') {
+      if (typeof rawContent === 'string') {
         try {
-          const parsed = JSON.parse(msg.content);
-          content = parsed.text || msg.content;
+          const parsed = JSON.parse(rawContent);
+          content = parsed.text || rawContent;
           is_faq_answer = !!parsed.is_faq_answer;
           appended_opt_in_prompt = !!parsed.appended_opt_in_prompt;
         } catch (e) {
-          content = msg.content;
+          content = rawContent;
         }
-      } else if (msg.content) {
-        content = String(msg.content);
+      } else if (rawContent) {
+        content = String(rawContent);
       }
-      break;
-
-    case 'ai_draft':
-      content = msg.ai_response || "[No Content]";
-      break;
-
-    default: // Handles 'inbound', 'scheduled', 'failed_to_send', etc.
-      content = msg.content || msg.response || "[No Content]";
-      break;
+  } else {
+    content = rawContent || "[No Content]";
   }
 
   return {
-    id: msg.type === 'ai_draft' ? `eng-ai-${msg.id}` : msg.id,
+    id: msg.id,
     type: msg.type,
     content,
     timestamp: msg.sent_time || msg.scheduled_time || null,
@@ -59,6 +52,8 @@ const processTimelineEntry = (msg: BackendMessage, customerId: number): Timeline
     status: msg.status,
     is_faq_answer,
     appended_opt_in_prompt,
+    ai_response: msg.ai_response,
+    ai_draft_id: msg.ai_draft_id,
   };
 };
 
@@ -113,11 +108,8 @@ export default function InboxPage() {
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  // --- Data Fetching and Processing ---
-
   const fetchFullHistory = useCallback(async (bId: number) => {
     try {
-      // Assuming your API is now updated to return 'inbound'/'outbound' types
       const res = await apiClient.get<RawCustomerSummary[]>(`/review/full-customer-history?business_id=${bId}`);
       setRawSummaries(res.data || []);
       return res.data || [];
@@ -140,12 +132,10 @@ export default function InboxPage() {
     
     const entries = currentCustomer.messages
       .map(msg => processTimelineEntry(msg, currentCustomer.customer_id))
-      .filter((entry): entry is TimelineEntry => entry !== null)
-      .sort((a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime());
+      .filter((entry): entry is TimelineEntry => entry !== null);
+      // No longer need to sort here, as the API provides the correct sort order
     return entries;
   }, [rawSummaries, activeCustomerId]);
-
-  // --- Effects ---
 
   useEffect(() => {
     const initialize = async () => {
@@ -193,8 +183,6 @@ export default function InboxPage() {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [timelineEntries]);
-
-  // --- Handlers ---
   
   const handleSelectCustomer = (customerId: number) => {
     setActiveCustomerId(customerId);
@@ -207,12 +195,12 @@ export default function InboxPage() {
   const handleSendMessage = async (message: string) => {
     if (!activeCustomerId) throw new Error("No active customer selected.");
 
-    const endpoint = selectedDraft
-      ? `/engagement-workflow/reply/${selectedDraft.id.toString().replace('eng-ai-','')}/send`
+    const endpoint = selectedDraft?.ai_draft_id
+      ? `/engagement-workflow/reply/${selectedDraft.ai_draft_id}/send`
       : `/conversations/customer/${activeCustomerId}/send-message`;
     
-    const payload = selectedDraft ? { updated_content: message } : { message };
-    const method = selectedDraft ? 'put' : 'post';
+    const payload = selectedDraft?.ai_draft_id ? { updated_content: message } : { message };
+    const method = selectedDraft?.ai_draft_id ? 'put' : 'post';
 
     try {
       await apiClient[method](endpoint, payload);
@@ -225,14 +213,13 @@ export default function InboxPage() {
     }
   };
 
-  const handleDeleteDraft = async (draftId: string | number) => {
-    const numericId = parseInt(String(draftId).replace('eng-ai-', ''), 10);
-    if (isNaN(numericId) || !window.confirm("Delete this draft?")) return;
+  const handleDeleteDraft = async (draftId: number | undefined) => {
+    if (typeof draftId === 'undefined' || !window.confirm("Delete this draft?")) return;
     
     try {
-      await apiClient.delete(`/engagement-workflow/${numericId}`);
+      await apiClient.delete(`/engagement-workflow/${draftId}`);
       if (businessId) await fetchFullHistory(businessId);
-      if (selectedDraft?.id === draftId) setSelectedDraft(null);
+      setSelectedDraft(null);
     } catch (err: any) {
       alert(`Failed to delete draft: ${err.response?.data?.detail || err.message}`);
     }
@@ -291,7 +278,7 @@ export default function InboxPage() {
               selectedDraftId={selectedDraft?.id || null}
               onSendMessage={handleSendMessage}
               onCancelEdit={() => setSelectedDraft(null)}
-              initialMessage={selectedDraft?.content}
+              initialMessage={selectedDraft?.ai_response}
             />
           </>
         ) : (

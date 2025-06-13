@@ -26,10 +26,11 @@ export interface Customer {
   tags?: Tag[] | null;
 }
 
-// Represents the raw message object from the API, now aligned with backend enums.
+// Represents the raw message object from the API.
+// 'ai_draft' is no longer a type. 'ai_response' is now a field on other messages.
 export interface BackendMessage {
   id: string | number;
-  type: "inbound" | "outbound" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
+  type: "inbound" | "outbound" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
   content: any;
   status?: string;
   scheduled_time?: string | null;
@@ -38,7 +39,8 @@ export interface BackendMessage {
   customer_id: number;
   is_hidden?: boolean;
   response?: string;
-  ai_response?: string;
+  ai_response?: string; // The content of a pending AI draft
+  ai_draft_id?: number; // The ID of the engagement to use for draft actions
 }
 
 // Represents the raw customer object from the `/review/full-customer-history` endpoint
@@ -60,14 +62,16 @@ export interface InboxCustomerSummary extends RawCustomerSummary {
   is_unread: boolean;
 }
 
-// Represents a processed message object for display in the timeline, now aligned.
+// Represents a processed message object for display in the timeline.
 export interface TimelineEntry {
   id: string | number;
-  type: "inbound" | "outbound" | "ai_draft" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
+  type: "inbound" | "outbound" | "scheduled" | "scheduled_pending" | "failed_to_send" | "unknown_business_message" | "outbound_ai_reply";
   content: string;
   timestamp: string | null;
   customer_id: number;
   status?: string;
   is_faq_answer?: boolean;
   appended_opt_in_prompt?: boolean;
+  ai_response?: string; // The content of a pending AI draft
+  ai_draft_id?: number; // The ID for draft actions
 }

@@ -258,83 +258,81 @@ def get_full_customer_history(
 
     for customer in customers:
         logger.debug(f"Processing customer_id: {customer.id}")
-        latest_consent = (
-            db.query(ConsentLog)
-            .filter(ConsentLog.customer_id == customer.id)
-            .order_by(desc(ConsentLog.replied_at))
-            .first()
-        )
-        consent_status = latest_consent.status if latest_consent else "pending"
-        opted_in = consent_status == "opted_in"
+        
+        # --- Data Fetching ---
+        all_messages = db.query(Message).filter(Message.customer_id == customer.id).all()
+        all_engagements = db.query(Engagement).filter(Engagement.customer_id == customer.id).all()
 
+        # --- Data Processing ---
         message_history = []
+        
+        # Create a set of Engagement IDs that resulted in a sent message to prevent duplication
+        sent_engagement_ids = {eng.id for eng in all_engagements if eng.status in ['sent', 'auto_replied_faq']}
 
-        # 1. Get all messages from the Message table (outbound, scheduled, etc.)
-        all_db_messages = db.query(Message).filter(
-            Message.customer_id == customer.id
-        ).all()
+        # Create a map of pending drafts, keyed by their engagement ID
+        draft_map = {eng.id: eng.ai_response for eng in all_engagements if eng.status == 'pending_review' and eng.ai_response}
 
-        for msg in all_db_messages:
+        # 1. Process Engagements to get all INBOUND messages and attach their drafts
+        for eng in all_engagements:
+            if not eng.response:
+                continue
+            
+            inbound_message = {
+                "id": f"eng-cust-{eng.id}",
+                "type": "inbound",
+                "content": eng.response,
+                "status": "received",
+                "sent_time": eng.created_at.isoformat(),
+                "customer_id": eng.customer_id,
+                "timestamp_for_sorting": eng.created_at
+            }
+            
+            # Attach the pending AI draft directly to its parent inbound message
+            if eng.id in draft_map:
+                inbound_message["ai_response"] = draft_map[eng.id]
+                inbound_message["ai_draft_id"] = eng.id # Pass the engagement ID for draft actions
+
+            message_history.append(inbound_message)
+
+        # 2. Process all OUTBOUND and SCHEDULED messages
+        for msg in all_messages:
+            # Skip messages that were replies sent from an engagement, as they are part of the engagement flow
+            # and displaying them separately can cause confusion or visual duplication.
+            # The sent status is visible on the inbound message they replied to.
+            # We only add standalone messages (e.g., proactive scheduled nudges).
+            
+            # A simpler approach for now to ensure everything shows up: add all messages.
+            # The frontend logic will handle display.
+            
             if msg.is_hidden:
                 continue
 
-            # Pass the backend message_type ('outbound', 'scheduled', etc.) directly
             message_history.append({
                 "id": f"msg-{msg.id}",
-                "type": msg.message_type,
+                "type": msg.message_type, # 'outbound', 'outbound_ai_reply', 'scheduled', etc.
                 "content": msg.content,
                 "status": msg.status,
                 "scheduled_time": msg.scheduled_time.isoformat() if msg.scheduled_time else None,
                 "sent_time": msg.sent_at.isoformat() if msg.sent_at else None,
-                "source": msg.message_metadata.get('source') if msg.message_metadata else None,
                 "customer_id": msg.customer_id,
                 "is_hidden": msg.is_hidden,
                 "timestamp_for_sorting": msg.sent_at or msg.scheduled_time or msg.created_at
             })
 
-        # 2. Get all inbound replies and their associated AI drafts from the Engagement table
-        all_engagements = db.query(Engagement).filter(
-            Engagement.customer_id == customer.id
-        ).all()
-        
-        for eng in all_engagements:
-            # Create a record for the customer's inbound message
-            if eng.response:
-                message_history.append({
-                    "id": f"eng-cust-{eng.id}",
-                    "type": "inbound",  # Use 'inbound' for customer replies
-                    "content": eng.response,
-                    "response": eng.response, # Also map to response for frontend compatibility
-                    "status": "received",
-                    "sent_time": eng.created_at.isoformat(), # The time we received the message
-                    "customer_id": eng.customer_id,
-                    "timestamp_for_sorting": eng.created_at
-                })
-            
-            # Create a separate record for the AI draft associated with the reply
-            if eng.ai_response and eng.status != "auto_replied_faq":
-                # auto_replied_faq is already captured in the Message table, so we skip it here to avoid duplicates
-                message_history.append({
-                    "id": f"eng-ai-{eng.id}",
-                    "type": "ai_draft",
-                    "ai_response": eng.ai_response,
-                    "status": eng.status,
-                    "customer_id": eng.customer_id,
-                    "timestamp_for_sorting": eng.created_at
-                })
-
-        # 3. Sort the combined history by a consistent timestamp
+        # 3. Sort the unified list of all messages chronologically
         message_history.sort(
             key=lambda x: x.get("timestamp_for_sorting") or datetime.min.replace(tzinfo=timezone.utc),
             reverse=False
         )
-
+        
+        # Final customer object for the API response
+        latest_consent = db.query(ConsentLog).filter(ConsentLog.customer_id == customer.id).order_by(desc(ConsentLog.replied_at)).first()
         result.append({
             "customer_id": customer.id,
             "customer_name": customer.customer_name,
             "phone": customer.phone,
-            "opted_in": opted_in,
-            "consent_status": consent_status,
+            "opted_in": latest_consent.status == "opted_in" if latest_consent else False,
+            "consent_status": latest_consent.status if latest_consent else "pending",
             "consent_updated": latest_consent.replied_at.isoformat() if latest_consent and latest_consent.replied_at else None,
             "message_count": len(message_history),
             "messages": message_history

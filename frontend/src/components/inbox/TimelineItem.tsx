@@ -1,3 +1,5 @@
+// FILE: frontend/src/components/inbox/TimelineItem.tsx
+
 import React, { memo } from 'react';
 import { Clock, Check, AlertCircle, Trash2, Edit3, CheckCheck } from 'lucide-react';
 import clsx from 'clsx';
@@ -13,23 +15,36 @@ const formatMessageTimestamp = (dateString: string | null | undefined): string =
 interface TimelineItemProps {
   entry: TimelineEntry;
   onEditDraft: (entry: TimelineEntry) => void;
-  onDeleteDraft: (id: string | number) => void;
+  onDeleteDraft: (draftId: number | undefined) => void;
 }
 
+const AiDraft = ({ entry, onEditDraft, onDeleteDraft }: TimelineItemProps) => (
+  <div className="mt-2 p-3 rounded-lg bg-yellow-500 text-black text-sm shadow relative">
+    <p className="font-semibold text-xs mb-1 opacity-80">AI Draft:</p>
+    <p className="whitespace-pre-wrap">{entry.ai_response}</p>
+    <div className="flex gap-2 mt-2 justify-end">
+      <button onClick={() => onEditDraft(entry)} className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors" title="Edit Draft">
+        <Edit3 size={14} />
+      </button>
+      <button onClick={() => onDeleteDraft(entry.ai_draft_id)} className="p-1.5 bg-red-800 hover:bg-red-700 rounded text-white transition-colors" title="Delete Draft">
+        <Trash2 size={14} />
+      </button>
+    </div>
+  </div>
+);
+
 const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDraft }: TimelineItemProps) {
+  const isIncoming = entry.type === "inbound" || entry.type === "unknown_business_message";
+  
   return (
     <div
       data-message-id={entry.id}
       className={clsx(
         "p-3 rounded-lg max-w-[70%] break-words text-sm shadow flex flex-col",
-        // INCOMING (Customer): on the left
-        (entry.type === "inbound" || entry.type === "unknown_business_message") && "self-start mr-auto",
-        // OUTGOING (Business/AI): on the right
-        (entry.type === "outbound" || entry.type === "outbound_ai_reply" || entry.type === "ai_draft" || entry.type === "scheduled" || entry.type === "scheduled_pending" || entry.type === "failed_to_send") && "self-end ml-auto",
+        isIncoming ? "self-start mr-auto" : "self-end ml-auto",
         {
-          "bg-[#2A2F45] text-white": entry.type === "inbound", // Customer message background
-          "bg-blue-600 text-white": entry.type === "outbound" || entry.type === "outbound_ai_reply", // Sent by business/AI
-          "bg-yellow-500 text-black": entry.type === "ai_draft",
+          "bg-[#2A2F45] text-white": isIncoming,
+          "bg-blue-600 text-white": !isIncoming && (entry.type === "outbound" || entry.type === "outbound_ai_reply"),
           "bg-gray-500 text-white": entry.type === "scheduled" || entry.type === "scheduled_pending",
           "bg-red-700 text-white": entry.type === "failed_to_send",
           "bg-purple-600 text-white": entry.type === "unknown_business_message",
@@ -37,6 +52,7 @@ const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDr
       )}
     >
       <p className="whitespace-pre-wrap">{entry.content}</p>
+      
       {entry.timestamp && (
         <span className="text-xs text-gray-300 mt-1 self-end opacity-80">
           {formatMessageTimestamp(entry.timestamp)}
@@ -47,13 +63,13 @@ const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDr
           {entry.type === 'failed_to_send' && <AlertCircle className="inline-block w-3 h-3 ml-1 text-red-300" />}
         </span>
       )}
+
       {entry.is_faq_answer && <p className="text-xs text-blue-300 mt-1 italic self-start">(Auto-reply: FAQ)</p>}
       {entry.appended_opt_in_prompt && <p className="text-xs text-gray-400 mt-1 italic self-start">(Opt-in prompt included)</p>}
-      {entry.type === "ai_draft" && (
-        <div className="flex gap-2 mt-2 self-end">
-          <button onClick={() => onEditDraft(entry)} className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-white transition-colors" title="Edit Draft"><Edit3 size={14} /></button>
-          <button onClick={() => onDeleteDraft(entry.id)} className="p-1.5 bg-red-800 hover:bg-red-700 rounded text-white transition-colors" title="Delete Draft"><Trash2 size={14} /></button>
-        </div>
+      
+      {/* Conditionally render the attached AI draft for inbound messages */}
+      {entry.type === 'inbound' && entry.ai_response && (
+        <AiDraft entry={entry} onEditDraft={onEditDraft} onDeleteDraft={onDeleteDraft} />
       )}
     </div>
   );
