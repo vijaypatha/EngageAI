@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, case, text, literal_column
-from app.models import Customer, Message, ConsentLog, OptInStatus
+from app.models import Customer, Message, ConsentLog, OptInStatus, MessageTypeEnum # Import MessageTypeEnum
 from app.schemas import InboxCustomerSummary
 from typing import List, Tuple, Optional, Dict, Any
 from datetime import datetime
@@ -14,12 +14,10 @@ def get_paginated_inbox_summaries(
     """
     Fetches paginated inbox summaries for a given business.
     Each summary includes customer details, last message content and timestamp,
-    and a count of unread messages (currently placeholder).
+    and a count of unread messages.
     """
 
-    # Subquery to get the latest message ID for each customer conversation
-    # This assumes 'Message' table stores all communications (sent, received, AI, etc.)
-    # and 'sent_at' is the definitive timestamp for ordering.
+    # Subquery to get the latest message ID and timestamp for each customer conversation
     latest_message_subquery = (
         db.query(
             Message.customer_id,
@@ -32,12 +30,11 @@ def get_paginated_inbox_summaries(
     )
 
     # Subquery to get the actual content of the latest message using the timestamp from above
-    # (or ID if timestamps are not unique enough, but sent_at should be good for latest)
     actual_latest_message_subquery = (
         db.query(
             Message.customer_id,
             Message.content.label("last_message_content"),
-            Message.sent_at.label("last_message_timestamp_val") # To join on exact timestamp
+            Message.sent_at.label("last_message_timestamp_val")
         )
         .join(
             latest_message_subquery,
@@ -46,10 +43,7 @@ def get_paginated_inbox_summaries(
         )
         .filter(Message.business_id == business_id)
         .filter(Message.is_hidden == False)
-         # If multiple messages can have the exact same latest timestamp for a customer,
-         # we might need to add another ordering and limit(1) here, e.g., order by Message.id.desc()
-         # However, func.max on sent_at in the first subquery should give one definitive time.
-        .distinct(Message.customer_id) # Ensure one message per customer if multiple share the exact latest timestamp
+        .distinct(Message.customer_id)
         .subquery("actual_latest_messages")
     )
 
@@ -68,7 +62,7 @@ def get_paginated_inbox_summaries(
         db.query(
             ConsentLog.customer_id,
             ConsentLog.status.label("consent_status_val"),
-            (ConsentLog.status == OptInStatus.OPTED_IN).label("opted_in_val")
+            (ConsentLog.status == OptInStatus.OPTED_IN.value).label("opted_in_val") # Use .value for comparison
         )
         .join(
             latest_consent_subquery,
@@ -76,9 +70,29 @@ def get_paginated_inbox_summaries(
             (ConsentLog.created_at == latest_consent_subquery.c.latest_consent_created_at)
         )
         .filter(ConsentLog.business_id == business_id)
-        .distinct(ConsentLog.customer_id) # Ensure one consent status per customer
+        .distinct(ConsentLog.customer_id)
         .subquery("actual_latest_consents")
     )
+
+    # Subquery to calculate unread message count
+    # Count inbound messages where sent_at is after customer.last_read_at
+    unread_count_subquery = (
+        db.query(
+            Message.customer_id,
+            func.count(Message.id).label("unread_messages")
+        )
+        .join(Customer, Message.customer_id == Customer.id)
+        .filter(
+            Message.business_id == business_id,
+            Message.message_type == MessageTypeEnum.INBOUND.value, # Only count inbound as unread
+            Message.is_hidden == False,
+            # Only count if message was sent after customer's last_read_at (or if last_read_at is NULL, all are unread)
+            (Message.sent_at > Customer.last_read_at) | (Customer.last_read_at.is_(None))
+        )
+        .group_by(Message.customer_id)
+        .subquery("unread_message_counts")
+    )
+
 
     # Main query to fetch customers and join with the latest message and consent data
     query = (
@@ -90,26 +104,25 @@ def get_paginated_inbox_summaries(
             actual_latest_consent_subquery.c.consent_status_val.label("consent_status"),
             actual_latest_message_subquery.c.last_message_content,
             actual_latest_message_subquery.c.last_message_timestamp_val.label("last_message_timestamp"),
-            literal_column("0").label("unread_message_count"), # Placeholder for unread_message_count
+            unread_count_subquery.c.unread_messages.label("unread_message_count"), # Use calculated unread count
             Customer.business_id
         )
-        .join(Customer, Customer.business_id == business_id) # Start with Customer table, filter by business_id
+        .filter(Customer.business_id == business_id) # Start with Customer table, filter by business_id
         .outerjoin( # Use outerjoin in case a customer has no messages
             actual_latest_message_subquery,
             Customer.id == actual_latest_message_subquery.c.customer_id
         )
-        .outerjoin( # Use outerjoin in case a customer has no consent logs (though unlikely for active customers)
+        .outerjoin( # Use outerjoin in case a customer has no consent logs
             actual_latest_consent_subquery,
             Customer.id == actual_latest_consent_subquery.c.customer_id
         )
-        .filter(Customer.business_id == business_id) # Ensure we only get customers for this business
+        .outerjoin( # Outer join with unread count subquery
+            unread_count_subquery,
+            Customer.id == unread_count_subquery.c.customer_id
+        )
     )
 
-    # Get total count before pagination for the response
-    total_count_query = query.with_entities(func.count(Customer.id).label("total_customers"))
-    # The join condition for total_count_query needs to be on Customer.id if that's the distinct entity we're counting
-    # However, the main query joins Customer with other subqueries.
-    # A simpler way for total customers of a business:
+    # Get total count before pagination
     total_customers_for_business = db.query(func.count(Customer.id)).filter(Customer.business_id == business_id).scalar()
 
     if total_customers_for_business is None:
@@ -117,7 +130,9 @@ def get_paginated_inbox_summaries(
 
     # Apply ordering: customers with more recent messages first, then by customer ID
     # Coalesce last_message_timestamp to a very old date for customers with no messages to sort them last.
+    # Order by unread count (descending) first, then by last message timestamp (descending)
     query = query.order_by(
+        desc(func.coalesce(unread_count_subquery.c.unread_messages, 0)), # Unread messages first
         desc(func.coalesce(actual_latest_message_subquery.c.last_message_timestamp_val, datetime.min)),
         Customer.id
     )
@@ -127,20 +142,22 @@ def get_paginated_inbox_summaries(
     paginated_results = query.offset(offset).limit(size).all()
 
     # Convert results to the Pydantic schema
-    # The results are SQLAlchemy Row objects, access items by label or index
-    summaries = [
-        InboxCustomerSummary(
+    summaries = []
+    for row in paginated_results:
+        summary = InboxCustomerSummary(
             customer_id=row.customer_id,
             customer_name=row.customer_name,
             phone=row.phone,
-            opted_in=row.opted_in if row.opted_in is not None else False, # Default if no consent log
-            consent_status=row.consent_status if row.consent_status else OptInStatus.UNKNOWN.value, # Default
+            # If no consent log, default opted_in to False and consent_status to NOT_SET or PENDING
+            opted_in=row.opted_in if row.opted_in is not None else False,
+            consent_status=row.consent_status if row.consent_status else OptInStatus.NOT_SET.value, # Default if no consent log
             last_message_content=row.last_message_content,
             last_message_timestamp=row.last_message_timestamp,
-            unread_message_count=row.unread_message_count, # Will be 0 due to placeholder
+            unread_message_count=row.unread_message_count if row.unread_message_count is not None else 0, # Default to 0 if NULL
             business_id=row.business_id,
+            # is_unread will now be derived from unread_message_count on the frontend if needed
+            is_unread=row.unread_message_count > 0 if row.unread_message_count is not None else False, # Explicitly set for backward comp.
         )
-        for row in paginated_results
-    ]
+        summaries.append(summary)
 
     return summaries, total_customers_for_business

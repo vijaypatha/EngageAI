@@ -52,6 +52,9 @@ class TagRead(TagBase):
     id: int
     class Config: from_attributes = True
 
+class TagAssociationRequest(BaseModel):
+    tag_ids: List[int] = Field(..., description="List of Tag IDs to associate with the customer.")
+
 class TimezoneInfo(BaseModel):
     timezone: str
     display_name: str
@@ -170,6 +173,11 @@ class Customer(CustomerBase):
     latest_consent_updated: Optional[datetime] = None
     tags: List[TagRead] = Field(default_factory=list)
     class Config: from_attributes = True
+
+class CustomerFindOrCreate(BaseModel):
+    phone_number: str
+    business_id: int
+    _normalize_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
 
 # --- SMS Schemas (Could use MessageStatusEnum if desired) ---

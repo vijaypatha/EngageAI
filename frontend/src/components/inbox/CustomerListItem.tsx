@@ -1,9 +1,12 @@
+// frontend/src/components/inbox/CustomerListItem.tsx
+
 import React, { memo } from 'react';
 import clsx from 'clsx';
 import { format, isValid, parseISO } from 'date-fns';
 import { InboxCustomerSummary } from '@/types';
+import { Circle } from 'lucide-react'; // Added Circle icon
 
-const formatDate = (dateString: string | undefined): string => {
+const formatDate = (dateString: string | null | undefined): string => { // Changed type to allow null
   if (!dateString) return "";
   const date = parseISO(dateString);
   if (!isValid(date)) return "";
@@ -20,6 +23,8 @@ interface CustomerListItemProps {
 }
 
 const CustomerListItem = memo(function CustomerListItem({ summary, isActive, onClick }: CustomerListItemProps) {
+  const isUnread = summary.unread_message_count > 0; // Derive isUnread from count
+  
   return (
     <button
       onClick={() => onClick(summary.customer_id)}
@@ -29,15 +34,22 @@ const CustomerListItem = memo(function CustomerListItem({ summary, isActive, onC
       )}
     >
       <div className="flex justify-between items-center">
-        <h3 className={clsx("text-sm text-white truncate", summary.is_unread && !isActive ? "font-semibold" : "font-medium")}>
+        <h3 className={clsx("text-sm text-white truncate", isUnread && !isActive ? "font-semibold" : "font-medium")}>
           {summary.customer_name || "Unknown Customer"}
         </h3>
-        <span className={clsx("text-xs whitespace-nowrap ml-2", summary.is_unread && !isActive ? "text-blue-400" : "text-gray-400")}>
-          {formatDate(summary.last_message_timestamp)}
-        </span>
+        <div className="flex items-center"> {/* Wrap date and unread indicator */}
+          <span className={clsx("text-xs whitespace-nowrap", isUnread && !isActive ? "text-blue-400" : "text-gray-400")}>
+            {formatDate(summary.last_message_timestamp)}
+          </span>
+          {isUnread && !isActive && ( // Conditionally render unread indicator
+            <span className="ml-2 flex items-center justify-center bg-blue-500 text-white rounded-full text-xs font-bold w-5 h-5">
+              {summary.unread_message_count}
+            </span>
+          )}
+        </div>
       </div>
-      <p className={clsx("text-xs truncate mt-1", summary.is_unread && !isActive ? "text-gray-200" : "text-gray-400")}>
-        {summary.last_message_preview}
+      <p className={clsx("text-xs truncate mt-1", isUnread && !isActive ? "text-gray-200" : "text-gray-400")}>
+        {summary.last_message_content || "No recent messages."} {/* Use last_message_content */}
       </p>
     </button>
   );

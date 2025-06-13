@@ -1,7 +1,7 @@
 // FILE: frontend/src/components/inbox/TimelineItem.tsx
 
 import React, { memo } from 'react';
-import { Clock, Check, AlertCircle, Trash2, Edit3, CheckCheck } from 'lucide-react';
+import { Clock, Check, AlertCircle, Trash2, Edit3, CheckCheck, Star } from 'lucide-react'; // Added Star icon
 import clsx from 'clsx';
 import { format, isValid, parseISO } from 'date-fns';
 import { TimelineEntry } from '@/types';
@@ -16,10 +16,17 @@ interface TimelineItemProps {
   entry: TimelineEntry;
   onEditDraft: (entry: TimelineEntry) => void;
   onDeleteDraft: (draftId: number | undefined) => void;
+  onActionClick: (nudgeId: number, actionType: string) => void; // NEW: Added onActionClick prop
+}
+
+interface AiDraftProps {
+  entry: TimelineEntry;
+  onEditDraft: (entry: TimelineEntry) => void;
+  onDeleteDraft: (draftId: number | undefined) => void;
 }
 
 // A new sub-component to render the AI Draft cleanly
-const AiDraft = ({ entry, onEditDraft, onDeleteDraft }: TimelineItemProps) => (
+const AiDraft = ({ entry, onEditDraft, onDeleteDraft }: AiDraftProps) => (
   <div className="mt-2 p-3 rounded-lg bg-yellow-500 text-black text-sm shadow relative border border-yellow-600">
     <p className="font-semibold text-xs mb-1 opacity-80">AI Draft:</p>
     <p className="whitespace-pre-wrap">{entry.ai_response}</p>
@@ -34,7 +41,7 @@ const AiDraft = ({ entry, onEditDraft, onDeleteDraft }: TimelineItemProps) => (
   </div>
 );
 
-const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDraft }: TimelineItemProps) {
+const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDraft, onActionClick }: TimelineItemProps) {
   const isIncoming = entry.type === "inbound";
   
   return (
@@ -69,8 +76,23 @@ const TimelineItem = memo(function TimelineItem({ entry, onEditDraft, onDeleteDr
       {entry.appended_opt_in_prompt && <p className="text-xs text-gray-400 mt-1 italic self-start">(Opt-in prompt included)</p>}
       
       {/* Conditionally render the attached AI draft for inbound messages */}
-      {entry.type === 'inbound' && entry.ai_response && (
+      {isIncoming && entry.ai_response && (
         <AiDraft entry={entry} onEditDraft={onEditDraft} onDeleteDraft={onDeleteDraft} />
+      )}
+
+      {/* NEW: Contextual Action Button */}
+      {isIncoming && entry.contextual_action && entry.contextual_action.type === "REQUEST_REVIEW" && (
+        <div className="mt-2 p-2 rounded-lg bg-emerald-500 text-white text-sm shadow relative border border-emerald-600 flex items-center justify-between">
+          <p className="font-semibold text-xs mr-2">AI Suggestion:</p>
+          <p className="flex-1">{entry.contextual_action.ai_suggestion}</p>
+          <button
+            onClick={() => onActionClick(entry.contextual_action!.nudge_id, "REQUEST_REVIEW")}
+            className="ml-3 p-1.5 bg-emerald-700 hover:bg-emerald-800 rounded text-white flex items-center transition-colors"
+            title="Request Review"
+          >
+            <Star size={14} className="mr-1" /> Request Review
+          </button>
+        </div>
       )}
     </div>
   );

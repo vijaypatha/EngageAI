@@ -142,3 +142,9 @@ async def custom_http_exception_logger_handler(request: Request, exc: HTTPExcept
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error(f"[Unhandled Exception] Path: {request.method} {request.url.path} - Exception: {str(exc)}", exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "An internal server error occurred."})
+
+# 🛣️ Log active routes for debugging
+logger.info(f"🟢 TWILIO_DEFAULT_MESSAGING_SERVICE_SID: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
+for route in app.routes:
+    if isinstance(route, APIRoute):
+        logger.info(f"🔵  Active route: {route.path} [{','.join(route.methods)}]")

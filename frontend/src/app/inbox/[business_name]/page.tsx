@@ -1,92 +1,54 @@
-// FILE: frontend/app/inbox/[business_name]/page.tsx
+// frontend/src/app/inbox/[business_name]/page.tsx
+// This implements the full Nudge Inbox experience, including the new "Frictionless Contact" flow.
+// ----------------------------------------------------------------------
 
 "use client";
 
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
-import { MessageSquare, AlertCircle, MessageCircle } from "lucide-react";
+import { MessageSquare, AlertCircle, MessageCircle, UserPlus, Circle } from "lucide-react";
 import clsx from "clsx";
 import { parseISO } from 'date-fns';
 
-import { InboxCustomerSummary, RawCustomerSummary, BackendMessage, TimelineEntry } from "@/types";
+import { InboxCustomerSummary, RawCustomerSummary, BackendMessage, TimelineEntry, PaginatedInboxSummariesResponse } from "@/types";
 import { InboxSkeleton } from "@/components/inbox/InboxSkeleton";
 import CustomerListItem from "@/components/inbox/CustomerListItem";
 import TimelineItem from "@/components/inbox/TimelineItem";
 import MessageBox from "@/components/inbox/MessageBox";
+import NewContactPane from "@/components/inbox/NewContactPane";
 
-// --- Helper Functions for Data Transformation ---
-
-const processTimelineEntry = (msg: BackendMessage, customerId: number): TimelineEntry | null => {
+const processTimelineEntry = (msg: BackendMessage): TimelineEntry | null => {
   if (!msg.type || typeof msg.id === 'undefined') return null;
-
   let content: string = "[No Content]";
-  let is_faq_answer = false;
-  let appended_opt_in_prompt = false;
+  let is_faq_answer: boolean = false;
+  let appended_opt_in_prompt: boolean = false;
 
-  const rawContent = msg.content || msg.response;
-
-  if (msg.type === 'outbound' || msg.type === 'outbound_ai_reply') {
-      if (typeof rawContent === 'string') {
-        try {
-          const parsed = JSON.parse(rawContent);
-          content = parsed.text || rawContent;
-          is_faq_answer = !!parsed.is_faq_answer;
-          appended_opt_in_prompt = !!parsed.appended_opt_in_prompt;
-        } catch (e) {
-          content = rawContent;
-        }
-      } else if (rawContent) {
-        content = String(rawContent);
+  try {
+    if (typeof msg.content === 'string') {
+      const parsed = JSON.parse(msg.content);
+      if (typeof parsed === 'object' && parsed !== null && 'text' in parsed) {
+        content = parsed.text || msg.content;
+        is_faq_answer = parsed.is_faq_answer || false;
+        appended_opt_in_prompt = parsed.appended_opt_in_prompt || false;
+      } else {
+        content = msg.content;
       }
-  } else {
-    content = rawContent || "[No Content]";
+    } else {
+      content = msg.content || "[No Content]";
+    }
+  } catch (e) {
+    // If JSON parsing fails, use content as is.
+    content = msg.content || "[No Content]";
   }
 
   return {
-    id: msg.id,
-    type: msg.type,
+    ...msg,
     content,
     timestamp: msg.sent_time || msg.scheduled_time || null,
-    customer_id: customerId,
-    status: msg.status,
-    is_faq_answer,
-    appended_opt_in_prompt,
-    ai_response: msg.ai_response,
-    ai_draft_id: msg.ai_draft_id,
-  };
-};
-
-const processCustomerSummary = (cs: RawCustomerSummary, lastSeenMap: Record<number, string>): InboxCustomerSummary => {
-  const validMessages = (Array.isArray(cs.messages) ? cs.messages : [])
-    .filter(m => ['inbound', 'outbound', 'outbound_ai_reply'].includes(m.type) && !m.is_hidden)
-    .sort((a, b) => new Date(b.sent_time || b.scheduled_time || 0).getTime() - new Date(a.sent_time || a.scheduled_time || 0).getTime());
-  
-  const lastMsg = validMessages[0] || null;
-  
-  let previewContent = "[No recent messages]";
-  if (lastMsg?.content) {
-    try {
-      if (typeof lastMsg.content === 'string') {
-        const parsed = JSON.parse(lastMsg.content);
-        previewContent = parsed.text || lastMsg.content;
-      } else {
-        previewContent = (lastMsg.content as any).text || JSON.stringify(lastMsg.content);
-      }
-    } catch { previewContent = lastMsg.content; }
-  } else if (lastMsg?.response) {
-    previewContent = lastMsg.response;
-  }
-  
-  const last_message_timestamp = lastMsg?.sent_time || lastMsg?.scheduled_time || cs.consent_updated || "1970-01-01T00:00:00.000Z";
-  const lastSeenDate = lastSeenMap[cs.customer_id] ? parseISO(lastSeenMap[cs.customer_id]) : null;
-  const is_unread = lastSeenDate ? parseISO(last_message_timestamp).getTime() > lastSeenDate.getTime() : true;
-
-  return {
-    ...cs,
-    last_message_preview: previewContent.slice(0, 40) + (previewContent.length > 40 ? "..." : ""),
-    last_message_timestamp,
-    is_unread
+    is_faq_answer: is_faq_answer,
+    appended_opt_in_prompt: appended_opt_in_prompt,
+    contextual_action: msg.contextual_action
   };
 };
 
@@ -95,69 +57,85 @@ export default function InboxPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const [rawSummaries, setRawSummaries] = useState<RawCustomerSummary[]>([]);
+  const [customerSummaries, setCustomerSummaries] = useState<InboxCustomerSummary[]>([]);
   const [activeCustomerId, setActiveCustomerId] = useState<number | null>(null);
   const [businessId, setBusinessId] = useState<number | null>(null);
   const [selectedDraft, setSelectedDraft] = useState<TimelineEntry | null>(null);
-  
+  const [isNewMessageMode, setIsNewMessageMode] = useState(false);
+  const [newlyCreatedCustomerId, setNewlyCreatedCustomerId] = useState<number | null>(null);
+  const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([]);
+  const [activeCustomerDetailsForTimeline, setActiveCustomerDetailsForTimeline] = useState<RawCustomerSummary | null>(null);
+
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  const [lastSeenMap, setLastSeenMap] = useState<Record<number, string>>({});
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
-
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  const fetchFullHistory = useCallback(async (bId: number) => {
+  const fetchInboxSummaries = useCallback(async (bId: number, page: number = 1, size: number = 20) => {
     try {
-      const res = await apiClient.get<RawCustomerSummary[]>(`/review/full-customer-history?business_id=${bId}`);
-      setRawSummaries(res.data || []);
-      return res.data || [];
+      const res = await apiClient.get<PaginatedInboxSummariesResponse>(`/review/inbox/summaries?business_id=${bId}&page=${page}&size=${size}`);
+      setCustomerSummaries(res.data.items || []);
+      return res.data.items || [];
     } catch (error) {
-      console.error("Failed to fetch customer summaries:", error);
-      setFetchError("Failed to load conversation history.");
+      console.error("Failed to fetch inbox summaries:", error);
+      setFetchError("Failed to load conversation list.");
       throw error;
     }
   }, []);
 
-  const customerSummaries = useMemo<InboxCustomerSummary[]>(() => {
-    // REFACTOR: Removed client-side sort. The API now provides pre-sorted data.
-    return rawSummaries.map(cs => processCustomerSummary(cs, lastSeenMap));
-  }, [rawSummaries, lastSeenMap]);
+  const fetchActiveCustomerHistory = useCallback(async (bId: number, custId: number) => {
+    try {
+      const res = await apiClient.get<RawCustomerSummary[]>(`/review/full-customer-history?business_id=${bId}`);
+      const activeCustSummary = res.data.find(cs => cs.customer_id === custId);
+      if (activeCustSummary) {
+        setActiveCustomerDetailsForTimeline(activeCustSummary);
+        setTimelineEntries(activeCustSummary.messages
+          .map(msg => processTimelineEntry(msg))
+          .filter((entry): entry is TimelineEntry => entry !== null)
+        );
+      } else {
+        setActiveCustomerDetailsForTimeline(null);
+        setTimelineEntries([]);
+      }
+    } catch (error) {
+      console.error(`Failed to fetch history for customer ${custId}:`, error);
+      setFetchError("Failed to load conversation history for selected customer.");
+      throw error;
+    }
+  }, []);
 
-  const timelineEntries = useMemo<TimelineEntry[]>(() => {
-    const currentCustomer = rawSummaries.find(cs => cs.customer_id === activeCustomerId);
-    if (!currentCustomer || !currentCustomer.messages) return [];
-    
-    // The API now provides a perfectly sorted list, so we just process it.
-    const entries = currentCustomer.messages
-      .map(msg => processTimelineEntry(msg, currentCustomer.customer_id))
-      .filter((entry): entry is TimelineEntry => entry !== null);
-    return entries;
-  }, [rawSummaries, activeCustomerId]);
+  const activeCustomerHeaderDetails = useMemo(() => {
+    return customerSummaries.find(cs => cs.customer_id === activeCustomerId);
+  }, [customerSummaries, activeCustomerId]);
+
 
   useEffect(() => {
     const initialize = async () => {
-      if (!business_name) {
-        setFetchError("Business identifier is missing.");
-        setIsLoading(false);
-        return;
-      }
+      setIsLoading(true);
       try {
         const bizRes = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
         const id = bizRes.data?.business_id;
-        if (!id) {
-          setFetchError("Failed to retrieve business ID.");
-          setIsLoading(false);
-          return;
-        }
+        if (!id) throw new Error("Failed to retrieve business ID.");
+        
         setBusinessId(id);
-        const summaries = await fetchFullHistory(id);
+        
+        const summaries = await fetchInboxSummaries(id); 
+
         const urlCustomerIdStr = searchParams.get('activeCustomer');
-        if (urlCustomerIdStr) {
+        const urlNewMessage = searchParams.get('new');
+        
+        if (urlNewMessage) {
+          setIsNewMessageMode(true);
+          setActiveCustomerId(null);
+        } else if (urlCustomerIdStr) {
           const urlCustomerId = parseInt(urlCustomerIdStr, 10);
           if (summaries.some(cs => cs.customer_id === urlCustomerId)) {
             setActiveCustomerId(urlCustomerId);
+            setIsNewMessageMode(false);
+            await fetchActiveCustomerHistory(id, urlCustomerId); 
+            await apiClient.put(`/customers/${urlCustomerId}/mark-as-read`);
+            await fetchInboxSummaries(id); 
           }
         }
       } catch (error: any) {
@@ -166,16 +144,8 @@ export default function InboxPage() {
         setIsLoading(false);
       }
     };
-    initialize();
-  }, [business_name, fetchFullHistory, searchParams]);
-
-  useEffect(() => {
-    if (!businessId) return;
-    const intervalId = setInterval(() => {
-      if (document.visibilityState === 'visible') fetchFullHistory(businessId);
-    }, 30000);
-    return () => clearInterval(intervalId);
-  }, [businessId, fetchFullHistory]);
+    if (business_name) initialize();
+  }, [business_name, fetchInboxSummaries, fetchActiveCustomerHistory, searchParams]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -183,42 +153,99 @@ export default function InboxPage() {
     }
   }, [timelineEntries]);
   
-  const handleSelectCustomer = (customerId: number) => {
+  const handleSelectCustomer = async (customerId: number) => {
+    setIsNewMessageMode(false);
     setActiveCustomerId(customerId);
+    setNewlyCreatedCustomerId(null); 
     setShowMobileDrawer(false);
     setSelectedDraft(null);
-    setLastSeenMap(prev => ({ ...prev, [customerId]: new Date().toISOString() }));
     router.push(`/inbox/${business_name}?activeCustomer=${customerId}`, { scroll: false });
+    
+    if (businessId) {
+        await fetchActiveCustomerHistory(businessId, customerId);
+        await apiClient.put(`/customers/${customerId}/mark-as-read`);
+        await fetchInboxSummaries(businessId); 
+    }
+  };
+
+  const handleNewMessageClick = () => {
+    setIsNewMessageMode(true);
+    setActiveCustomerId(null);
+    setSelectedDraft(null);
+    setNewlyCreatedCustomerId(null); 
+    setShowMobileDrawer(false);
+    router.push(`/inbox/${business_name}?new=true`, { scroll: false });
+    setTimelineEntries([]);
+    setActiveCustomerDetailsForTimeline(null);
   };
   
-  const handleSendMessage = async (message: string) => {
-    if (!activeCustomerId) throw new Error("No active customer selected.");
-
-    const endpoint = selectedDraft?.ai_draft_id
-      ? `/engagement-workflow/reply/${selectedDraft.ai_draft_id}/send`
-      : `/conversations/customer/${activeCustomerId}/send-message`;
+  const handleSendMessage = async (message: string, recipientPhone?: string) => {
+    if (!businessId) return;
     
-    const payload = selectedDraft?.ai_draft_id ? { updated_content: message } : { message };
-    const method = selectedDraft?.ai_draft_id ? 'put' : 'post';
+    if (isNewMessageMode) {
+      if (!recipientPhone) throw new Error("Recipient phone number is required.");
+      try {
+        const res = await apiClient.post(`/customers/find-or-create-by-phone`, { phone_number: recipientPhone, business_id: businessId });
+        const customerId = res.data.id;
+        
+        await apiClient.post(`/conversations/customer/${customerId}/send-message`, { message });
+        
+        setNewlyCreatedCustomerId(customerId); 
+        setIsNewMessageMode(false);
+        setActiveCustomerId(customerId);
+        await fetchInboxSummaries(businessId);
+        await fetchActiveCustomerHistory(businessId, customerId);
+        router.push(`/inbox/${business_name}?activeCustomer=${customerId}`, { scroll: false });
+      } catch (err) {
+        console.error("Failed to create contact and send message", err);
+        throw err;
+      }
+    } else {
+      if (!activeCustomerId) throw new Error("No active customer selected.");
+      const endpoint = selectedDraft?.ai_draft_id
+        ? `/engagement-workflow/reply/${selectedDraft.ai_draft_id}/send`
+        : `/conversations/customer/${activeCustomerId}/send-message`;
+      const payload = selectedDraft?.ai_draft_id ? { updated_content: message } : { message };
+      const method = selectedDraft?.ai_draft_id ? 'put' : 'post';
 
-    try {
-      await apiClient[method](endpoint, payload);
-      if (businessId) await fetchFullHistory(businessId);
-      setSelectedDraft(null);
-    } catch (err: any) {
-      console.error("Failed to send message", err);
-      if (businessId) await fetchFullHistory(businessId);
-      throw err;
+      try {
+        await apiClient[method](endpoint, payload);
+        await fetchInboxSummaries(businessId);
+        await fetchActiveCustomerHistory(businessId, activeCustomerId);
+        setSelectedDraft(null);
+      } catch (err) {
+        console.error("Failed to send message", err);
+        await fetchInboxSummaries(businessId);
+        await fetchActiveCustomerHistory(businessId, activeCustomerId);
+        throw err;
+      }
+    }
+  };
+
+  const handleActionClick = async (nudgeId: number, actionType: string) => {
+    if (!businessId) return;
+
+    if (actionType === "REQUEST_REVIEW") {
+      if (!window.confirm("Send a review request SMS to this customer?")) return;
+      try {
+        await apiClient.post(`/ai-nudge-copilot/nudges/${nudgeId}/sentiment-action`, { action_type: "REQUEST_REVIEW" });
+        alert("Review request sent!");
+        await fetchInboxSummaries(businessId);
+        await fetchActiveCustomerHistory(businessId, activeCustomerId!);
+      } catch (err: any) {
+        alert(`Failed to send review request: ${err.response?.data?.detail || err.message}`);
+      }
+    } else {
+      alert(`Unsupported action: ${actionType}`);
     }
   };
 
   const handleDeleteDraft = async (draftId: number | undefined) => {
-    if (typeof draftId === 'undefined' || !window.confirm("Delete this draft?")) return;
-    
+    if (!businessId || typeof draftId === 'undefined' || !window.confirm("Delete this draft?")) return;
     try {
-      // The endpoint uses the engagement ID, which is ai_draft_id
       await apiClient.delete(`/engagement-workflow/${draftId}`);
-      if (businessId) await fetchFullHistory(businessId);
+      await fetchInboxSummaries(businessId);
+      await fetchActiveCustomerHistory(businessId, activeCustomerId!);
       setSelectedDraft(null);
     } catch (err: any) {
       alert(`Failed to delete draft: ${err.response?.data?.detail || err.message}`);
@@ -226,7 +253,6 @@ export default function InboxPage() {
   };
 
   if (isLoading) return <InboxSkeleton />;
-
   if (fetchError) return (
     <div className="h-screen flex flex-col items-center justify-center bg-[#0B0E1C] text-red-400 p-4 text-center">
       <AlertCircle className="w-12 h-12 mb-3 text-red-500" />
@@ -235,55 +261,74 @@ export default function InboxPage() {
     </div>
   );
   
-  const activeCustomerDetails = customerSummaries.find(cs => cs.customer_id === activeCustomerId);
-
   return (
     <div className="h-screen flex md:flex-row flex-col bg-[#0B0E1C]">
       <div className="md:hidden flex items-center justify-between p-4 bg-[#1A1D2D] border-b border-[#2A2F45] shrink-0">
-        <h1 className="text-xl font-semibold text-white">Inbox</h1>
+        <h1 className="text-xl font-semibold text-white">Nudge Inbox</h1>
         <button onClick={() => setShowMobileDrawer(true)} className="p-2" aria-label="Open contact list"><MessageSquare className="w-5 h-5 text-white" /></button>
       </div>
 
-      <aside className={clsx("w-full md:w-80 bg-[#1A1D2D] border-r border-[#2A2F45] md:relative fixed inset-0 z-30 flex flex-col h-full overflow-y-auto transition-transform", showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0")}>
+      <aside className={clsx("w-full md:w-80 lg:w-96 bg-[#1A1D2D] border-r border-[#2A2F45] md:relative fixed inset-0 z-30 flex flex-col h-full overflow-y-auto transition-transform", showMobileDrawer ? "translate-x-0" : "-translate-x-full md:translate-x-0")}>
         <div className="flex justify-between items-center p-4 border-b border-[#2A2F45] shrink-0">
-          <h2 className="text-xl font-semibold text-white">Inbox</h2>
+          <h2 className="text-xl font-semibold text-white">Nudge Inbox</h2>
+          <button onClick={handleNewMessageClick} className="p-2 rounded-md hover:bg-slate-700 transition-colors" title="New Message">
+            <UserPlus className="w-5 h-5 text-white" />
+          </button>
           {showMobileDrawer && <button onClick={() => setShowMobileDrawer(false)} className="p-2" aria-label="Close contact list">✕</button>}
         </div>
         <div className="flex-1 overflow-y-auto">
           {customerSummaries.length > 0 ? customerSummaries.map((cs) => (
-            <CustomerListItem key={cs.customer_id} summary={cs} isActive={cs.customer_id === activeCustomerId} onClick={handleSelectCustomer} />
+            <CustomerListItem key={cs.customer_id} summary={cs} isActive={cs.customer_id === activeCustomerId && !isNewMessageMode} onClick={handleSelectCustomer} />
           )) : <p className="p-4 text-gray-400 text-center">No conversations yet.</p>}
         </div>
       </aside>
 
       <main className="flex-1 flex flex-col bg-[#0F1221] h-full">
-        {activeCustomerDetails ? (
+        {activeCustomerHeaderDetails ? (
           <>
-            <div className="p-4 bg-[#1A1D2D] border-b border-[#2A2F45] shrink-0">
-              <h3 className="text-lg font-semibold text-white">{activeCustomerDetails.customer_name}</h3>
-              <p className="text-xs text-gray-400">{activeCustomerDetails.phone} - 
-                <span className={clsx("ml-1", activeCustomerDetails.opted_in ? "text-green-400" : "text-red-400")}>{activeCustomerDetails.consent_status.replace(/_/g, ' ')}</span>
-              </p>
+            <div className="p-4 bg-[#1A1D2D] border-b border-[#2A2F45] shrink-0 flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-semibold text-white">{activeCustomerHeaderDetails.customer_name}</h3>
+                <p className="text-xs text-gray-400">{activeCustomerHeaderDetails.phone} - 
+                  <span className={clsx("ml-1", activeCustomerHeaderDetails.opted_in ? "text-green-400" : "text-red-400")}>{activeCustomerHeaderDetails.consent_status.replace(/_/g, ' ')}</span>
+                </p>
+              </div>
+              {newlyCreatedCustomerId === activeCustomerId && newlyCreatedCustomerId !== null && (
+                <NewContactPane customerId={newlyCreatedCustomerId} isNewlyCreated={true} />
+              )}
             </div>
             
             <div ref={chatContainerRef} className="flex flex-col flex-1 overflow-y-auto p-4 space-y-3 bg-[#0B0E1C]">
               {timelineEntries.map((entry) => (
-                <TimelineItem key={entry.id} entry={entry} onEditDraft={setSelectedDraft} onDeleteDraft={handleDeleteDraft} />
+                <TimelineItem key={entry.id} entry={entry} onEditDraft={setSelectedDraft} onDeleteDraft={handleDeleteDraft} onActionClick={handleActionClick} />
               ))}
             </div>
 
             <MessageBox
               key={activeCustomerId}
-              customer={activeCustomerDetails}
-              selectedDraftId={selectedDraft?.id || null}
               onSendMessage={handleSendMessage}
+              selectedDraftId={selectedDraft?.id ?? null}
               onCancelEdit={() => setSelectedDraft(null)}
-              initialMessage={selectedDraft?.ai_response}
             />
           </>
+        ) : isNewMessageMode ? (
+            <>
+              <div className="p-4 bg-[#1A1D2D] border-b border-[#2A2F45] shrink-0">
+                <h3 className="text-lg font-semibold text-white">New Message</h3>
+              </div>
+              <div className="flex-1 flex flex-col justify-between">
+                <div className="p-4 text-center text-gray-400">Enter a phone number to start a new conversation.</div>
+                <MessageBox 
+                  onSendMessage={handleSendMessage} 
+                  selectedDraftId={null}
+                  onCancelEdit={() => {}}
+                  isNewMessageMode={true}
+                />
+              </div>
+            </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-4">
-            <MessageCircle className="w-16 h-16 mb-4 text-gray-500" /><p className="text-lg">Select a conversation</p><p className="text-sm">Choose a customer to view messages.</p>
+            <MessageCircle className="w-16 h-16 mb-4 text-gray-500" /><p className="text-lg">Select a conversation</p><p className="text-sm">Choose a customer from the list to start messaging.</p>
           </div>
         )}
       </main>
