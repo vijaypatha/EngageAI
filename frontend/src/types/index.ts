@@ -9,8 +9,34 @@ export interface Tag {
   // Basic Customer Info for nested objects
   export interface CustomerBasicInfo {
     id: number;
-    name: string;
+    customer_name: string;
   }
+
+  // --- START: Added Types for Autopilot Instant Replies ---
+
+  // Represents a single custom FAQ item
+  export interface CustomFaqItem {
+    question: string;
+    answer: string;
+  }
+
+  // Represents the structured FAQ data object stored in the Business Profile.
+  // NOTE: Keys are aligned with the backend `schemas.py` (e.g., 'address', 'website').
+  export interface StructuredFaqData {
+    operating_hours?: string;
+    address?: string; // Corrected from business_address
+    website?: string; // Corrected from website_url
+    custom_faqs?: CustomFaqItem[];
+  }
+
+  // Represents the relevant parts of the Business Profile for the Autopilot feature.
+  export interface BusinessProfile {
+    id: number;
+    enable_ai_faq_auto_reply: boolean;
+    structured_faq_data?: StructuredFaqData;
+  }
+
+  // --- END: Added Types for Autopilot Instant Replies ---
   
   // Represents the raw message object from the API.
   export interface BackendMessage {
@@ -23,7 +49,7 @@ export interface Tag {
       customer_id: number;
       ai_response?: string; // The content of a pending AI draft, attached to an inbound message
       ai_draft_id?: number; // The ID of the engagement for draft actions
-      contextual_action?: { // NEW: Add contextual action info
+      contextual_action?: { 
           type: string; // e.g., "REQUEST_REVIEW"
           nudge_id: number; // The ID of the related nudge
           ai_suggestion?: string; // AI's suggestion for this action
@@ -31,7 +57,6 @@ export interface Tag {
   }
   
   // Represents the raw customer object from the `/review/full-customer-history` endpoint
-  // (Note: This type will now primarily be used for the active conversation's detailed history)
   export interface RawCustomerSummary {
       customer_id: number;
       customer_name: string;
@@ -39,22 +64,21 @@ export interface Tag {
       opted_in: boolean;
       consent_status: string;
       consent_updated?: string | null;
-      message_count: number; // Total messages in this customer's history
-      messages: BackendMessage[]; // All messages for this specific customer
+      message_count: number;
+      messages: BackendMessage[];
   }
   
-  // Represents a processed customer summary for display in the sidebar (from /review/inbox/summaries)
+  // Represents a processed customer summary for display in the sidebar
   export interface InboxCustomerSummary {
       customer_id: number;
       customer_name: string;
       phone: string;
-      opted_in: boolean; // From latest consent log
-      consent_status: string; // From latest consent log
-      last_message_content: string | null; // Snippet of last message
-      last_message_timestamp: string | null; // Timestamp of last message
-      unread_message_count: number; // NEW: Number of unread messages (calculated by backend)
+      opted_in: boolean;
+      consent_status: string;
+      last_message_content: string | null;
+      last_message_timestamp: string | null;
+      unread_message_count: number;
       business_id: number;
-      // is_unread will now be derived from unread_message_count > 0 on the frontend if needed for styling
   }
   
   // Represents the paginated response structure from /review/inbox/summaries
@@ -73,20 +97,20 @@ export interface Tag {
       content: string;
       timestamp: string | null;
       customer_id: number;
+      customer_name?: string;
       status?: string;
       is_faq_answer?: boolean;
       appended_opt_in_prompt?: boolean;
-      ai_response?: string; // The content of a pending AI draft
-      ai_draft_id?: number; // The ID for draft actions
-      contextual_action?: { // NEW: Add contextual action info to TimelineEntry
-          type: string; // e.g., "REQUEST_REVIEW"
-          nudge_id: number; // The ID of the related nudge
-          ai_suggestion?: string; // AI's suggestion for this action
+      ai_response?: string;
+      ai_draft_id?: number;
+      contextual_action?: {
+          type: string;
+          nudge_id: number;
+          ai_suggestion?: string;
       };
   }
   
-  // NEW: Define and export the Customer interface as it's used by other frontend pages.
-  // This should mirror the structure returned by your backend's Customer schema (excluding relationships).
+  // Represents the full Customer object
   export interface Customer {
     id: number;
     customer_name: string;
@@ -99,37 +123,20 @@ export interface Tag {
     opted_in?: boolean;
     sms_opt_in_status: string;
     is_generating_roadmap?: boolean;
-    last_generation_attempt?: string | null; // Assuming datetime is string (ISO)
+    last_generation_attempt?: string | null;
     created_at: string;
     updated_at?: string | null;
     latest_consent_status?: string | null;
     latest_consent_updated?: string | null;
-    tags?: Tag[]; // Assuming Tag is defined
-    last_read_at?: string | null; // Add if used by frontend directly
+    tags?: Tag[];
+    last_read_at?: string | null;
   }
   
-  // UPDATED: Define and export the AutopilotMessage interface for the AutopilotPlanView.
-  // Now includes 'content' and a nested 'customer' object.
+  // Represents a scheduled message for the AutopilotPlanView.
   export interface AutopilotMessage {
     id: number;
-    content: string; // The message text (aligned with backend output)
-    status: string; // e.g., "draft", "scheduled", "sent"
-    scheduled_time: string; // The exact date and time the message will be sent (ISO format string)
-    customer: CustomerBasicInfo; // Nested customer object with id and name
-    // smsContent, smsTiming, send_datetime_utc, relevance, success_indicator, no_response_plan are removed
-    // or made optional if not strictly used by the component in its current rendering.
-    // We'll primarily rely on 'content' and 'scheduled_time' for the UI display.
-  }
-  
-  // NEW: Define and export CustomerSummarySchema to match backend's response for /customers/by-business
-  export interface CustomerSummarySchema {
-      id: number;
-      customer_name: string;
-      phone: string;
-      lifecycle_stage: string;
-      opted_in: boolean;
-      latest_consent_status: string | null;
-      latest_consent_updated: string | null;
-      tags: Tag[]; // List of tags
-      business_id: number;
+    content: string;
+    status: string;
+    scheduled_time: string;
+    customer: CustomerBasicInfo;
   }

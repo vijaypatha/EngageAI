@@ -1,35 +1,61 @@
-// frontend/app/autopilot/[business_name]/page.tsx
+// frontend/src/app/autopilot/[business_name]/page.tsx
 "use client";
 
+//
+// --- Imports ---
+//
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { apiClient } from '@/lib/api';
-import AutopilotPlanView from '@/components/autopilot/AutopilotPlanView'; // Import the component
+import AutopilotPlanView from '@/components/autopilot/AutopilotPlanView';
 import { Loader2, AlertCircle } from 'lucide-react';
 
+//
+// --- Component ---
+// This is the main entry point for the Autopilot page. Its primary responsibility
+// is to translate the URL's `business_name` (slug) into a valid `businessId`.
+// Once the ID is fetched, it renders the main view component.
+//
 export default function AutopilotPage() {
-    const { business_name } = useParams<{ business_name: string }>();
+    //
+    // --- State Management ---
+    //
     const [businessId, setBusinessId] = useState<number | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    
+    // Get the dynamic `business_name` slug from the URL
+    const params = useParams<{ business_name: string }>();
+    const businessSlug = params.business_name;
 
+    //
+    // --- Data Fetching Effect ---
+    //
     useEffect(() => {
+        // This function fetches the business ID using the slug.
         const fetchBusinessId = async () => {
-            if (!business_name) {
+            if (!businessSlug) {
                 setError("Business name not found in URL.");
                 setIsLoading(false);
                 return;
             }
+
+            // Reset state for a new fetch
+            setIsLoading(true);
+            setError(null);
+
             try {
-                console.log(`AutopilotPage: Fetching ID for slug: ${business_name}`);
-                const response = await apiClient.get(`/business-profile/business-id/slug/${business_name}`);
+                // Use the correct API endpoint from your backend routes
+                const response = await apiClient.get(`/business-profile/business-id/slug/${businessSlug}`);
                 if (response.data?.business_id) {
                     setBusinessId(response.data.business_id);
-                    console.log(`AutopilotPage: Found business ID: ${response.data.business_id}`);
                 } else {
-                    throw new Error("Business ID not found for the provided name.");
+                    // This case handles a valid API response that doesn't include the ID
+                    throw new Error("API did not return a valid business ID.");
                 }
+
             } catch (err: any) {
+                // This catches network errors or 404s from the API call
                 console.error("Failed to fetch business ID:", err);
                 setError(err.response?.data?.detail || "Could not find the specified business.");
             } finally {
@@ -38,30 +64,42 @@ export default function AutopilotPage() {
         };
 
         fetchBusinessId();
-    }, [business_name]);
+    }, [businessSlug]); // Re-run this effect if the slug in the URL changes
 
+    //
+    // --- Render Logic ---
+    //
+    // 1. Loading State
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center h-screen bg-[#0B0E1C] text-white">
-                <Loader2 className="w-8 h-8 animate-spin" />
+            <div className="flex h-screen w-full items-center justify-center bg-slate-900">
+                <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
             </div>
         );
     }
 
+    // 2. Error State
     if (error) {
         return (
-            <div className="flex flex-col items-center justify-center h-screen bg-[#0B0E1C] text-red-400">
-                <AlertCircle className="w-12 h-12 mb-4 text-red-500" />
-                <h2 className="text-xl font-semibold">Error Loading Autopilot Plan</h2>
-                <p>{error}</p>
+            <div className="flex h-screen w-full flex-col items-center justify-center bg-slate-900 p-4 text-center">
+                <AlertCircle className="h-12 w-12 text-red-500" />
+                <h2 className="mt-4 text-xl font-semibold text-white">Error Loading Autopilot</h2>
+                <p className="mt-1 text-red-400">{error}</p>
             </div>
         );
     }
-    
-    // Render the AutopilotPlanView only when we have a valid businessId
+
+    // 3. Success State
     return (
-        <div className="p-4 md:p-8 bg-[#0B0E1C] min-h-screen">
-            {businessId ? <AutopilotPlanView businessId={businessId} /> : null}
+        <div className="bg-slate-900">
+            {businessId && businessSlug ? (
+                <AutopilotPlanView businessId={businessId} businessSlug={businessSlug} />
+            ) : (
+                // This renders if loading is done but for some reason we still don't have an ID
+                <div className="flex h-screen w-full items-center justify-center bg-slate-900 text-slate-500">
+                    <p>Business information could not be loaded.</p>
+                </div>
+            )}
         </div>
     );
 }

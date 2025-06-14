@@ -218,20 +218,4 @@ def delete_customer(customer_id: int, db: Session = Depends(get_db)):
     db.commit()
     return None
 
-@router.put("/{customer_id}/mark-as-read", status_code=status.HTTP_200_OK)
-def mark_customer_conversation_as_read(
-    customer_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Updates the 'last_read_at' timestamp for a customer, marking their conversation as read.
-    """
-    customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
-    if not customer:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found.")
-    
-    customer.last_read_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(customer)
-    logger.info(f"Customer {customer_id} conversation marked as read at {customer.last_read_at}.")
-    return {"message": f"Conversation for customer {customer_id} marked as read."}
+# --- REMOVED mark_customer_conversation_as_read from this file. It is being moved to conversation_routes.py ---
