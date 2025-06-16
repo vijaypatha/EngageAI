@@ -1,19 +1,16 @@
 # backend/app/schemas.py
 
 from pydantic import BaseModel, constr, Field, validator, field_validator
-from typing import Optional, Annotated, List, Dict, Any
+from typing import Optional, Annotated, List, Dict, Any, Literal
 from pydantic import StringConstraints
 import pytz
 from datetime import datetime
 import uuid
 import re
 
-# Import the new enums from app.models
-from app.models import MessageTypeEnum, MessageStatusEnum, OptInStatus, NudgeStatusEnum, NudgeTypeEnum # OptInStatus is already used
+from app.models import MessageTypeEnum, MessageStatusEnum, OptInStatus, NudgeStatusEnum, NudgeTypeEnum
 
-# Helper function to normalize phone numbers (YOUR ORIGINAL FUNCTION)
 def normalize_phone_number(v: Optional[str]) -> Optional[str]:
-    # ... (your existing code) ...
     if v is None:
         return None
     v_stripped = v.strip()
@@ -27,14 +24,11 @@ def normalize_phone_number(v: Optional[str]) -> Optional[str]:
         if not digits_after_plus:
             raise ValueError(f"Invalid phone number format (empty after '+'): {v}")
         return f"+{digits_after_plus}"
-    elif digits.isdigit() and len(digits) > 0 : # Ensure there are digits before adding '+'
+    elif digits.isdigit() and len(digits) > 0 :
         return f"+{digits}"
     raise ValueError(f"Invalid or unrecognized phone number format: {v}")
 
-
-# --- STANDALONE TIMEZONE VALIDATION FUNCTION (Pydantic V2 compatible for reuse) ---
 def validate_timezone_str(value: Optional[str]) -> Optional[str]:
-    # ... (your existing code) ...
     if value is None or value == "":
         return None
     try:
@@ -42,8 +36,6 @@ def validate_timezone_str(value: Optional[str]) -> Optional[str]:
         return value
     except pytz.exceptions.UnknownTimeZoneError:
         raise ValueError(f"Invalid timezone: {value}")
-
-# ... (TagBase, TagCreate, TagRead, TimezoneInfo, CustomFaqSchema, StructuredFaqDataSchema remain the same) ...
 
 class TagBase(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=100)]
@@ -68,7 +60,6 @@ class CustomFaqSchema(BaseModel):
     question: str; answer: str
     class Config: from_attributes = True
 
-# RECONCILED: Keys 'address' and 'website' match frontend types and usage
 class StructuredFaqDataSchema(BaseModel):
     operating_hours: Optional[str] = None
     address: Optional[str] = None
@@ -76,16 +67,12 @@ class StructuredFaqDataSchema(BaseModel):
     custom_faqs: Optional[List[CustomFaqSchema]] = Field(default_factory=list)
     class Config: from_attributes = True
 
-
-# --- Business Schemas (No direct change needed for MessageTypeEnum/MessageStatusEnum) ---
 class BusinessProfileBase(BaseModel):
-    # ... (your existing code) ...
     business_name: str; industry: str; business_goal: str
     primary_services: str; representative_name: str
     timezone: Optional[str] = "UTC"
     business_phone_number: Optional[str] = None
     review_platform_url: Optional[str] = None
-
     _normalize_bp_phone = validator('business_phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before')
     @classmethod
@@ -93,13 +80,11 @@ class BusinessProfileBase(BaseModel):
         return validate_timezone_str(v)
 
 class BusinessProfileCreate(BusinessProfileBase):
-    # ... (your existing code) ...
     twilio_number: Optional[str] = None
     twilio_sid: Optional[str] = None
     messaging_service_sid: Optional[str] = None
 
 class BusinessProfileUpdate(BaseModel):
-    # ... (your existing code) ...
     business_name: Optional[str] = None; industry: Optional[str] = None
     business_goal: Optional[str] = None; primary_services: Optional[str] = None
     representative_name: Optional[str] = None; timezone: Optional[str] = None
@@ -108,9 +93,8 @@ class BusinessProfileUpdate(BaseModel):
     enable_ai_faq_auto_reply: Optional[bool] = None
     structured_faq_data: Optional[StructuredFaqDataSchema] = None
     review_platform_url: Optional[str] = None
-
     _normalize_bp_update_phone = validator('business_phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
-    _normalize_twilio_update_phone = validator('twilio_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number) # Added always=True
+    _normalize_twilio_update_phone = validator('twilio_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before')
     @classmethod
     def _validate_bp_update_timezone(cls, v: Optional[str]):
@@ -118,29 +102,24 @@ class BusinessProfileUpdate(BaseModel):
     class Config: from_attributes = True
 
 class BusinessProfile(BusinessProfileBase):
-    # ... (your existing code) ...
     id: int; twilio_number: Optional[str] = None; slug: Optional[str] = None
     created_at: datetime; updated_at: Optional[datetime] = None
     twilio_sid: Optional[str] = None; messaging_service_sid: Optional[str] = None
     notify_owner_on_reply_with_link: bool
     enable_ai_faq_auto_reply: bool
     structured_faq_data: Optional[StructuredFaqDataSchema] = None
-
-    _normalize_bp_resp_twilio_phone = validator('twilio_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number) # Added always=True
+    _normalize_bp_resp_twilio_phone = validator('twilio_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     class Config: from_attributes = True
 
 class BusinessPhoneUpdate(BaseModel):
-    # ... (your existing code) ...
     business_phone_number: str
     _normalize_b_phone_update = validator('business_phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
     class Config: from_attributes = True
 
-# --- Customer Schemas (No direct change needed for MessageTypeEnum/MessageStatusEnum) ---
 class CustomerBase(BaseModel):
     customer_name: str
     phone: str
     lifecycle_stage: str
-    # MODIFICATION: Changed to Optional[str] to allow None values from the database
     pain_points: Optional[str] = None
     interaction_history: Optional[str] = None
     business_id: int
@@ -148,7 +127,6 @@ class CustomerBase(BaseModel):
     opted_in: Optional[bool] = False
     is_generating_roadmap: Optional[bool] = False
     last_generation_attempt: Optional[datetime] = None
-
     _normalize_customer_phone = validator('phone', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before')
     @classmethod
@@ -157,12 +135,10 @@ class CustomerBase(BaseModel):
 
 class CustomerCreate(CustomerBase): pass
 class CustomerUpdate(BaseModel):
-    # ... (your existing code) ...
     customer_name: Optional[str] = None; phone: Optional[str] = None
     lifecycle_stage: Optional[str] = None; pain_points: Optional[str] = None
     interaction_history: Optional[str] = None; timezone: Optional[str] = None
     opted_in: Optional[bool] = None
-
     _normalize_customer_phone_update = validator('phone', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
     @field_validator('timezone', mode='before')
     @classmethod
@@ -170,9 +146,8 @@ class CustomerUpdate(BaseModel):
         return validate_timezone_str(v)
 
 class Customer(CustomerBase):
-    # ... (your existing code) ...
     id: int; created_at: datetime; updated_at: Optional[datetime] = None
-    latest_consent_status: Optional[str] = None # This could use OptInStatus if you wish
+    latest_consent_status: Optional[str] = None
     latest_consent_updated: Optional[datetime] = None
     tags: List[TagRead] = Field(default_factory=list)
     class Config: from_attributes = True
@@ -182,29 +157,23 @@ class CustomerFindOrCreate(BaseModel):
     business_id: int
     _normalize_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
-
-# --- SMS Schemas (Could use MessageStatusEnum if desired) ---
 class SMSCreate(BaseModel):
-    # ... (your existing code) ...
     customer_id: int
     message: Annotated[str, StringConstraints(max_length=160)]
     send_time: Optional[datetime] = None
-
-    @validator('message') # Keep existing validator if it's Pydantic v1 style and working
+    @validator('message')
     def validate_message_length(cls, v_msg_len):
         if len(v_msg_len) > 160:
             raise ValueError("Message length exceeds 160 characters")
         return v_msg_len
 
 class SMSUpdate(BaseModel):
-    # ... (your existing code) ...
     updated_message: Optional[str] = None
-    status: Optional[MessageStatusEnum] = None  # MODIFIED: Use Enum
+    status: Optional[MessageStatusEnum] = None
     send_time: Optional[datetime] = None
 
-class SMSApproveOnly(BaseModel): status: MessageStatusEnum # MODIFIED: Use Enum
+class SMSApproveOnly(BaseModel): status: MessageStatusEnum
 
-# ... (EngagementResponse, SMSStyleInput, StyleAnalysis, SMSStyleResponse remain the same) ...
 class EngagementResponse(BaseModel):
     customer_id: int; response: str
 
@@ -219,12 +188,10 @@ class SMSStyleResponse(BaseModel):
     updated_styles: Optional[List[Dict[str, Any]]] = None; style_analysis: Optional[StyleAnalysis] = None
     class Config: from_attributes = True
 
-
-# ... (RoadmapMessageOut, AllRoadmapMessagesResponse, ConversationMessage, ConversationResponse remain the same) ...
 class RoadmapMessageOut(BaseModel):
     id: int; customer_id: int; customer_name: Optional[str] = None
     smsContent: str; smsTiming: str;
-    status: MessageStatusEnum # MODIFIED: Use Enum (if it applies to roadmap message statuses)
+    status: MessageStatusEnum
     send_datetime_utc: Optional[datetime] = None; customer_timezone: Optional[str] = None
     relevance: Optional[str] = None; success_indicator: Optional[str] = None
     no_response_plan: Optional[str] = None
@@ -234,21 +201,20 @@ class AllRoadmapMessagesResponse(BaseModel):
     total: int; scheduledThisWeek: int; messages: List[RoadmapMessageOut]
 
 class ConversationMessage(BaseModel):
-    id: str; text: str; source: str # Assuming id here is string like from frontend
+    id: str; text: str; source: str
     sender: Optional[str] = None; timestamp: Optional[datetime] = None
     direction: Optional[str] = None;
-    type: Optional[MessageTypeEnum] = None # MODIFIED: Use Enum
-    status: Optional[MessageStatusEnum] = None # MODIFIED: Use Enum
+    type: Optional[MessageTypeEnum] = None
+    status: Optional[MessageStatusEnum] = None
     is_hidden: Optional[bool] = False
     class Config: from_attributes = True
 
 class ConversationResponse(BaseModel):
     customer: dict; messages: List[ConversationMessage]
 
-# --- Core DB Model Schemas ---
 class ConversationBase(BaseModel):
     customer_id: int; business_id: int;
-    status: str = "active" # This status is likely simpler, might not need full MessageStatusEnum
+    status: str = "active"
 class ConversationCreate(ConversationBase): pass
 class ConversationUpdate(BaseModel):
     status: Optional[str] = None
@@ -259,19 +225,18 @@ class Conversation(ConversationBase):
 class MessageBase(BaseModel):
     conversation_id: Optional[uuid.UUID] = None
     business_id: int; customer_id: int; content: str;
-    message_type: MessageTypeEnum # MODIFIED: Use Enum
-    status: MessageStatusEnum = MessageStatusEnum.PENDING_REVIEW # MODIFIED: Use Enum
+    message_type: MessageTypeEnum
+    status: MessageStatusEnum = MessageStatusEnum.PENDING_REVIEW
     parent_id: Optional[int] = None
     scheduled_time: Optional[datetime] = None; sent_at: Optional[datetime] = None
     is_hidden: bool = False; message_metadata: Optional[Dict[str,Any]] = None
-
-    customer: Optional["Customer"] = None # Forward reference for Customer schema
-    business: Optional["BusinessProfile"] = None # Forward reference for BusinessProfile schema
+    customer: Optional["Customer"] = None
+    business: Optional["BusinessProfile"] = None
 
 class MessageCreate(MessageBase): pass
 class MessageUpdate(BaseModel):
     content: Optional[str] = None;
-    status: Optional[MessageStatusEnum] = None # MODIFIED: Use Enum
+    status: Optional[MessageStatusEnum] = None
     scheduled_time: Optional[datetime] = None; sent_at: Optional[datetime] = None
     is_hidden: Optional[bool] = None; message_metadata: Optional[Dict[str,Any]] = None
 
@@ -283,21 +248,19 @@ class MessageResponse(MessageBase):
     id: int; created_at: datetime; updated_at: Optional[datetime] = None
     class Config: from_attributes = True
 
-
 class MessageCreateSchema(BaseModel):
     message: str = Field(..., description="The content of the message to be sent.")
-
 
 class EngagementBase(BaseModel):
     message_id: Optional[int] = None; customer_id: int; business_id: int
     response: Optional[str] = None; ai_response: Optional[str] = None
-    status: MessageStatusEnum = MessageStatusEnum.PENDING_REVIEW # MODIFIED: Use Enum
+    status: MessageStatusEnum = MessageStatusEnum.PENDING_REVIEW
     parent_engagement_id: Optional[int] = None
     sent_at: Optional[datetime] = None
 class EngagementCreate(EngagementBase): pass
 class EngagementUpdate(BaseModel):
     response: Optional[str] = None; ai_response: Optional[str] = None
-    status: Optional[MessageStatusEnum] = None # MODIFIED: Use Enum
+    status: Optional[MessageStatusEnum] = None
     sent_at: Optional[datetime] = None
 class Engagement(EngagementBase):
     id: int; created_at: datetime; updated_at: Optional[datetime] = None
@@ -306,14 +269,14 @@ class Engagement(EngagementBase):
 class RoadmapMessageBase(BaseModel):
     message_id: Optional[int] = None; customer_id: int; business_id: int
     smsContent: str; smsTiming: str;
-    status: MessageStatusEnum = MessageStatusEnum.PENDING_REVIEW # MODIFIED: Use Enum
+    status: MessageStatusEnum = MessageStatusEnum.PENDING_REVIEW
     send_datetime_utc: Optional[datetime] = None
     relevance: Optional[str] = None; success_indicator: Optional[str] = None
     no_response_plan: Optional[str] = None
 class RoadmapMessageCreate(RoadmapMessageBase): pass
 class RoadmapMessageUpdate(BaseModel):
     smsContent: Optional[str] = None; smsTiming: Optional[str] = None;
-    status: Optional[MessageStatusEnum] = None # MODIFIED: Use Enum
+    status: Optional[MessageStatusEnum] = None
     send_datetime_utc: Optional[datetime] = None; relevance: Optional[str] = None
     success_indicator: Optional[str] = None; no_response_plan: Optional[str] = None
 class RoadmapMessage(RoadmapMessageBase):
@@ -322,11 +285,10 @@ class RoadmapMessage(RoadmapMessageBase):
 
 class ScheduledSMSBase(BaseModel):
     customer_id: int; business_id: int; message: str;
-    status: MessageStatusEnum = MessageStatusEnum.SCHEDULED # MODIFIED: Use Enum
+    status: MessageStatusEnum = MessageStatusEnum.SCHEDULED
     send_time: datetime
     source: Optional[str] = None; roadmap_id: Optional[int] = None; is_hidden: bool = False
     business_timezone: str; customer_timezone: Optional[str] = None
-
     @field_validator('business_timezone', 'customer_timezone', mode='before')
     @classmethod
     def _validate_scheduled_sms_timezones(cls, v: Optional[str]):
@@ -335,7 +297,7 @@ class ScheduledSMSBase(BaseModel):
 class ScheduledSMSCreate(ScheduledSMSBase): pass
 class ScheduledSMSUpdate(BaseModel):
     message: Optional[str] = None;
-    status: Optional[MessageStatusEnum] = None # MODIFIED: Use Enum
+    status: Optional[MessageStatusEnum] = None
     send_time: Optional[datetime] = None; is_hidden: Optional[bool] = None
 class ScheduledSMSResponse(ScheduledSMSBase):
     id: int; created_at: datetime; updated_at: Optional[datetime] = None
@@ -347,19 +309,19 @@ class ScheduledSMSOut(ScheduledSMSBase):
 class ConsentLogBase(BaseModel):
     customer_id: int; business_id: int; method: str; phone_number: str
     message_sid: Optional[str] = None;
-    status: OptInStatus = OptInStatus.PENDING # MODIFIED: Use Enum
+    status: OptInStatus = OptInStatus.PENDING
     sent_at: Optional[datetime] = None; replied_at: Optional[datetime] = None
     _normalize_consent_phone = validator('phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
 
 class ConsentLogCreate(ConsentLogBase):
     sent_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
 class ConsentLogUpdate(BaseModel):
-    status: Optional[OptInStatus] = None # MODIFIED: Use Enum
+    status: Optional[OptInStatus] = None
     replied_at: Optional[datetime] = None
 class ConsentLog(ConsentLogBase):
     id: int
-    created_at: Optional[datetime] = None # Kept Optional as per your original
-    updated_at: Optional[datetime] = None # Kept Optional as per your original
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     class Config: from_attributes = True
 
 class ConsentCreate(ConsentLogBase): pass
@@ -369,7 +331,7 @@ class RoadmapMessageResponse(BaseModel):
     id: int; customer_id: int; business_id: int
     message: str = Field(..., alias='smsContent')
     scheduled_time: datetime = Field(..., alias='send_datetime_utc')
-    status: MessageStatusEnum # MODIFIED: Use Enum
+    status: MessageStatusEnum
     relevance: Optional[str] = None
     success_indicator: Optional[str] = None; no_response_plan: Optional[str] = None
     class Config: from_attributes = True; populate_by_name = True
@@ -389,7 +351,6 @@ class TwilioNumberAssign(BaseModel):
     business_id: int; phone_number: str
     _normalize_twilio_phone = validator('phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
 
-
 class BusinessScenarioCreate(BaseModel):
     scenario: str = Field(..., description="The scenario description")
     context_type: str = Field(..., description="The type of context")
@@ -400,12 +361,11 @@ class BusinessOwnerStyleResponse(BaseModel):
     context_type: str; last_analyzed: Optional[datetime] = None
     class Config: from_attributes = True
 
-# --- CoPilot Nudge Schemas --- (Renamed from AINudge)
 class CoPilotNudgeBase(BaseModel):
     business_id: int
-    customer_id: Optional[int] = None # Nudge might not always be customer-specific
-    nudge_type: NudgeTypeEnum # Using the Enum directly
-    status: NudgeStatusEnum = NudgeStatusEnum.ACTIVE # Default status
+    customer_id: Optional[int] = None
+    nudge_type: NudgeTypeEnum
+    status: NudgeStatusEnum = NudgeStatusEnum.ACTIVE
     message_snippet: Optional[str] = None
     ai_suggestion: Optional[str] = None
     ai_evidence_snippet: Optional[Dict[str, Any]] = None
@@ -418,29 +378,22 @@ class CoPilotNudgeRead(CoPilotNudgeBase):
     id: int
     created_at: datetime
     updated_at: datetime
-    customer_name: Optional[str] = None # Will be populated in the route logic
-
+    customer_name: Optional[str] = None
     class Config:
-        from_attributes = True # Pydantic v2 way to enable ORM mode
+        from_attributes = True
 
-# --- Payload Schemas for Nudge Actions ---
 class DismissNudgePayload(BaseModel):
     reason: Optional[str] = None
 
 class SentimentActionPayload(BaseModel):
-    action_type: str # e.g., "REQUEST_REVIEW"
+    action_type: str
 
 class ConfirmTimedCommitmentPayload(BaseModel):
-    # The owner confirms or provides the specific datetime for the event in UTC
     confirmed_datetime_utc: datetime
-
-    # The owner confirms or provides the purpose of the event
-    confirmed_purpose: str = Field(..., min_length=1, max_length=500) # Purpose is required
-
+    confirmed_purpose: str = Field(..., min_length=1, max_length=500)
     class Config:
-        from_attributes = True # For Pydantic v2, if needed, though usually not for request bodies.
+        from_attributes = True
 
-# --- TargetedEvent Schemas ---
 class TargetedEventBase(BaseModel):
     business_id: int
     customer_id: int
@@ -450,42 +403,34 @@ class TargetedEventBase(BaseModel):
     notes: Optional[str] = None
     created_from_nudge_id: Optional[int] = None
 
-class TargetedEventCreate(TargetedEventBase): # For potential direct creation later
+class TargetedEventCreate(TargetedEventBase):
     pass
 
 class TargetedEventRead(TargetedEventBase):
     id: int
     created_at: datetime
     updated_at: datetime
-
     class Config:
-        from_attributes = True # For Pydantic v2 ORM mode
+        from_attributes = True
 
-# --- NEW SCHEMAS FOR STRATEGIC ENGAGEMENT PLANS (ITERATION 4) ---
-
-# This schema defines a single message within an engagement plan payload
 class PlanMessage(BaseModel):
     text: str = Field(..., min_length=1, description="The content of the SMS message.")
     send_datetime_utc: datetime = Field(..., description="The absolute UTC datetime to send the message.")
 
-# This is the main payload for activating an AI-drafted engagement plan
 class ActivateEngagementPlanPayload(BaseModel):
     customer_id: int = Field(..., description="The ID of the customer this plan is for.")
     messages: List[PlanMessage] = Field(..., min_length=1, description="The list of messages to be scheduled as part of the plan.")
 
-
-# --- Inbox Schemas ---
 class InboxCustomerSummary(BaseModel):
     customer_id: int
     customer_name: str
-    phone: Optional[str] = None # Optional as it might not be strictly needed for summary
+    phone: Optional[str] = None
     opted_in: bool
     consent_status: str
     last_message_content: Optional[str] = None
     last_message_timestamp: Optional[datetime] = None
-    unread_message_count: int = 0 # Default to 0, can be updated by a more complex query
+    unread_message_count: int = 0
     business_id: int
-
     class Config:
         from_attributes = True
 
@@ -496,19 +441,16 @@ class PaginatedInboxSummaries(BaseModel):
     size: int
     pages: int
 
-# --- Summary Schemas for Payload Reduction ---
-
 class CustomerSummarySchema(BaseModel):
     id: int
     customer_name: str
     phone: Optional[str] = None
     lifecycle_stage: Optional[str] = None
-    opted_in: bool = False # Default to false if not available
+    opted_in: bool = False
     latest_consent_status: Optional[str] = None
     latest_consent_updated: Optional[datetime] = None
     tags: List[TagRead] = Field(default_factory=list)
-    business_id: int # Added business_id as it's in CustomerBase
-
+    business_id: int
     class Config:
         from_attributes = True
 
@@ -523,40 +465,23 @@ class BusinessBasicInfo(BaseModel):
     business_name: Optional[str] = None
     class Config:
         from_attributes = True
-        
-# --- FIX: Added AutopilotMessage schema to resolve ImportError ---
-class AutopilotMessage(BaseModel):
-    id: int
-    content: str
-    status: str
-    scheduled_time: datetime
-    customer: CustomerBasicInfo
-
-    class Config:
-        from_attributes = True
-
 
 class MessageSummarySchema(BaseModel):
     id: int
-    conversation_id: Optional[uuid.UUID] = None # Added conversation_id
+    conversation_id: Optional[uuid.UUID] = None
     business_id: int
     customer_id: int
     content_snippet: Optional[str] = None
-    message_type: Optional[MessageTypeEnum] = None # Use the enum
-    status: Optional[MessageStatusEnum] = None     # Use the enum
+    message_type: Optional[MessageTypeEnum] = None
+    status: Optional[MessageStatusEnum] = None
     created_at: datetime
     sent_at: Optional[datetime] = None
     customer: Optional[CustomerBasicInfo] = None
     business: Optional[BusinessBasicInfo] = None
-
     class Config:
         from_attributes = True
 
-# --- Customer Conversation Schemas ---
-# Re-using the existing Message schema for individual messages in a conversation for now.
-# If specific fields or formatting are needed for the timeline, a more specific schema can be created.
-# For example, ConversationMessageForTimeline(Message) could be used and customized if needed.
-class ConversationMessageForTimeline(Message): # This already inherits customer & business from MessageBase
+class ConversationMessageForTimeline(Message):
     pass
 
 class CustomerConversation(BaseModel):
@@ -565,9 +490,44 @@ class CustomerConversation(BaseModel):
     class Config:
         from_attributes = True
 
-# Update forward references for all models that might have them
-# This is good practice at the end of the schemas file.
+class AutopilotMessage(BaseModel):
+    id: int
+    content: str
+    status: str
+    scheduled_time: datetime
+    customer: CustomerBasicInfo
+    class Config:
+        from_attributes = True
+
+class ApprovalQueueItem(BaseModel):
+    id: int
+    content: str
+    status: MessageStatusEnum
+    created_at: datetime
+    customer: CustomerBasicInfo
+    message_metadata: Optional[dict] = None
+    class Config:
+        from_attributes = True
+
+# --- THE FIX IS HERE ---
+class ApprovePayload(BaseModel):
+    """
+    Defines the payload for approving a message. It can optionally
+    include edited content and a specific send time.
+    """
+    content: Optional[str] = None
+    send_datetime_utc: Optional[datetime] = None
+
 Customer.update_forward_refs()
-MessageBase.update_forward_refs() # MessageBase contains Optional["Customer"], Optional["BusinessProfile"]
-# Add other .update_forward_refs() if other models use string forward references.
-# For now, focusing on the ones modified or relevant to the new summary schemas.
+MessageBase.update_forward_refs()
+
+# --- NEW SCHEMA FOR BULK ACTIONS ---
+class BulkActionPayload(BaseModel):
+    """
+    Defines the payload for performing a bulk action on multiple messages.
+    """
+    message_ids: List[int] = Field(..., description="A list of message IDs to apply the action to.")
+    action: Literal['approve', 'reject'] = Field(..., description="The action to perform: 'approve' or 'reject'.")
+    # Optional: If approving, a single schedule time can apply to all messages.
+    # If not provided, they will be scheduled to send almost immediately.
+    send_datetime_utc: Optional[datetime] = None

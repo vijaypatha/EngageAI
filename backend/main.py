@@ -15,8 +15,9 @@ from app.config import settings
 from app.database import Base, engine
 from app.routes import (
     ai_routes,
+    approval_routes, # <-- ADD THIS IMPORT
     business_routes,
-    composer_routes, 
+    composer_routes,
     consent_routes,
     conversation_routes,
     customer_routes,
@@ -83,11 +84,11 @@ app.add_middleware(
     max_age=30 * 24 * 60 * 60
 )
 
-
 # --- API Routers ---
+app.include_router(approval_routes.router) # <-- ADD THIS LINE TO REGISTER THE NEW ROUTES
 app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
-app.include_router(composer_routes.router, prefix="/composer", tags=["composer"]) 
+app.include_router(composer_routes.router, prefix="/composer", tags=["composer"])
 app.include_router(customer_routes.router, prefix="/customers", tags=["customers"])
 app.include_router(tag_routes.router, prefix="/tags", tags=["Tags"])
 app.include_router(review.router, prefix="/review", tags=["review"])
@@ -101,8 +102,6 @@ app.include_router(targeted_event_routes.router, prefix="/targeted-events", tags
 app.include_router(follow_up_plan_routes.router, prefix="/follow-up-plans", tags=["Follow-up Nudge Plans"])
 app.include_router(twilio_routes.router, prefix="/twilio", tags=["twilio"])
 app.include_router(twilio_webhook.router, prefix="/twilio", tags=["twilio"])
-
-# Deprecated or internal-use routes below
 app.include_router(consent_routes.router, prefix="/consent", tags=["consent"])
 app.include_router(style_routes.router, prefix="/sms-style", tags=["style"])
 app.include_router(roadmap_routes.router, prefix="/roadmap", tags=["roadmap"])
@@ -111,7 +110,6 @@ app.include_router(message_routes.router, prefix="/messages", tags=["messages"])
 app.include_router(message_workflow_routes.router, prefix="/message-workflow", tags=["message-workflow"])
 app.include_router(engagement_routes.router, prefix="/engagements", tags=["engagements"])
 app.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["onboarding"])
-
 
 # --- Root and Debug Endpoints ---
 @app.get("/", response_model=Dict[str, str])
@@ -143,7 +141,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
     logger.error(f"[Unhandled Exception] Path: {request.method} {request.url.path} - Exception: {str(exc)}", exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "An internal server error occurred."})
 
-# 🛣️ Log active routes for debugging
+# Log active routes for debugging
 logger.info(f"🟢 TWILIO_DEFAULT_MESSAGING_SERVICE_SID: {settings.TWILIO_DEFAULT_MESSAGING_SERVICE_SID}")
 for route in app.routes:
     if isinstance(route, APIRoute):
