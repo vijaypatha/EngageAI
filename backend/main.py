@@ -15,7 +15,7 @@ from app.config import settings
 from app.database import Base, engine
 from app.routes import (
     ai_routes,
-    approval_routes, # <-- ADD THIS IMPORT
+    approval_routes,
     business_routes,
     composer_routes,
     consent_routes,
@@ -38,7 +38,8 @@ from app.routes import (
     targeted_event_routes,
     tag_routes,
     follow_up_plan_routes,
-    copilot_growth_routes
+    copilot_growth_routes,
+    roadmap_editor_routes
 )
 
 logger = logging.getLogger(__name__)
@@ -75,17 +76,20 @@ app.add_middleware(
 
 Base.metadata.create_all(bind=engine)
 
+# --- FIX: Environment-Aware Session Middleware ---
+# This configuration uses secure settings for production (when DEBUG=False)
+# and more permissive settings for local HTTP development (when DEBUG=True).
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
-    same_site="none",
-    https_only=True,
+    same_site="lax" if settings.DEBUG else "none", # Use 'lax' for local dev, 'none' for prod
+    https_only=not settings.DEBUG, # Set to False for local http, True for prod https
     session_cookie="session",
-    max_age=30 * 24 * 60 * 60
+    max_age=30 * 24 * 60 * 60 # 30 days
 )
 
 # --- API Routers ---
-app.include_router(approval_routes.router) # <-- ADD THIS LINE TO REGISTER THE NEW ROUTES
+app.include_router(approval_routes.router, prefix="/approvals", tags=["Approvals"])
 app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(business_routes.router, prefix="/business-profile", tags=["business"])
 app.include_router(composer_routes.router, prefix="/composer", tags=["composer"])
@@ -110,6 +114,8 @@ app.include_router(message_routes.router, prefix="/messages", tags=["messages"])
 app.include_router(message_workflow_routes.router, prefix="/message-workflow", tags=["message-workflow"])
 app.include_router(engagement_routes.router, prefix="/engagements", tags=["engagements"])
 app.include_router(onboarding_preview_route.router, prefix="/onboarding-preview", tags=["onboarding"])
+app.include_router(roadmap_editor_routes.router, prefix="/roadmap-editor", tags=["Roadmap Editor"])
+
 
 # --- Root and Debug Endpoints ---
 @app.get("/", response_model=Dict[str, str])

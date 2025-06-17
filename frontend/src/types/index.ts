@@ -30,6 +30,7 @@ export interface BusinessProfile {
 id: number;
 enable_ai_faq_auto_reply: boolean;
 structured_faq_data?: StructuredFaqData;
+timezone?: string;
 }
 
 // --- END: Types for Autopilot Instant Replies ---

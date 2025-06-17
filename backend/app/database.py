@@ -38,12 +38,13 @@ else:
     logger.info(f"Using DATABASE_URL from environment.") # Avoid logging the full URL in production if it contains sensitive info, or mask credentials. For now, this is fine for debugging.
 
 
+# --- FIX: Added pool_pre_ping and pool_recycle for connection stability ---
 engine_args = {
     "pool_size": 5,
     "max_overflow": 10,
     "pool_timeout": 30,
-    "pool_recycle": 1800, 
-    "pool_pre_ping": True, 
+    "pool_recycle": 1800, # Recycle connections every 30 minutes
+    "pool_pre_ping": True, # Check if connection is alive before use
 }
 
 if SQLALCHEMY_DATABASE_URL and SQLALCHEMY_DATABASE_URL.startswith("postgresql"):
@@ -71,11 +72,6 @@ def handle_db_error(context):
         exc_info=context.original_exception # Provides full traceback for the original error
     )
 
-# Removed the problematic 'checkout_fail' listener:
-# @event.listens_for(engine, "checkout_fail")
-# def checkout_fail(dbapi_connection, connection_record, exception):
-#     logger.error(f"Connection checkout failed: {exception}", exc_info=True)
-
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
@@ -93,5 +89,4 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
 elif "connect_args" in engine_args and "sslmode" in engine_args["connect_args"]:
     logger.info(f"PostgreSQL engine configured with SSL mode: {engine_args['connect_args']['sslmode']}")
 else:
-    logger.info("PostgreSQL engine configured (no explicit SSL connect_args - check URL if SSL is needed or if using internal DSN).")
-
+    logger.info("PostgreSQL engine configured (no explicit SSL connect_args - check URL if needed or if using internal DSN).")

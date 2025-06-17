@@ -283,6 +283,16 @@ class RoadmapMessage(RoadmapMessageBase):
     id: int; created_at: datetime; updated_at: Optional[datetime] = None
     class Config: from_attributes = True
 
+class EditedMessagePayload(BaseModel):
+    """Payload for a single message that has been edited in the composer."""
+    roadmap_message_id: int = Field(..., description="The ID of the RoadmapMessage being updated.")
+    content: str = Field(..., description="The final, edited content of the message.")
+    send_datetime_utc: datetime = Field(..., description="The final, edited time to send the message in UTC.")
+
+class ScheduleEditedRoadmapsRequest(BaseModel):
+    """Request model for the new endpoint that schedules a batch of edited roadmaps."""
+    edited_messages: List[EditedMessagePayload]
+
 class ScheduledSMSBase(BaseModel):
     customer_id: int; business_id: int; message: str;
     status: MessageStatusEnum = MessageStatusEnum.SCHEDULED
@@ -328,27 +338,38 @@ class ConsentCreate(ConsentLogBase): pass
 class ConsentResponse(ConsentLog): pass
 
 class RoadmapMessageResponse(BaseModel):
-    id: int; customer_id: int; business_id: int
+    id: int
+    customer_id: int
+    business_id: int
     message: str = Field(..., alias='smsContent')
+    smsTiming: Optional[str] = None  # ADDED THIS
     scheduled_time: datetime = Field(..., alias='send_datetime_utc')
     status: MessageStatusEnum
     relevance: Optional[str] = None
-    success_indicator: Optional[str] = None; no_response_plan: Optional[str] = None
-    class Config: from_attributes = True; populate_by_name = True
+    success_indicator: Optional[str] = None
+    no_response_plan: Optional[str] = None
+    class Config:
+        from_attributes = True
+        populate_by_name = True
 
 class RoadmapGenerate(BaseModel):
-    customer_id: int; business_id: int
+    customer_id: int
+    business_id: int
     context: Optional[Dict[str, Any]] = None
 
 class RoadmapResponse(BaseModel):
-    status: str; message: Optional[str] = None
+    status: str
+    message: Optional[str] = None
     roadmap: Optional[List[RoadmapMessageResponse]] = None
     total_messages: Optional[int] = None
-    customer_info: Optional[Dict[str, Any]] = None; business_info: Optional[Dict[str, Any]] = None
-    class Config: from_attributes = True
+    customer_info: Optional[Dict[str, Any]] = None
+    business_info: Optional[Dict[str, Any]] = None
+    class Config:
+        from_attributes = True
 
 class TwilioNumberAssign(BaseModel):
-    business_id: int; phone_number: str
+    business_id: int
+    phone_number: str
     _normalize_twilio_phone = validator('phone_number', pre=True, allow_reuse=True, always=True)(normalize_phone_number)
 
 class BusinessScenarioCreate(BaseModel):
@@ -357,9 +378,14 @@ class BusinessScenarioCreate(BaseModel):
     response: Optional[str] = Field(default="", description="The response to the scenario")
 
 class BusinessOwnerStyleResponse(BaseModel):
-    id: int; business_id: int; scenario: str; response: str
-    context_type: str; last_analyzed: Optional[datetime] = None
-    class Config: from_attributes = True
+    id: int
+    business_id: int
+    scenario: str
+    response: str
+    context_type: str
+    last_analyzed: Optional[datetime] = None
+    class Config:
+        from_attributes = True
 
 class CoPilotNudgeBase(BaseModel):
     business_id: int
@@ -509,25 +535,42 @@ class ApprovalQueueItem(BaseModel):
     class Config:
         from_attributes = True
 
-# --- THE FIX IS HERE ---
 class ApprovePayload(BaseModel):
-    """
-    Defines the payload for approving a message. It can optionally
-    include edited content and a specific send time.
-    """
     content: Optional[str] = None
     send_datetime_utc: Optional[datetime] = None
 
-Customer.update_forward_refs()
-MessageBase.update_forward_refs()
-
-# --- NEW SCHEMA FOR BULK ACTIONS ---
 class BulkActionPayload(BaseModel):
-    """
-    Defines the payload for performing a bulk action on multiple messages.
-    """
     message_ids: List[int] = Field(..., description="A list of message IDs to apply the action to.")
     action: Literal['approve', 'reject'] = Field(..., description="The action to perform: 'approve' or 'reject'.")
-    # Optional: If approving, a single schedule time can apply to all messages.
-    # If not provided, they will be scheduled to send almost immediately.
     send_datetime_utc: Optional[datetime] = None
+
+# --- NEW SCHEMAS FOR COMPOSER WORKFLOW ---
+class ComposerRoadmapRequest(BaseModel):
+    """
+    Request model for generating a batch of AI roadmaps.
+    Allows targeting by customer IDs or tags.
+    """
+    business_id: int = Field(..., description="The ID of the business for which to generate roadmaps.")
+    topic: str = Field(..., description="A brief topic or goal for the roadmap generation, e.g., 'New Customer Welcome'.")
+    customer_ids: Optional[List[int]] = Field(None, description="A specific list of customer IDs to target. Use this or filter_tags.")
+    filter_tags: Optional[List[str]] = Field(None, description="A list of tag names to filter customers by. All tags must match. Use this or customer_ids.")
+
+class ComposerRoadmapResponse(BaseModel):
+    """
+    Response model representing the generated roadmap for a single customer.
+    """
+    customer_id: int
+    customer_name: str
+    roadmap_messages: List[RoadmapMessageOut] = Field(default_factory=list, description="The list of AI-generated draft messages for this customer's roadmap.")
+
+class BatchRoadmapResponse(BaseModel):
+    """
+    The overall response for a batch roadmap generation request.
+    """
+    status: str
+    message: str
+    generated_roadmaps: List[ComposerRoadmapResponse] = Field(default_factory=list)
+# --- END NEW SCHEMAS ---
+
+Customer.update_forward_refs()
+MessageBase.update_forward_refs()
