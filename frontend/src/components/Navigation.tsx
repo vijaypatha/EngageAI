@@ -78,7 +78,8 @@ export function Navigation() {
       name: "Contacts",
       href: `/contacts/${business_name}`,
       icon: Users,
-      description: "Manage your community"
+      description: "Manage your community",
+      hidden: true
     },
   ];
 
@@ -87,13 +88,15 @@ export function Navigation() {
         name: "Co-Pilot",
         href: `/copilot/${business_name}`,
         icon: Sparkles,
-        description: "Business growth assistant"
+        description: "Business growth assistant",
+        hidden: true
     },
     {
       name: "Dashboard",
       href: `/dashboard/${business_name}`,
       icon: LayoutDashboard,
-      description: "Track performance"
+      description: "Track performance",
+      hidden: true
     }
   ];
 
@@ -127,7 +130,7 @@ export function Navigation() {
         <div className="flex-1 px-4 pt-4 space-y-6 overflow-y-auto">
           {/* Main Navigation Section */}
           <div className="space-y-1">
-            {mainNavItems.map((item) => {
+            {mainNavItems.filter(item => !item.hidden).map((item) => {
               const safeHref = item.href || '#';
               const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
               return (
@@ -161,8 +164,8 @@ export function Navigation() {
 
           {/* Secondary Navigation Section */}
           <div className="space-y-1">
-            <h2 className="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Analytics</h2>
-            {secondaryNavItems.map((item) => {
+            <h2 className="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider"></h2>
+            {secondaryNavItems.filter(item => !item.hidden).map((item) => {
                const safeHref = item.href || '#';
                const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
               return (
@@ -228,9 +231,9 @@ export function Navigation() {
               { name: "Inbox", href: `/inbox/${business_name}`, icon: MessageSquare },
               { name: "Composer", href: `/composer/${business_name}`, icon: Edit3 },
               { name: "Autopilot", href: `/autopilot/${business_name}`, icon: CalendarCheck },
-              { name: "Contacts", href: `/contacts/${business_name}`, icon: Users },
-              { name: "Dashboard", href: `/dashboard/${business_name}`, icon: LayoutDashboard },
-          ].map((item) => {
+              { name: "Contacts", href: `/contacts/${business_name}`, icon: Users, hidden: true },
+              { name: "Dashboard", href: `/dashboard/${business_name}`, icon: LayoutDashboard, hidden: true },
+          ].filter(item => !item.hidden).map((item) => {
             const safeHref = item.href || '#';
             const isActive = pathname === safeHref || pathname.startsWith(safeHref + '/');
             return (
@@ -287,9 +290,9 @@ export function Navigation() {
                 </Link>
               </div>
               {[
-                { name: "Co-Pilot", href: `/copilot/${business_name}`, icon: Sparkles },
+                { name: "Co-Pilot", href: `/copilot/${business_name}`, icon: Sparkles, hidden: true },
                 { name: "Profile", href: `/profile/${business_name}`, icon: UserCircle },
-              ].map((item) => (
+              ].filter(item => !item.hidden).map((item) => (
                 <Link
                   key={item.name}
                   href={item.href || '#'}

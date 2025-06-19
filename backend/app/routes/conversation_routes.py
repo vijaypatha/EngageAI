@@ -12,6 +12,7 @@ from sqlalchemy import desc, cast, Integer, text, func
 import pytz
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
+from app.celery_tasks import process_scheduled_message_task
 
 from app.database import get_db
 from app.models import (
@@ -33,32 +34,39 @@ from app.services.consent_service import ConsentService
 from app.config import settings
 from app.services.twilio_service import TwilioService
 
-from app.schemas import normalize_phone_number as normalize_phone, MessageCreateSchema, MessageResponse
+from app.schemas import (
+    Customer as CustomerSchema,
+    MessageCreateSchema, 
+    MessageResponse,
+    ScheduleMessagePayload
+)
 import re
 
 logger = logging.getLogger(__name__)
+# FIX: The router prefix is removed to match your original file structure. 
+# The prefix will be handled in main.py as it should be.
 router = APIRouter(tags=["Conversations"])
 
 
-class CustomerDetailsResponse(BaseModel):
-    id: int
-    customer_name: Optional[str] = None
-    lifecycle_stage: Optional[str] = None
-    interaction_history: Optional[str] = None
-    pain_points: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-@router.get("/customers/{customer_id}/details", response_model=CustomerDetailsResponse, tags=["Customers"])
+# FIX: This endpoint is corrected to return the full CustomerSchema, which includes tags.
+# This will resolve the "Could not load customer details" error in the intelligence panel.
+@router.get("/customers/{customer_id}/details", response_model=CustomerSchema, tags=["Customers"])
 def get_customer_details(customer_id: int, db: Session = Depends(get_db)):
     """
-    Fetches detailed information for a single customer, used by the Customer Intelligence Panel.
+    Fetches detailed information for a single customer, including their tags,
+    specifically for the Customer Intelligence Panel.
     """
-    logger.info(f"Fetching details for customer_id={customer_id}")
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    logger.info(f"Fetching full details for intelligence pane for customer_id={customer_id}")
+    
+    # Use joinedload to efficiently fetch the customer and their associated tags in one query.
+    customer = db.query(Customer).options(
+        joinedload(Customer.tags)
+    ).filter(Customer.id == customer_id).first()
+    
     if not customer:
+        logger.error(f"Customer with ID {customer_id} not found for details pane.")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+        
     return customer
 
 
@@ -69,7 +77,6 @@ def mark_customer_conversation_as_read(
 ):
     """
     Updates the 'last_read_at' timestamp for a customer, which marks their conversation as read.
-    The final URL will be /conversations/customers/{id}/mark-as-read
     """
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
@@ -108,18 +115,10 @@ async def send_message_from_inbox(
     message_to_send = payload.message
     is_first_message = customer.sms_opt_in_status == 'not_set'
     
-    # Dynamic & Personalized Opt-in Logic
     if is_first_message:
-        if business.sms_opt_in_message:
-            opt_in_text = business.sms_opt_in_message
-        else:
-            representative_name = getattr(business, 'representative_name', business.business_name)
-            business_name = business.business_name
-            opt_in_text = (
-                f"{representative_name} from {business_name} wants to stay in touch. "
-                "Reply YES to subscribe. Msg&Data rates may apply. Reply STOP to unsubscribe."
-            )
-        
+        representative_name = getattr(business, 'representative_name', business.business_name)
+        business_name = business.business_name
+        opt_in_text = f"This is {representative_name} from {business_name} — thanks for connecting! Msg & data rates may apply. Reply STOP to unsubscribe."
         message_to_send += f" {opt_in_text}"
         logger.info(f"Appending personalized opt-in text for new customer {customer_id}")
 
@@ -168,11 +167,60 @@ async def send_message_from_inbox(
     db.commit()
     return db_message
 
+@router.post("/customer/{customer_id}/schedule-message", response_model=MessageResponse)
+def schedule_message_from_inbox(
+    customer_id: int,
+    payload: ScheduleMessagePayload,
+    db: Session = Depends(get_db)
+):
+    """
+    Schedules a message for a future time.
+    This is used by the "Schedule for..." button in the new conversation flow.
+    """
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    if not customer.opted_in:
+        raise HTTPException(status_code=403, detail="Cannot schedule message, customer has not opted in.")
+    
+    now_utc = datetime.now(dt_timezone.utc)
+    conversation = db.query(ConversationModel).filter(ConversationModel.customer_id == customer.id).first()
+    if not conversation:
+        conversation = ConversationModel(id=uuid.uuid4(), customer_id=customer.id, business_id=customer.business_id, started_at=now_utc, status='active')
+        db.add(conversation)
+    conversation.last_message_at = now_utc
+    db.flush()
+
+    db_message = Message(
+        conversation_id=conversation.id,
+        business_id=customer.business_id,
+        customer_id=customer.id,
+        content=payload.message,
+        message_type=MessageTypeEnum.SCHEDULED.value,
+        status=MessageStatusEnum.SCHEDULED.value,
+        scheduled_time=payload.send_datetime_utc,
+        message_metadata={'source': 'manual_inbox_schedule'}
+    )
+    db.add(db_message)
+    db.flush()
+
+    try:
+        task = process_scheduled_message_task.apply_async(args=[db_message.id], eta=payload.send_datetime_utc)
+        db_message.message_metadata['celery_task_id'] = task.id
+        db.commit()
+        db.refresh(db_message)
+        return db_message
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to schedule message for customer {customer_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to schedule message.")
+
 
 @router.get("/customer/{customer_id}", response_model=Dict[str, Any])
 def get_conversation_history(customer_id: int, db: Session = Depends(get_db)):
     """
-    Rewritten to provide a clean, non-duplicated timeline.
+    Fetches the full conversation history (timeline) for a single customer.
     It fetches all messages and then attaches the single latest AI draft to its parent inbound message.
     """
     logger.info(f"get_conversation_history: Fetching history for customer_id={customer_id}")
@@ -186,13 +234,10 @@ def get_conversation_history(customer_id: int, db: Session = Depends(get_db)):
     ).order_by(Message.created_at.asc()).all()
 
     timeline = []
-    processed_msg_ids = set()
-    for msg in all_messages_orm:
-        if msg.id in processed_msg_ids:
-            continue
-        processed_msg_ids.add(msg.id)
+    timeline_map = {}
 
-        timeline_entry = {
+    for msg in all_messages_orm:
+        entry = {
             "id": msg.id,
             "type": msg.message_type,
             "content": msg.content,
@@ -203,7 +248,8 @@ def get_conversation_history(customer_id: int, db: Session = Depends(get_db)):
             "contextual_action": None,
             "appended_opt_in_prompt": msg.message_metadata.get('opt_in_appended', False) if isinstance(msg.message_metadata, dict) else False
         }
-        timeline.append(timeline_entry)
+        timeline.append(entry)
+        timeline_map[msg.id] = entry
 
     inbound_message_ids = [m['id'] for m in timeline if m["type"] == MessageTypeEnum.INBOUND.value]
     if inbound_message_ids:
@@ -220,15 +266,11 @@ def get_conversation_history(customer_id: int, db: Session = Depends(get_db)):
             Engagement.id == latest_engagement_sq.c.latest_id
         ).all()
 
-        drafts_map = {draft.message_id: draft for draft in latest_drafts}
+        for draft in latest_drafts:
+            if draft.message_id in timeline_map:
+                timeline_map[draft.message_id]["ai_response"] = draft.ai_response
+                timeline_map[draft.message_id]["ai_draft_id"] = draft.id
 
-        for entry in timeline:
-            if entry["type"] == MessageTypeEnum.INBOUND.value and entry["id"] in drafts_map:
-                draft = drafts_map[entry["id"]]
-                entry["ai_response"] = draft.ai_response
-                entry["ai_draft_id"] = draft.id
-
-    logger.info(f"get_conversation_history: Returning {len(timeline)} history items for customer_id={customer_id}")
     return {
         "customer": { "id": customer.id, "name": customer.customer_name, "phone": customer.phone },
         "messages": timeline
@@ -302,7 +344,6 @@ def send_manual_reply(customer_id: int, payload: ManualReplyInput, db: Session =
 
         logger.info(f"Attempting to schedule Celery task for Message.id={message_record.id}, ETA='{eta_value.isoformat()}'")
         
-        from app.celery_tasks import process_scheduled_message_task
         task_result = process_scheduled_message_task.apply_async(
             args=[message_record.id],
             eta=eta_value

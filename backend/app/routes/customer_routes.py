@@ -33,7 +33,8 @@ def find_or_create_customer_by_phone(
     db: Session = Depends(get_db)
 ):
     """
-    Finds a customer by phone number and business ID. If not found, creates a new one.
+    Finds a customer by phone number and business ID. If not found, creates a new one,
+    now using optional name and lifecycle stage from the payload.
     This is the engine for the "Frictionless Contact Creation" flow.
     """
     phone_number = payload.phone_number
@@ -48,19 +49,26 @@ def find_or_create_customer_by_phone(
         return customer
 
     logger.info(f"No customer found for phone {phone_number}. Creating new contact.")
+    
+    # Use provided name/stage from the payload, or fall back to sensible defaults.
+    new_customer_name = payload.customer_name if payload.customer_name and payload.customer_name.strip() else f"New Lead ({phone_number})"
+    new_lifecycle_stage = payload.lifecycle_stage if payload.lifecycle_stage else "New Lead"
+
     new_customer = CustomerModel(
         phone=phone_number,
         business_id=payload.business_id,
-        customer_name=f"New Lead ({phone_number})",
-        lifecycle_stage="New Lead",
+        customer_name=new_customer_name,
+        lifecycle_stage=new_lifecycle_stage,
         sms_opt_in_status='not_set',
         last_read_at=datetime.now(timezone.utc) # Set initial read time for new contacts
     )
+    
     db.add(new_customer)
+    
     try:
         db.commit()
         db.refresh(new_customer)
-        logger.info(f"Created new customer ID {new_customer.id}")
+        logger.info(f"Created new customer ID {new_customer.id} with Name: '{new_customer_name}', Stage: '{new_lifecycle_stage}'")
         return new_customer
     except IntegrityError:
         db.rollback()

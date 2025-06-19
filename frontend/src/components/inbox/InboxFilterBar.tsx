@@ -16,18 +16,20 @@ interface FilterPillProps {
 const FilterPill: React.FC<FilterPillProps> = ({ icon: Icon, label, count, isActive, onClick }) => (
   <button
     onClick={onClick}
+    // STYLE UPDATE: Changed colors for a more integrated, modern feel.
     className={clsx(
       "flex items-center space-x-2 px-3 py-1.5 text-sm font-medium rounded-full transition-all duration-200",
       isActive
-        ? "bg-blue-600 text-white shadow-md"
-        : "bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white"
+        ? "bg-blue-600 text-white"
+        : "bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white"
     )}
   >
     <Icon size={14} />
     <span>{label}</span>
+    {/* STYLE UPDATE: Updated count badge colors. */}
     <span className={clsx(
         "text-xs font-semibold px-1.5 py-0.5 rounded-full",
-        isActive ? "bg-white text-blue-600" : "bg-gray-500 text-gray-200"
+        isActive ? "bg-white text-blue-600" : "bg-slate-600 text-slate-200"
     )}>
         {count}
     </span>
@@ -48,7 +50,8 @@ interface InboxFilterBarProps {
 
 export default function InboxFilterBar({ stats, activeFilter, onFilterChange, totalConversations }: InboxFilterBarProps) {
   return (
-    <div className="p-3 border-b border-[#2A2F45] bg-[#1A1D2D]">
+    // STYLE UPDATE: Changed background and border to match new theme.
+    <div className="p-3 border-b border-slate-700 bg-slate-800 overflow-x-auto flex-shrink-0 aai-scrollbars-dark">
         <div className="flex items-center space-x-2">
              <FilterPill
                 icon={Inbox}

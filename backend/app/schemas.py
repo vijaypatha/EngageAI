@@ -36,6 +36,13 @@ def validate_timezone_str(value: Optional[str]) -> Optional[str]:
         return value
     except pytz.exceptions.UnknownTimeZoneError:
         raise ValueError(f"Invalid timezone: {value}")
+    
+class CustomerFindOrCreate(BaseModel):
+    phone_number: str
+    business_id: int
+    customer_name: Optional[str] = None
+    lifecycle_stage: Optional[str] = None
+    _normalize_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
 
 class TagBase(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=100)]
@@ -152,11 +159,6 @@ class Customer(CustomerBase):
     tags: List[TagRead] = Field(default_factory=list)
     class Config: from_attributes = True
 
-class CustomerFindOrCreate(BaseModel):
-    phone_number: str
-    business_id: int
-    _normalize_phone = validator('phone_number', pre=True, allow_reuse=True)(normalize_phone_number)
-
 class SMSCreate(BaseModel):
     customer_id: int
     message: Annotated[str, StringConstraints(max_length=160)]
@@ -251,6 +253,12 @@ class MessageResponse(MessageBase):
 class MessageCreateSchema(BaseModel):
     message: str = Field(..., description="The content of the message to be sent.")
 
+# FIX: Added the missing ScheduleMessagePayload schema.
+class ScheduleMessagePayload(BaseModel):
+    """Defines the required data for scheduling a message."""
+    message: str
+    send_datetime_utc: datetime
+
 class EngagementBase(BaseModel):
     message_id: Optional[int] = None; customer_id: int; business_id: int
     response: Optional[str] = None; ai_response: Optional[str] = None
@@ -284,13 +292,11 @@ class RoadmapMessage(RoadmapMessageBase):
     class Config: from_attributes = True
 
 class EditedMessagePayload(BaseModel):
-    """Payload for a single message that has been edited in the composer."""
     roadmap_message_id: int = Field(..., description="The ID of the RoadmapMessage being updated.")
     content: str = Field(..., description="The final, edited content of the message.")
     send_datetime_utc: datetime = Field(..., description="The final, edited time to send the message in UTC.")
 
 class ScheduleEditedRoadmapsRequest(BaseModel):
-    """Request model for the new endpoint that schedules a batch of edited roadmaps."""
     edited_messages: List[EditedMessagePayload]
 
 class ScheduledSMSBase(BaseModel):
@@ -342,7 +348,7 @@ class RoadmapMessageResponse(BaseModel):
     customer_id: int
     business_id: int
     message: str = Field(..., alias='smsContent')
-    smsTiming: Optional[str] = None  # ADDED THIS
+    smsTiming: Optional[str] = None
     scheduled_time: datetime = Field(..., alias='send_datetime_utc')
     status: MessageStatusEnum
     relevance: Optional[str] = None
@@ -544,33 +550,21 @@ class BulkActionPayload(BaseModel):
     action: Literal['approve', 'reject'] = Field(..., description="The action to perform: 'approve' or 'reject'.")
     send_datetime_utc: Optional[datetime] = None
 
-# --- NEW SCHEMAS FOR COMPOSER WORKFLOW ---
 class ComposerRoadmapRequest(BaseModel):
-    """
-    Request model for generating a batch of AI roadmaps.
-    Allows targeting by customer IDs or tags.
-    """
     business_id: int = Field(..., description="The ID of the business for which to generate roadmaps.")
     topic: str = Field(..., description="A brief topic or goal for the roadmap generation, e.g., 'New Customer Welcome'.")
     customer_ids: Optional[List[int]] = Field(None, description="A specific list of customer IDs to target. Use this or filter_tags.")
     filter_tags: Optional[List[str]] = Field(None, description="A list of tag names to filter customers by. All tags must match. Use this or customer_ids.")
 
 class ComposerRoadmapResponse(BaseModel):
-    """
-    Response model representing the generated roadmap for a single customer.
-    """
     customer_id: int
     customer_name: str
     roadmap_messages: List[RoadmapMessageOut] = Field(default_factory=list, description="The list of AI-generated draft messages for this customer's roadmap.")
 
 class BatchRoadmapResponse(BaseModel):
-    """
-    The overall response for a batch roadmap generation request.
-    """
     status: str
     message: str
     generated_roadmaps: List[ComposerRoadmapResponse] = Field(default_factory=list)
-# --- END NEW SCHEMAS ---
 
 Customer.update_forward_refs()
 MessageBase.update_forward_refs()

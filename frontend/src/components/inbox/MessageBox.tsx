@@ -1,96 +1,181 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { InboxCustomerSummary } from '@/types';
-import { Send, Clock, Info } from 'lucide-react';
+// frontend/src/components/inbox/MessageBox.tsx
+"use client";
 
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Sparkles, X, Loader2, CheckCircle, CalendarPlus } from 'lucide-react';
+import { apiClient } from '@/lib/api';
+import { addDays, format } from 'date-fns';
+import clsx from 'clsx';
+
+// --- Type Definitions ---
 interface MessageBoxProps {
-  customer?: InboxCustomerSummary;
-  selectedDraftId: string | number | null;
-  onSendMessage: (message: string, recipientPhone?: string) => Promise<void>;
-  onCancelEdit: () => void;
+  customer: any;
+  onSendMessage: (message: string) => Promise<void>; // Ensure onSendMessage is async
   initialMessage?: string;
-  isNewMessageMode?: boolean;
+  selectedDraftId?: number | null;
+  onCancelEdit?: () => void;
+  onMessageSent: () => void; // Callback to notify parent (e.g., to refetch history)
 }
 
-export default function MessageBox({ customer, selectedDraftId, onSendMessage, onCancelEdit, initialMessage = "", isNewMessageMode = false }: MessageBoxProps) {
-  const [newMessage, setNewMessage] = useState(initialMessage);
-  const [recipientPhone, setRecipientPhone] = useState("");
+/**
+ * The message input component at the bottom of a conversation view.
+ * Now includes a "Post-Send Nurture Prompt" to allow for quick,
+ * one-click follow-up scheduling.
+ */
+const MessageBox: React.FC<MessageBoxProps> = ({
+  customer,
+  onSendMessage,
+  initialMessage = "",
+  selectedDraftId = null,
+  onCancelEdit = () => {},
+  onMessageSent,
+}) => {
+  // --- STATE MANAGEMENT ---
+  const [message, setMessage] = useState(initialMessage);
   const [isSending, setIsSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // --- NEW: State for the Post-Send Nurture Prompt ---
+  const [showNurturePrompt, setShowNurturePrompt] = useState(false);
+  const [nurtureStatus, setNurtureStatus] = useState<'idle' | 'scheduling' | 'success' | 'error'>('idle');
 
   useEffect(() => {
-    setNewMessage(initialMessage);
-    setSendError(null);
-    inputRef.current?.focus();
-  }, [initialMessage, customer?.customer_id]);
-  
-  // --- FIX: Logic to determine if consent notice is needed ---
-  // A new contact is one in "new message mode" or an existing one whose consent status is 'not_set'.
-  const isNewContact = isNewMessageMode || customer?.consent_status === 'not_set';
-  const canSendMessage = isNewMessageMode ? true : customer?.consent_status !== 'opted_out';
-  const disabledReason = "Cannot send messages. Customer has opted out.";
+    setMessage(initialMessage);
+  }, [initialMessage]);
 
-  const handleSend = async () => {
-    const messageToSend = newMessage.trim();
-    if (!messageToSend || isSending) return;
-
-    if (!canSendMessage) {
-      setSendError(disabledReason);
-      return;
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${textarea.scrollHeight}px`;
     }
+  }, [message]);
 
+  // --- EVENT HANDLERS ---
+  const handleSend = async () => {
+    if (!message.trim() || isSending) return;
+    
     setIsSending(true);
-    setSendError(null);
     try {
-      await onSendMessage(messageToSend, isNewMessageMode ? recipientPhone : undefined);
-      setNewMessage("");
-      if (isNewMessageMode) setRecipientPhone("");
-    } catch (err: any) {
-      setSendError(err.response?.data?.detail || "Failed to send message.");
+      await onSendMessage(message);
+      setMessage('');
+      onMessageSent(); // Notify parent that a message was sent
+      // Show the nurture prompt after a successful send
+      setShowNurturePrompt(true);
+      // Automatically hide the prompt after 10 seconds if no action is taken
+      setTimeout(() => setShowNurturePrompt(false), 10000);
+    } catch (error) {
+        console.error("Failed to send message:", error);
     } finally {
-      setIsSending(false);
+        setIsSending(false);
+    }
+  };
+  
+  const handleAiAssist = async () => {
+    if (!message.trim() || isAiLoading) return;
+    setIsAiLoading(true);
+    setTimeout(() => {
+      setMessage(prev => `${prev.trim()} - hope you're having a great week! ✨`);
+      setIsAiLoading(false);
+    }, 1000);
+  };
+
+  /**
+   * NEW: Handles scheduling a follow-up message from the nurture prompt.
+   * @param days - The number of days in the future to schedule the follow-up.
+   */
+  const handleScheduleFollowUp = async (days: number) => {
+    setNurtureStatus('scheduling');
+    const followUpDate = addDays(new Date(), days);
+    
+    // A simple, friendly follow-up message template
+    const followUpMessage = `Hi ${customer.customer_name}, just wanted to follow up as promised. Hope you're having a great day!`;
+
+    try {
+        // Use the existing backend endpoint for scheduling messages
+        await apiClient.post(`/conversations/customer/${customer.id}/schedule-message`, {
+            message: followUpMessage,
+            send_datetime_utc: followUpDate.toISOString(),
+        });
+        setNurtureStatus('success');
+    } catch (error) {
+        console.error("Failed to schedule follow-up:", error);
+        setNurtureStatus('error');
+    } finally {
+        // Hide the entire prompt area after a short delay to show status
+        setTimeout(() => {
+            setShowNurturePrompt(false);
+            setNurtureStatus('idle');
+        }, 2500);
     }
   };
 
-  return (
-    <div className="p-4 bg-[#1A1D2D] border-t border-[#2A2F45] shrink-0">
-      {sendError && <p className="text-xs text-red-400 mb-2">{sendError}</p>}
-      
-      {/* --- FIX: Conditional rendering of the opt-in notice --- */}
-      {isNewContact && canSendMessage && (
-        <div className="flex items-center p-2 mb-2 text-xs text-blue-300 bg-blue-900/50 rounded-lg">
-          <Info size={14} className="mr-2 flex-shrink-0" />
-          <span>This is a new contact. An opt-in request will be added to your first message to ensure compliance.</span>
-        </div>
-      )}
 
-      <div className="flex flex-col gap-2">
-        {isNewMessageMode && (
-          <input
-            type="tel"
-            value={recipientPhone}
-            onChange={(e) => setRecipientPhone(e.target.value)}
-            placeholder="Enter phone number..."
-            className="p-2 bg-[#2A2F45] border border-[#3B3F58] rounded-lg text-white placeholder-gray-400 focus:ring-1 focus:ring-blue-500"
-          />
-        )}
-        <div className="flex items-center gap-2">
-          <input
-            ref={inputRef}
-            type="text"
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && !isSending && handleSend()}
-            placeholder={selectedDraftId ? "Edit draft..." : canSendMessage ? "Type a message..." : disabledReason}
-            className="flex-1 p-2 bg-[#2A2F45] border border-[#3B3F58] rounded-lg text-white placeholder-gray-400 focus:ring-1 focus:ring-blue-500 disabled:opacity-70"
-            disabled={isSending || !canSendMessage}
-          />
-          <button onClick={handleSend} disabled={isSending || !newMessage.trim() || !canSendMessage || (isNewMessageMode && !recipientPhone)} className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white disabled:opacity-50 transition-colors">
-            {isSending ? <Clock className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+  return (
+    <div className="p-4 bg-[#1A1D2D] border-t border-[#2A2F45] shrink-0 space-y-2">
+      {/* Editing AI Draft Banner */}
+      {selectedDraftId && (
+        <div className="text-xs text-purple-300 bg-purple-900/50 rounded-t-md p-2 flex justify-between items-center">
+          <span>Editing AI Draft. Hit send to approve and send.</span>
+          <button onClick={onCancelEdit} className="p-1 hover:bg-purple-700/50 rounded-full">
+            <X size={14} />
           </button>
         </div>
+      )}
+      
+      {/* Main Message Input Area */}
+      <div className="flex items-end gap-3">
+        <textarea
+          ref={textareaRef}
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }}}
+          placeholder={`Message ${customer.customer_name}...`}
+          className="flex-1 bg-[#2A2F45] text-white placeholder-gray-400 rounded-lg p-3 resize-none overflow-y-auto focus:outline-none focus:ring-2 focus:ring-blue-500 max-h-40"
+          rows={1}
+        />
+        <button
+          onClick={handleAiAssist}
+          disabled={isAiLoading || !message.trim()}
+          className="p-3 bg-[#2A2F45] text-purple-400 rounded-lg hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="AI Assist"
+        >
+          {isAiLoading ? <Loader2 className="animate-spin" size={24} /> : <Sparkles size={24} />}
+        </button>
+        <button
+          onClick={handleSend}
+          disabled={!message.trim() || isSending}
+          className="p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-500 transition-colors"
+          title="Send"
+        >
+          {isSending ? <Loader2 className="animate-spin" size={24} /> : <Send size={24} />}
+        </button>
       </div>
-      {selectedDraftId && <button onClick={onCancelEdit} className="text-xs text-gray-400 hover:text-gray-200 mt-1">Cancel edit</button>}
+      
+      {/* NEW: Post-Send Nurture Prompt */}
+      {showNurturePrompt && (
+        <div className="p-2.5 bg-slate-700/50 border border-slate-600 rounded-lg text-sm text-slate-200 transition-all animate-fade-in-up">
+          {nurtureStatus === 'idle' && (
+             <div className="flex items-center justify-between">
+                <div className='flex items-center gap-2'>
+                    <CheckCircle size={16} className="text-green-400" />
+                    <span className="font-medium">Sent! Schedule a follow-up?</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <button onClick={() => handleScheduleFollowUp(2)} className="text-xs bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded">In 2 days</button>
+                    <button onClick={() => handleScheduleFollowUp(7)} className="text-xs bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded">In 1 week</button>
+                    <button onClick={() => setShowNurturePrompt(false)} className="p-1 hover:bg-slate-600 rounded-full"><X size={14} /></button>
+                </div>
+             </div>
+          )}
+          {nurtureStatus === 'scheduling' && <div className="flex items-center justify-center gap-2 text-slate-300"><Loader2 size={16} className="animate-spin"/>Scheduling...</div>}
+          {nurtureStatus === 'success' && <div className="flex items-center justify-center gap-2 text-green-400"><CalendarPlus size={16} />Follow-up scheduled!</div>}
+          {nurtureStatus === 'error' && <div className="flex items-center justify-center gap-2 text-red-400"><X size={16} />Failed to schedule.</div>}
+        </div>
+      )}
     </div>
   );
-}
+};
+
+export default MessageBox;
